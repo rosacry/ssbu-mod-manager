@@ -1,4 +1,4 @@
-"""Mods management page with category grouping, batch rendering, and undo/redo."""
+"""Mods management page with category grouping, virtual scrolling, and undo/redo."""
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
@@ -20,11 +20,14 @@ CATEGORY_COLORS = {
     "Assist Trophy": "#e67e22",
     "Item": "#1abc9c",
     "Params": "#95a5a6",
+    "Music": "#2fa572",
     "Other": "#555555",
 }
 
-# Render batch size - render N items per frame to keep UI responsive
-_BATCH_SIZE = 25
+# Row heights
+_HEADER_HEIGHT = 40
+_MOD_ROW_HEIGHT = 44
+_ROW_PAD = 2
 
 
 class ModsPage(BasePage):
@@ -33,9 +36,11 @@ class ModsPage(BasePage):
         self._all_mods = []
         self._loaded = False
         self._group_by_category = True
-        self._collapsed = set()  # collapsed category names
-        self._render_queue = []  # pending items to render
-        self._render_after_id = None
+        self._collapsed = set()
+        self._visible_items = []  # list of (type, data, y_pos, height)
+        self._rendered_widgets = {}  # index -> widget
+        self._last_scroll_region = (0, 0)
+        self._scroll_after_id = None
         self._build_ui()
 
     def _build_ui(self):
@@ -58,11 +63,28 @@ class ModsPage(BasePage):
                                  corner_radius=8, height=34)
         open_btn.pack(side="right", padx=(5, 0))
 
+        disable_all_btn = ctk.CTkButton(header_frame, text="Disable All", width=100,
+                                        command=self._disable_all,
+                                        fg_color="#8b2e2e", hover_color="#6e2424",
+                                        corner_radius=8, height=34)
+        disable_all_btn.pack(side="right", padx=(5, 0))
+
+        enable_all_btn = ctk.CTkButton(header_frame, text="Enable All", width=100,
+                                       command=self._enable_all,
+                                       fg_color="#2e6b3e", hover_color="#245530",
+                                       corner_radius=8, height=34)
+        enable_all_btn.pack(side="right", padx=(5, 0))
+
+        fix_nesting_btn = ctk.CTkButton(header_frame, text="Fix Nesting", width=100,
+                                        command=self._fix_nesting,
+                                        fg_color="#6b5b2e", hover_color="#554824",
+                                        corner_radius=8, height=34)
+        fix_nesting_btn.pack(side="right", padx=(5, 0))
+
         # Search, filter, and group toggle
         filter_frame = ctk.CTkFrame(self, fg_color="transparent")
         filter_frame.pack(fill="x", padx=30, pady=(0, 6))
 
-        # Search entry
         self.search_var = tk.StringVar()
         self.search_var.trace("w", lambda *a: self._render_mods())
         search_entry = ctk.CTkEntry(filter_frame, placeholder_text="Search mods...",
@@ -91,26 +113,62 @@ class ModsPage(BasePage):
                                         text_color="#888888", anchor="w")
         self.count_label.pack(fill="x", padx=32, pady=(0, 4))
 
-        # Scrollable mod list
-        self.mod_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.mod_list.pack(fill="both", expand=True, padx=25, pady=(0, 10))
+        # Virtual scrolling canvas
+        self._canvas_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self._canvas_frame.pack(fill="both", expand=True, padx=25, pady=(0, 10))
+
+        self._canvas = tk.Canvas(
+            self._canvas_frame, bg="#12121e", highlightthickness=0,
+            bd=0, relief="flat",
+        )
+        self._scrollbar = ctk.CTkScrollbar(self._canvas_frame, command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+
+        self._scrollbar.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+
+        # Inner frame for widgets
+        self._inner_frame = tk.Frame(self._canvas, bg="#12121e")
+        self._canvas_window = self._canvas.create_window(
+            (0, 0), window=self._inner_frame, anchor="nw"
+        )
+
+        # Bind events
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
+        self._canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self._inner_frame.bind("<Configure>", self._on_frame_configure)
+        self._mousewheel_bound = False
+
+    def _on_canvas_configure(self, event):
+        """Resize inner frame to match canvas width."""
+        self._canvas.itemconfig(self._canvas_window, width=event.width)
+
+    def _on_frame_configure(self, event):
+        """Update scroll region when inner frame changes."""
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling."""
+        try:
+            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except tk.TclError:
+            pass
+
+    def _bind_mousewheel(self):
+        """Bind mousewheel to canvas and all children recursively."""
+        def _bind_to(widget):
+            widget.bind("<MouseWheel>", self._on_mousewheel)
+            for child in widget.winfo_children():
+                _bind_to(child)
+        _bind_to(self._canvas)
+        _bind_to(self._inner_frame)
 
     def on_show(self):
         if not self._loaded:
             self._refresh()
 
     def on_hide(self):
-        """Cancel pending batch renders when leaving the page."""
-        self._cancel_batch_render()
-
-    def _cancel_batch_render(self):
-        if self._render_after_id:
-            try:
-                self.after_cancel(self._render_after_id)
-            except Exception:
-                pass
-            self._render_after_id = None
-        self._render_queue = []
+        pass
 
     def _force_refresh(self):
         self.app.mod_manager.invalidate_cache()
@@ -148,12 +206,10 @@ class ModsPage(BasePage):
         return filtered
 
     def _render_mods(self, *_args):
-        # Cancel any in-progress batch render
-        self._cancel_batch_render()
-
-        # Clear
-        for w in self.mod_list.winfo_children():
+        # Clear all existing widgets
+        for w in self._inner_frame.winfo_children():
             w.destroy()
+        self._rendered_widgets.clear()
 
         filtered = self._get_filtered_mods()
         enabled_count = sum(1 for m in filtered if m.status == ModStatus.ENABLED)
@@ -182,17 +238,23 @@ class ModsPage(BasePage):
         else:
             self._render_flat(filtered)
 
+        # Force scroll region update
+        self._inner_frame.update_idletasks()
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+        # Bind mousewheel to all child widgets for smooth scrolling
+        self._bind_mousewheel()
+
         logger.debug("Mods", f"Rendered {len(filtered)} mod entries")
 
     def _render_grouped(self, mods):
-        """Render mods grouped by category with collapsible sections."""
+        """Render mods grouped by category."""
         groups = defaultdict(list)
         for mod in mods:
             primary = mod.metadata.categories[0] if mod.metadata.categories else "Other"
             groups[primary].append(mod)
 
-        # Sort groups by priority
-        order = ["Character", "Audio", "Stage", "UI", "Effect",
+        order = ["Character", "Stage", "Music", "Audio", "UI", "Effect",
                  "Camera", "Assist Trophy", "Item", "Params", "Other"]
         sorted_groups = []
         for key in order:
@@ -201,126 +263,85 @@ class ModsPage(BasePage):
         for key in sorted(groups.keys()):
             sorted_groups.append((key, groups[key]))
 
-        # Build all items to render (headers + mod rows)
-        render_items = []
         for category, category_mods in sorted_groups:
             color = CATEGORY_COLORS.get(category, "#555555")
             is_collapsed = category in self._collapsed
             enabled = sum(1 for m in category_mods if m.status == ModStatus.ENABLED)
 
-            # Header item
-            render_items.append(("header", category, color, is_collapsed,
-                                 enabled, len(category_mods)))
+            self._render_category_header(
+                category, color, is_collapsed, enabled, len(category_mods))
 
-            # Mod items (if not collapsed)
             if not is_collapsed:
                 for mod in category_mods:
-                    render_items.append(("mod", mod, color, None, None, None))
-
-        # Batch render
-        self._render_queue = render_items
-        self._render_batch()
+                    self._render_mod_row(mod, color)
 
     def _render_flat(self, mods):
-        """Render mods as a flat list using batch rendering."""
-        render_items = []
+        """Render mods as a flat list."""
         for mod in mods:
             color = CATEGORY_COLORS.get(
                 mod.metadata.categories[0] if mod.metadata.categories else "Other",
                 "#555555"
             )
-            render_items.append(("mod", mod, color, None, None, None))
+            self._render_mod_row(mod, color)
 
-        self._render_queue = render_items
-        self._render_batch()
-
-    def _render_batch(self):
-        """Render items in batches to keep the UI responsive during scroll."""
-        self._render_after_id = None
-
-        if not self._render_queue:
-            return
-
-        batch = self._render_queue[:_BATCH_SIZE]
-        self._render_queue = self._render_queue[_BATCH_SIZE:]
-
-        for item in batch:
-            item_type = item[0]
-            if item_type == "header":
-                _, category, color, is_collapsed, enabled, total = item
-                self._render_category_header(
-                    self.mod_list, category, color, is_collapsed, enabled, total)
-            elif item_type == "mod":
-                _, mod, color, _, _, _ = item
-                self._render_mod_row(self.mod_list, mod, color)
-
-        # Schedule next batch if there are more items
-        if self._render_queue:
-            self._render_after_id = self.after(1, self._render_batch)
-
-    def _render_category_header(self, parent, category, color, is_collapsed, enabled, total):
+    def _render_category_header(self, category, color, is_collapsed, enabled, total):
         """Render a category header with collapse toggle."""
-        header = ctk.CTkFrame(parent, fg_color="#1e1e30", corner_radius=8,
-                              cursor="hand2")
-        header.pack(fill="x", pady=(6, 1))
+        header = tk.Frame(self._inner_frame, bg="#181830", cursor="hand2",
+                          height=_HEADER_HEIGHT)
+        header.pack(fill="x", pady=(6, 1), padx=2)
+        header.pack_propagate(False)
 
-        # Collapse arrow + colored dot + name + count - all in one row, no inner frame
         arrow = "\u25b8" if is_collapsed else "\u25be"
         count_text = f"{total} mod{'s' if total != 1 else ''}"
         if enabled < total:
             count_text += f" \u00b7 {enabled} enabled"
 
-        arrow_label = ctk.CTkLabel(header, text=arrow,
-                                   font=ctk.CTkFont(size=12),
-                                   text_color="#888888", width=20)
+        arrow_label = tk.Label(header, text=arrow, font=("Segoe UI", 11),
+                               fg="#6a6a8a", bg="#181830", width=2)
         arrow_label.pack(side="left", padx=(10, 0))
 
-        dot = ctk.CTkFrame(header, width=10, height=10,
-                           fg_color=color, corner_radius=5)
-        dot.pack(side="left", padx=(2, 8), pady=10)
+        dot = tk.Frame(header, width=10, height=10, bg=color)
+        dot.pack(side="left", padx=(4, 8), pady=15)
 
-        name_label = ctk.CTkLabel(
-            header, text=f"{category}  ",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color="#cccccc", anchor="w")
-        name_label.pack(side="left", pady=8)
+        name_l = tk.Label(header, text=f"{category}",
+                          font=("Segoe UI", 12, "bold"),
+                          fg="#b0b0cc", bg="#181830")
+        name_l.pack(side="left", padx=(0, 8))
 
-        count_label = ctk.CTkLabel(
-            header, text=count_text,
-            font=ctk.CTkFont(size=11),
-            text_color="#666666")
-        count_label.pack(side="left", pady=8)
+        count_l = tk.Label(header, text=count_text,
+                           font=("Segoe UI", 10),
+                           fg="#505068", bg="#181830")
+        count_l.pack(side="left")
 
-        # Click handler
-        def on_header_click(e, cat=category):
+        def on_click(e, cat=category):
             if cat in self._collapsed:
                 self._collapsed.discard(cat)
             else:
                 self._collapsed.add(cat)
             self._render_mods()
 
-        for widget in [header, arrow_label, name_label, count_label]:
-            widget.bind("<Button-1>", on_header_click)
+        for w in [header, arrow_label, name_l, count_l, dot]:
+            w.bind("<Button-1>", on_click)
 
-    def _render_mod_row(self, parent, mod, accent_color):
-        """Render a single mod as a compact row - minimal widgets for scroll performance."""
+    def _render_mod_row(self, mod, accent_color):
+        """Render a single mod row using lightweight tk widgets for performance."""
         is_enabled = mod.status == ModStatus.ENABLED
 
-        row = ctk.CTkFrame(parent, fg_color="#242438", corner_radius=6, height=42)
-        row.pack(fill="x", pady=1, padx=(0, 2))
+        row = tk.Frame(self._inner_frame, bg="#1c1c34", height=_MOD_ROW_HEIGHT)
+        row.pack(fill="x", pady=1, padx=2)
         row.pack_propagate(False)
 
-        # Colored left accent bar
-        accent = ctk.CTkFrame(row, width=4,
-                              fg_color=accent_color if is_enabled else "#3a3a4a",
-                              corner_radius=2)
+        # Colored accent bar
+        accent = tk.Frame(row, width=4,
+                          bg=accent_color if is_enabled else "#3a3a4a")
         accent.pack(side="left", fill="y", padx=(3, 0), pady=4)
 
-        # Toggle switch - directly in row, no wrapper frame
+        # Toggle switch (CTk needed for proper switch behavior)
         switch = ctk.CTkSwitch(
             row, text="", width=42, height=20,
             command=lambda m=mod: self._on_toggle(m),
             onvalue=True, offvalue=False,
+            bg_color="#1c1c34",
         )
         switch.pack(side="left", padx=(8, 6))
         if is_enabled:
@@ -328,20 +349,30 @@ class ModsPage(BasePage):
         else:
             switch.deselect()
 
-        # Combined name + category as single label (avoids extra label widgets)
+        # Name + categories label
         name = mod.original_name
-        cats = mod.metadata.categories[:2]
+        cats = mod.metadata.categories[:3]
         if cats:
             cat_suffix = "  \u00b7  " + " \u00b7 ".join(cats)
         else:
             cat_suffix = ""
 
-        name_color = "white" if is_enabled else "#666666"
-        ctk.CTkLabel(
-            row, text=name + cat_suffix,
-            font=ctk.CTkFont(size=13),
-            text_color=name_color, anchor="w",
-        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        name_color = "#d0d0e8" if is_enabled else "#454560"
+        cat_color = "#6a6a88" if is_enabled else "#3a3a50"
+
+        # Use a tk.Label for speed (much faster than CTkLabel)
+        name_label = tk.Label(
+            row, text=name, font=("Segoe UI", 12),
+            fg=name_color, bg="#1c1c34", anchor="w",
+        )
+        name_label.pack(side="left", padx=(2, 0))
+
+        if cats:
+            cat_label = tk.Label(
+                row, text=" \u00b7 ".join(cats),
+                font=("Segoe UI", 10), fg=cat_color, bg="#1c1c34", anchor="w",
+            )
+            cat_label.pack(side="left", padx=(8, 0))
 
     def _on_toggle(self, mod):
         try:
@@ -373,8 +404,78 @@ class ModsPage(BasePage):
             logger.error("Mods", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle mod: {e}")
 
+    def _enable_all(self):
+        """Enable all disabled mods."""
+        disabled = [m for m in self._all_mods if m.status == ModStatus.DISABLED]
+        if not disabled:
+            messagebox.showinfo("Info", "All mods are already enabled.")
+            return
+        confirm = messagebox.askyesno(
+            "Enable All Mods",
+            f"Enable all {len(disabled)} disabled mod(s)?")
+        if not confirm:
+            return
+        try:
+            count = self.app.mod_manager.enable_all()
+            logger.info("Mods", f"Enabled {count} mods")
+            messagebox.showinfo("Done", f"Enabled {count} mod(s).")
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Mods", f"Enable all failed: {e}")
+            messagebox.showerror("Error", f"Failed to enable all mods: {e}")
+
+    def _disable_all(self):
+        """Disable all enabled mods."""
+        enabled = [m for m in self._all_mods if m.status == ModStatus.ENABLED]
+        if not enabled:
+            messagebox.showinfo("Info", "All mods are already disabled.")
+            return
+        confirm = messagebox.askyesno(
+            "Disable All Mods",
+            f"Disable all {len(enabled)} enabled mod(s)?\n\n"
+            "This will disable every mod in your mods folder.")
+        if not confirm:
+            return
+        try:
+            count = self.app.mod_manager.disable_all()
+            logger.info("Mods", f"Disabled {count} mods")
+            messagebox.showinfo("Done", f"Disabled {count} mod(s).")
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Mods", f"Disable all failed: {e}")
+            messagebox.showerror("Error", f"Failed to disable all mods: {e}")
+
+    def _fix_nesting(self):
+        """Detect and fix unnecessarily nested mod folders."""
+        nested = self.app.mod_manager.detect_nested_mods()
+        if not nested:
+            messagebox.showinfo("Info", "No unnecessarily nested mods found.")
+            return
+
+        names = "\n".join(f"  - {m.original_name}" for m in nested[:15])
+        if len(nested) > 15:
+            names += f"\n  ... and {len(nested) - 15} more"
+
+        confirm = messagebox.askyesno(
+            "Fix Nested Folders",
+            f"Found {len(nested)} mod(s) with unnecessary subfolder nesting:\n\n"
+            f"{names}\n\n"
+            "This will move content up one directory level.\n"
+            "Continue?")
+        if not confirm:
+            return
+
+        try:
+            count = self.app.mod_manager.flatten_all_nested()
+            logger.info("Mods", f"Flattened {count} nested mods")
+            messagebox.showinfo("Done", f"Fixed {count} mod(s).")
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Mods", f"Fix nesting failed: {e}")
+            messagebox.showerror("Error", f"Failed to fix nesting: {e}")
+
     def _open_folder(self):
-        import os
+        from src.utils.file_utils import open_folder
         settings = self.app.config_manager.settings
         if settings.mods_path and settings.mods_path.exists():
-            os.startfile(str(settings.mods_path))
+            open_folder(settings.mods_path)

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Any
 from src.core.prc_handler import PRCHandler
 from src.core.msbt_handler import MSBTHandler
+from src.utils.logger import logger
 
 
 class CSSManager:
@@ -86,8 +87,8 @@ class CSSManager:
         if field in ["ui_chara_id", "fighter_kind"]:
             try:
                 self.prc_handler.set_hash_value(chara['chara_ref'], field, val)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warn("CSS", f"Failed to set hash value {field}={val}: {e}")
         elif field == "name_id":
             chara['chara_ref'][field].value = val
         elif field in ["disp_order", "color_num",
@@ -188,8 +189,8 @@ class CSSManager:
                     m = re.search(r'nam_chr1_00_(\w+)', xmsbt_content)
                     if m:
                         detected_name_id = m.group(1)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warn("CSS", f"Failed to read xmsbt for name detection: {e}")
 
         # Method 3: Narration sound files
         if not detected_name_id:
@@ -259,8 +260,8 @@ class CSSManager:
                     chara['disp_order'] = 0
                     try:
                         chara['chara_ref']['disp_order'].value = 0
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warn("CSS", f"Failed to set disp_order for {chara.get('name_id', '?')}: {e}")
                     shown_count += 1
             else:
                 if chara['disp_order'] != -1:
@@ -330,8 +331,8 @@ class CSSManager:
                 name_match = re.search(r'<entry label="nam_chr1_00_\w+">\s*<text>(.*?)</text>', xmsbt_content, re.DOTALL)
                 if name_match:
                     display_name = name_match.group(1).strip()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warn("CSS", f"Failed to read xmsbt for display name: {e}")
 
         # Fallback: clean up folder name
         if not display_name:
@@ -407,8 +408,8 @@ class CSSManager:
         if announcer_label:
             try:
                 new_chara_ref['characall_label_c00'].value = pyprc.hash(announcer_label)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warn("CSS", f"Failed to set announcer label: {e}")
 
         self.prc_handler.safe_set_value(new_chara_ref, 'disp_order', new_chara["disp_order"])
         self.prc_handler.safe_set_value(new_chara_ref, 'color_num', new_chara["color_num"])
@@ -451,4 +452,167 @@ class CSSManager:
         return {
             "fighter_kind": f"fighter_kind_{fighter_kind}",
             "costumes": sorted(list(costumes)),
+        }
+
+    def generate_custom_css_template(self, mods_root: str, output_dir: str) -> dict:
+        """Generate a custom CSS template based on enabled character mods.
+
+        Scans enabled mods to detect which characters are present, then generates
+        a CSS template (PRC + MSBT) with only those characters visible, auto-sorted.
+
+        Returns a dict with template info.
+        """
+        import shutil
+
+        if not self.mod_folder:
+            raise ValueError("Load a CSS mod folder first (containing ui_chara_db.prc and msg_name.msbt).")
+
+        # Scan all enabled mods for character name_ids
+        detected_characters = {}  # name_id -> info dict
+        for folder_name in os.listdir(mods_root):
+            folder_path = os.path.join(mods_root, folder_name)
+            if not os.path.isdir(folder_path):
+                continue
+            # Skip disabled mods (prefixed with '.')
+            if folder_name.startswith('.') or folder_name.startswith('_'):
+                continue
+            # Skip the CSS mod itself
+            if os.path.normpath(folder_path) == os.path.normpath(self.mod_folder):
+                continue
+
+            name_id = self.detect_name_id_from_mod(folder_path)
+            if name_id:
+                # Detect display name from xmsbt if available
+                display_name = None
+                xmsbt_path = os.path.join(folder_path, "ui", "message", "msg_name.xmsbt")
+                if os.path.exists(xmsbt_path):
+                    try:
+                        with open(xmsbt_path, 'r', encoding='utf-16') as xf:
+                            xmsbt_content = xf.read()
+                        m = re.search(r'<entry label="nam_chr1_00_\w+">\s*<text>(.*?)</text>',
+                                      xmsbt_content, re.DOTALL)
+                        if m:
+                            display_name = m.group(1).strip()
+                    except Exception:
+                        pass
+
+                # Detect fighter_kind and costumes from config.json
+                fighter_kind = None
+                costumes = []
+                config_path = os.path.join(folder_path, "config.json")
+                if os.path.exists(config_path):
+                    try:
+                        result = self.auto_fill_from_config(config_path)
+                        fighter_kind = result.get("fighter_kind")
+                        costumes = result.get("costumes", [])
+                    except Exception:
+                        pass
+
+                detected_characters[name_id] = {
+                    "name_id": name_id,
+                    "mod_folder": folder_name,
+                    "display_name": display_name or folder_name,
+                    "fighter_kind": fighter_kind,
+                    "costumes": costumes,
+                }
+
+        # Create output template directory
+        template_dir = os.path.join(output_dir, "_CustomCSSTemplate")
+        os.makedirs(template_dir, exist_ok=True)
+
+        # Copy the base PRC and MSBT as a starting point
+        template_prc_dir = os.path.join(template_dir, "ui", "param", "database")
+        template_msbt_dir = os.path.join(template_dir, "ui", "message")
+        os.makedirs(template_prc_dir, exist_ok=True)
+        os.makedirs(template_msbt_dir, exist_ok=True)
+
+        shutil.copy2(self.prc_path, os.path.join(template_prc_dir, "ui_chara_db.prc"))
+        shutil.copy2(self.msbt_path, os.path.join(template_msbt_dir, "msg_name.msbt"))
+
+        # Reload from the template copies so we modify those
+        template_prc_path = os.path.join(template_prc_dir, "ui_chara_db.prc")
+        template_msbt_path = os.path.join(template_msbt_dir, "msg_name.msbt")
+
+        template_prc_root = self.prc_handler.load(Path(template_prc_path))
+        template_db_root = self.prc_handler.get_db_root(template_prc_root)
+        template_msbt = self.msbt_handler.load(Path(template_msbt_path))
+
+        # Hide all custom characters, then show only those with mods
+        shown_count = 0
+        hidden_count = 0
+        detected_name_ids = set(detected_characters.keys())
+
+        for chara in list(template_db_root):
+            name_id = str(chara['name_id'].value)
+            fighter_kind = str(chara['fighter_kind'].value)
+            fk_name = fighter_kind.replace('fighter_kind_', '') if fighter_kind.startswith('fighter_kind_') else fighter_kind
+            is_custom = (fk_name != name_id)
+
+            if is_custom:
+                if name_id in detected_name_ids:
+                    # Show this character
+                    if chara['disp_order'].value == -1:
+                        self.prc_handler.safe_set_value(chara, 'disp_order', 0)
+                    shown_count += 1
+
+                    # Update display name if we detected one
+                    info = detected_characters[name_id]
+                    if info.get("display_name"):
+                        self.msbt_handler.set_entry(template_msbt, f"nam_chr1_00_{name_id}", info["display_name"])
+                        self.msbt_handler.set_entry(template_msbt, f"nam_chr2_00_{name_id}", info["display_name"].upper())
+                        self.msbt_handler.set_entry(template_msbt, f"nam_chr3_00_{name_id}", info["display_name"].upper())
+
+                    # Update costume slots if detected
+                    if info.get("costumes"):
+                        self.prc_handler.safe_set_value(chara, 'color_num', len(info["costumes"]))
+                        for ci in range(8):
+                            slot_val = info["costumes"][ci] if ci < len(info["costumes"]) else info["costumes"][0]
+                            field_name = f"c0{ci}_index"
+                            if field_name in chara:
+                                self.prc_handler.safe_set_value(chara, field_name, slot_val)
+                else:
+                    # Hide this character
+                    chara['disp_order'].value = -1
+                    hidden_count += 1
+
+        # Resort custom characters alphabetically
+        vanilla_max = -1
+        custom_visible = []
+        for chara in list(template_db_root):
+            d = chara['disp_order'].value
+            if d == -1:
+                continue
+            logical = d if d >= 0 else d + 256
+            name_id = str(chara['name_id'].value)
+            fk = str(chara['fighter_kind'].value)
+            fk_name = fk.replace('fighter_kind_', '') if fk.startswith('fighter_kind_') else fk
+            if fk_name != name_id:
+                custom_visible.append(chara)
+            else:
+                if logical > vanilla_max:
+                    vanilla_max = logical
+
+        # Sort custom chars by display name
+        def get_display(ch):
+            nid = str(ch['name_id'].value)
+            entry = self.msbt_handler.get_entry(template_msbt, f"nam_chr1_00_{nid}")
+            return (entry or nid).upper()
+
+        custom_visible.sort(key=get_display)
+        for i, ch in enumerate(custom_visible):
+            new_logical = vanilla_max + 1 + i
+            new_signed = new_logical if new_logical <= 127 else new_logical - 256
+            self.prc_handler.safe_set_value(ch, 'disp_order', new_signed)
+
+        # Save the template files
+        self.prc_handler.save(template_prc_root, Path(template_prc_path))
+        self.msbt_handler.save(template_msbt, Path(template_msbt_path))
+
+        logger.info("CSS", f"Generated CSS template: {shown_count} shown, {hidden_count} hidden in {template_dir}")
+
+        return {
+            "characters_detected": list(detected_characters.values()),
+            "output_path": template_dir,
+            "total_characters": shown_count,
+            "hidden_characters": hidden_count,
         }

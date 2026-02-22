@@ -15,7 +15,6 @@ class MusicManager:
         self.tracks: list[MusicTrack] = []
         self.stage_playlists: dict[str, StagePlaylist] = {}
         self.exclude_vanilla = False
-        self._config_path: Optional[Path] = None
 
     def discover_tracks(self, mods_root: Path) -> list[MusicTrack]:
         """Discover all custom music tracks across all mod folders."""
@@ -36,11 +35,16 @@ class MusicManager:
                     continue
                 seen_ids.add(track_id)
 
+                try:
+                    fsize = audio_file.stat().st_size
+                except OSError:
+                    fsize = 0
+
                 track = MusicTrack(
                     track_id=track_id,
                     file_path=audio_file,
                     source_mod=mod_folder.name,
-                    file_size=audio_file.stat().st_size,
+                    file_size=fsize,
                     is_custom=True,
                 )
                 self.tracks.append(track)
@@ -49,7 +53,6 @@ class MusicManager:
             self._load_track_names_from_mod(mod_folder)
 
         # Load saved assignments if they exist
-        self._config_path = mods_root.parent.parent / ".ssbu-mod-manager" if mods_root.exists() else None
         self._load_saved_assignments()
 
         return self.tracks
@@ -306,9 +309,11 @@ class MusicManager:
                 result["prc_updated"] = True
 
         except ImportError:
-            pass
-        except Exception:
-            pass
+            from src.utils.logger import logger
+            logger.warn("MusicManager", "pyprc not installed - PRC stage assignments not applied. Install with: pip install pyprc")
+        except Exception as e:
+            from src.utils.logger import logger
+            logger.error("MusicManager", f"Failed to update stage DB: {e}")
 
         return result
 

@@ -5,6 +5,9 @@ import os
 # Ensure we're in the right directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+# Get absolute path to icon
+icon_path = os.path.abspath('assets/icon.ico')
+
 args = [
     'main.py',
     '--name=SSBUModManager',
@@ -29,9 +32,12 @@ args = [
     '--clean',
 ]
 
-# Add icon if it exists
-if os.path.exists('assets/icon.ico'):
-    args.append('--icon=assets/icon.ico')
+# Add icon - use absolute path
+if os.path.exists(icon_path):
+    args.append(f'--icon={icon_path}')
+    print(f"Using icon: {icon_path}")
+else:
+    print("WARNING: Icon file not found at assets/icon.ico")
 
 print("Building SSBU Mod Manager...")
 PyInstaller.__main__.run(args)

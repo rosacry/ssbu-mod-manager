@@ -4,7 +4,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
 from src.ui.base_page import BasePage
-from src.constants import VANILLA_STAGES
+from src.constants import VANILLA_STAGES, COMPETITIVE_STAGES
 from src.utils.logger import logger
 from src.utils.audio_player import audio_player
 from src.utils.action_history import action_history, Action
@@ -17,6 +17,8 @@ class MusicPage(BasePage):
         self._loaded = False
         self._all_tracks = []
         self._track_id_map = {}
+        self._stage_ids = []
+        self._is_playing = False
         self._build_ui()
 
     def _build_ui(self):
@@ -40,7 +42,7 @@ class MusicPage(BasePage):
                                  corner_radius=8, height=34)
         scan_btn.pack(side="right")
 
-        # Summary + audio player row
+        # Summary row
         info_frame = ctk.CTkFrame(self, fg_color="transparent")
         info_frame.pack(fill="x", padx=30, pady=(2, 5))
 
@@ -56,65 +58,17 @@ class MusicPage(BasePage):
         )
         self.loading_label.pack(side="right")
 
-        # Audio player controls + options row
-        controls_frame = ctk.CTkFrame(self, fg_color="#1e1e30", corner_radius=8)
-        controls_frame.pack(fill="x", padx=30, pady=(0, 6))
-
-        controls_inner = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        controls_inner.pack(fill="x", padx=12, pady=6)
-
-        # Play/Pause/Stop buttons
-        self.play_btn = ctk.CTkButton(
-            controls_inner, text="▶  Play", width=80, height=30,
-            fg_color="#2fa572", hover_color="#106a43",
-            font=ctk.CTkFont(size=12), corner_radius=6,
-            command=self._play_selected,
+        # Main 3-column layout using PanedWindow for resizable splitters
+        content = tk.PanedWindow(
+            self, orient=tk.HORIZONTAL, sashwidth=6,
+            bg="#12121e", sashpad=0, opaqueresize=False,
+            borderwidth=0, relief="flat", sashcursor="sb_h_double_arrow",
         )
-        self.play_btn.pack(side="left", padx=(0, 4))
-
-        self.stop_btn = ctk.CTkButton(
-            controls_inner, text="■  Stop", width=80, height=30,
-            fg_color="#555555", hover_color="#444444",
-            font=ctk.CTkFont(size=12), corner_radius=6,
-            command=self._stop_playback,
-        )
-        self.stop_btn.pack(side="left", padx=(0, 12))
-
-        # Volume
-        vol_label = ctk.CTkLabel(controls_inner, text="Volume",
-                                 font=ctk.CTkFont(size=11), text_color="#888888")
-        vol_label.pack(side="left", padx=(0, 4))
-
-        self.volume_slider = ctk.CTkSlider(
-            controls_inner, from_=0, to=100, width=120, height=16,
-            command=self._on_volume_change,
-        )
-        self.volume_slider.set(70)
-        self.volume_slider.pack(side="left", padx=(0, 12))
-
-        # Now playing status
-        self.player_status = ctk.CTkLabel(
-            controls_inner, text="",
-            font=ctk.CTkFont(size=11), text_color="#666666",
-        )
-        self.player_status.pack(side="left", fill="x", expand=True)
-
-        # Exclude vanilla checkbox
-        self.exclude_var = ctk.BooleanVar(value=False)
-        exclude_cb = ctk.CTkCheckBox(
-            controls_inner, text="Exclude vanilla", variable=self.exclude_var,
-            command=self._on_exclude_change, font=ctk.CTkFont(size=11),
-        )
-        exclude_cb.pack(side="right")
-
-        # Main 3-column layout
-        content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
         # === LEFT COLUMN: Stage list ===
         left = ctk.CTkFrame(content, width=240, fg_color="#242438", corner_radius=10)
-        left.pack(side="left", fill="y", padx=(0, 5))
-        left.pack_propagate(False)
+        content.add(left, minsize=180, stretch="never")
 
         ctk.CTkLabel(left, text="Stages",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -125,6 +79,13 @@ class MusicPage(BasePage):
         ctk.CTkEntry(left, placeholder_text="Search stages...",
                      textvariable=self.stage_search_var, height=30,
                      corner_radius=6).pack(fill="x", padx=10, pady=5)
+
+        # Competitive-only filter
+        self.competitive_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            left, text="Competitive only", variable=self.competitive_var,
+            command=self._filter_stages, font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=12, pady=(2, 4))
 
         # Stage list with scrollbar
         stage_list_frame = ctk.CTkFrame(left, fg_color="transparent")
@@ -144,7 +105,7 @@ class MusicPage(BasePage):
 
         # Bulk buttons
         bulk_frame = ctk.CTkFrame(left, fg_color="transparent")
-        bulk_frame.pack(fill="x", padx=10, pady=(0, 10))
+        bulk_frame.pack(fill="x", padx=10, pady=(0, 5))
 
         ctk.CTkButton(bulk_frame, text="All → All Stages",
                       command=self._assign_all_to_all,
@@ -158,9 +119,16 @@ class MusicPage(BasePage):
                       font=ctk.CTkFont(size=11), height=28, corner_radius=6,
                       ).pack(fill="x", pady=1)
 
+        # Exclude vanilla option in stage column
+        self.exclude_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            left, text="Exclude vanilla tracks", variable=self.exclude_var,
+            command=self._on_exclude_change, font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=12, pady=(4, 10))
+
         # === MIDDLE COLUMN: Stage playlist ===
         middle = ctk.CTkFrame(content, fg_color="#242438", corner_radius=10)
-        middle.pack(side="left", fill="both", expand=True, padx=5)
+        content.add(middle, minsize=200, stretch="always")
 
         playlist_header = ctk.CTkFrame(middle, fg_color="transparent")
         playlist_header.pack(fill="x", padx=12, pady=(10, 5))
@@ -193,8 +161,7 @@ class MusicPage(BasePage):
 
         # === RIGHT COLUMN: Available tracks ===
         right = ctk.CTkFrame(content, width=340, fg_color="#242438", corner_radius=10)
-        right.pack(side="left", fill="y", padx=(5, 0))
-        right.pack_propagate(False)
+        content.add(right, minsize=200, stretch="never")
 
         avail_header = ctk.CTkFrame(right, fg_color="transparent")
         avail_header.pack(fill="x", padx=10, pady=(10, 5))
@@ -230,6 +197,41 @@ class MusicPage(BasePage):
         # Double-click to add
         self.track_listbox.bind("<Double-1>", lambda e: self._add_selected_track())
 
+        # Audio player controls: play/stop toggle + volume, right-aligned near track list
+        player_frame = ctk.CTkFrame(right, fg_color="#1e1e30", corner_radius=6)
+        player_frame.pack(fill="x", padx=10, pady=(2, 4))
+
+        player_inner = ctk.CTkFrame(player_frame, fg_color="transparent")
+        player_inner.pack(fill="x", padx=8, pady=5)
+
+        # Single play/stop toggle button
+        self._is_playing = False
+        self.play_toggle_btn = ctk.CTkButton(
+            player_inner, text="▶  Play", width=80, height=28,
+            fg_color="#2fa572", hover_color="#106a43",
+            font=ctk.CTkFont(size=11), corner_radius=6,
+            command=self._toggle_playback,
+        )
+        self.play_toggle_btn.pack(side="left", padx=(0, 6))
+
+        # Volume slider
+        vol_label = ctk.CTkLabel(player_inner, text="Vol",
+                                 font=ctk.CTkFont(size=10), text_color="#888888")
+        vol_label.pack(side="left", padx=(0, 3))
+        self.volume_slider = ctk.CTkSlider(
+            player_inner, from_=0, to=100, width=90, height=14,
+            command=self._on_volume_change,
+        )
+        self.volume_slider.set(70)
+        self.volume_slider.pack(side="left", padx=(0, 6))
+
+        # Now playing status
+        self.player_status = ctk.CTkLabel(
+            player_inner, text="",
+            font=ctk.CTkFont(size=10), text_color="#666666",
+        )
+        self.player_status.pack(side="left", fill="x", expand=True)
+
         # Add track button
         add_btn_frame = ctk.CTkFrame(right, fg_color="transparent")
         add_btn_frame.pack(fill="x", padx=10, pady=(0, 10))
@@ -245,11 +247,27 @@ class MusicPage(BasePage):
             self._scan_tracks()
         else:
             self._populate_stages()
+        # Sync play button state with actual audio player
+        self._sync_play_state()
 
     def on_hide(self):
         """Clean up playlist widgets for smoother page transitions."""
         for w in self.playlist_frame.winfo_children():
             w.destroy()
+
+    def _sync_play_state(self):
+        """Keep play toggle button in sync with actual audio player state."""
+        if audio_player.is_playing:
+            if not self._is_playing:
+                self._is_playing = True
+                self.play_toggle_btn.configure(
+                    text="■  Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+        else:
+            if self._is_playing:
+                self._is_playing = False
+                self.play_toggle_btn.configure(
+                    text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
+                self.player_status.configure(text="")
 
     def _force_scan(self):
         self._loaded = False
@@ -301,7 +319,10 @@ class MusicPage(BasePage):
         stages = self.app.music_manager.get_stage_list()
         self.stage_listbox.delete(0, tk.END)
         self._stage_ids = []
+        comp_only = self.competitive_var.get()
         for stage in stages:
+            if comp_only and stage.stage_id not in COMPETITIVE_STAGES:
+                continue
             count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
             suffix = f" ({count})" if count > 0 else ""
             self.stage_listbox.insert(tk.END, f"{stage.stage_name}{suffix}")
@@ -312,7 +333,10 @@ class MusicPage(BasePage):
         stages = self.app.music_manager.get_stage_list()
         self.stage_listbox.delete(0, tk.END)
         self._stage_ids = []
+        comp_only = self.competitive_var.get()
         for stage in stages:
+            if comp_only and stage.stage_id not in COMPETITIVE_STAGES:
+                continue
             if search in stage.stage_name.lower():
                 count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
                 suffix = f" ({count})" if count > 0 else ""
@@ -524,6 +548,13 @@ class MusicPage(BasePage):
         self._update_summary()
 
     # Audio playback methods
+    def _toggle_playback(self):
+        """Toggle between play and stop."""
+        if self._is_playing:
+            self._stop_playback()
+        else:
+            self._play_selected()
+
     def _play_selected(self):
         """Play the selected track."""
         track = self._get_selected_track()
@@ -538,11 +569,18 @@ class MusicPage(BasePage):
         success, msg = audio_player.play(track.file_path)
         color = "#2fa572" if success else "#e94560"
         self.player_status.configure(text=msg, text_color=color)
-        if not success:
+        if success:
+            self._is_playing = True
+            self.play_toggle_btn.configure(
+                text="■  Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+        else:
             self.after(5000, lambda: self.player_status.configure(text=""))
 
     def _stop_playback(self):
         audio_player.stop()
+        self._is_playing = False
+        self.play_toggle_btn.configure(
+            text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
         self.player_status.configure(text="Stopped", text_color="#888888")
         self.after(2000, lambda: self.player_status.configure(text=""))
 

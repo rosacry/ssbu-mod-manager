@@ -102,6 +102,13 @@ class ConflictsPage(BasePage):
             corner_radius=8, height=34,
         )
 
+        self.restore_btn = ctk.CTkButton(
+            self.auto_btn_frame, text="Restore Originals",
+            fg_color="#b08a2a", hover_color="#8a6b1f",
+            command=self._restore_originals, width=180,
+            corner_radius=8, height=34,
+        )
+
         self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
@@ -115,6 +122,8 @@ class ConflictsPage(BasePage):
 
     def _force_scan(self):
         self._scanned = False
+        # Cancel any in-progress scan by bumping generation
+        self._scan_generation = getattr(self, "_scan_generation", 0) + 1
         self._scanning = False
         self._scan()
 
@@ -131,6 +140,7 @@ class ConflictsPage(BasePage):
             return
 
         self._scanning = True
+        current_gen = getattr(self, "_scan_generation", 0)
         self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
 
         for w in self.conflict_list.winfo_children():
@@ -159,12 +169,13 @@ class ConflictsPage(BasePage):
                         c.resolved = True
                         c.resolution = ResolutionStrategy.MERGE
 
-                if not self.app.shutting_down:
+                # Only deliver results if this scan hasn't been superseded
+                if not self.app.shutting_down and getattr(self, "_scan_generation", 0) == current_gen:
                     self.after(0, lambda: self._on_scan_done(conflicts))
             except Exception as e:
                 tb = traceback.format_exc()
                 logger.error("Conflicts", f"Scan failed: {e}\n{tb}")
-                if not self.app.shutting_down:
+                if not self.app.shutting_down and getattr(self, "_scan_generation", 0) == current_gen:
                     self.after(0, lambda: self._on_scan_error(str(e)))
 
         threading.Thread(target=do_scan, daemon=True).start()
@@ -204,6 +215,7 @@ class ConflictsPage(BasePage):
         for w in self.conflict_list.winfo_children():
             w.destroy()
         self.auto_resolve_btn.pack_forget()
+        self.restore_btn.pack_forget()
 
         if not self._conflicts:
             self.summary_label.configure(
@@ -246,6 +258,10 @@ class ConflictsPage(BasePage):
 
         if mergeable > 0:
             self.auto_resolve_btn.pack(side="left")
+            self.restore_btn.pack(side="left", padx=(10, 0))
+        else:
+            # Still show restore button in case user needs to undo a previous merge
+            self.restore_btn.pack(side="left")
 
         # Group conflicts by type and render with explanations
         by_ext = {}
@@ -301,19 +317,21 @@ class ConflictsPage(BasePage):
         try:
             settings = self.app.config_manager.settings
             resolver = self.app.conflict_resolver
-            if settings.backup_before_merge:
-                resolver.backup_originals(conflict)
-            path = resolver.auto_merge_xmsbt(conflict)
+            create_backup = settings.backup_before_merge
+            path = resolver.auto_merge_xmsbt(conflict, create_backup=create_backup)
             if path:
                 conflict.resolved = True
                 conflict.resolution = ResolutionStrategy.MERGE
                 logger.info("Conflicts", f"Merged: {conflict.relative_path}")
                 messagebox.showinfo("Merged",
-                    f"Merged {conflict.relative_path}\nOutput: {path}")
+                    f"Merged {conflict.relative_path}\n"
+                    f"Output: {path}\n\n"
+                    f"Original files have been renamed to .xmsbt.merged\n"
+                    f"to prevent double-loading by ARCropolis.")
                 self._render()
             else:
                 messagebox.showwarning("Warning",
-                    "Could not auto-merge - overlapping labels.\n"
+                    "Could not auto-merge — no entries found in the files.\n"
                     "Use 'Keep' to choose which version to use.")
         except Exception as e:
             logger.error("Conflicts", f"Merge failed: {e}")
@@ -321,8 +339,11 @@ class ConflictsPage(BasePage):
 
     def _keep_conflict(self, conflict, mod_name):
         try:
+            settings = self.app.config_manager.settings
             resolver = self.app.conflict_resolver
-            resolver.apply_resolution(conflict, ResolutionStrategy.MANUAL, winner_mod=mod_name)
+            create_backup = settings.backup_before_merge
+            resolver.apply_resolution(conflict, ResolutionStrategy.MANUAL, winner_mod=mod_name,
+                                      create_backup=create_backup)
             conflict.resolved = True
             logger.info("Conflicts", f"Kept {mod_name} for {conflict.relative_path}")
             self._render()
@@ -338,16 +359,45 @@ class ConflictsPage(BasePage):
 
     def _auto_resolve_all(self):
         try:
+            settings = self.app.config_manager.settings
             resolver = self.app.conflict_resolver
             unresolved = [c for c in self._conflicts if c.is_mergeable and not c.resolved]
-            resolved = resolver.resolve_all_auto(unresolved)
-            for c in unresolved:
-                c.resolved = True
-                c.resolution = ResolutionStrategy.MERGE
-            logger.info("Conflicts", f"Auto-resolved {len(resolved)} conflicts")
-            messagebox.showinfo("Resolved",
-                f"Resolved {len(resolved)} conflicts into _MergedResources.")
+            create_backup = settings.backup_before_merge
+            resolved = resolver.resolve_all_auto(unresolved, create_backup=create_backup)
+            # Only count conflicts that were actually resolved by resolve_all_auto
+            # (auto_merge_xmsbt sets conflict.resolved = True on success)
+            actually_resolved = sum(1 for c in unresolved if c.resolved)
+            failed = len(unresolved) - actually_resolved
+            msg = f"Resolved {actually_resolved} conflict(s) into _MergedResources."
+            msg += f"\nOriginal files renamed to .xmsbt.merged to prevent double-loading."
+            if failed > 0:
+                msg += f"\n\n{failed} conflict(s) could not be auto-merged."
+            logger.info("Conflicts", f"Auto-resolved {actually_resolved}/{len(unresolved)} conflicts")
+            messagebox.showinfo("Resolved", msg)
             self._render()
         except Exception as e:
             logger.error("Conflicts", f"Auto-resolve failed: {e}")
             messagebox.showerror("Error", f"Auto-resolve failed: {e}")
+
+    def _restore_originals(self):
+        """Restore all previously merged XMSBT files to their original state."""
+        confirm = messagebox.askyesno(
+            "Restore Originals",
+            "This will:\n"
+            "  - Rename all .xmsbt.merged files back to .xmsbt\n"
+            "  - Remove merged files from _MergedResources\n\n"
+            "This undoes previous conflict merges so you can re-merge\n"
+            "or let individual mods handle text independently.\n\nContinue?"
+        )
+        if not confirm:
+            return
+        try:
+            resolver = self.app.conflict_resolver
+            count = resolver.restore_originals()
+            logger.info("Conflicts", f"Restored {count} original files")
+            messagebox.showinfo("Restored", f"Restored {count} file(s) to original state.")
+            self._scanned = False
+            self._scan()
+        except Exception as e:
+            logger.error("Conflicts", f"Restore failed: {e}")
+            messagebox.showerror("Error", f"Restore failed: {e}")

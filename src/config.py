@@ -30,6 +30,7 @@ class ConfigManager:
                     backup_before_merge=data.get("backup_before_merge", True),
                     emulator=data.get("emulator", ""),
                     debug_mode=data.get("debug_mode", False),
+                    ui_scale=data.get("ui_scale", 1.0),
                 )
             except (json.JSONDecodeError, KeyError, TypeError):
                 self.settings = AppSettings()
@@ -39,7 +40,11 @@ class ConfigManager:
         """Save settings to config file."""
         if settings:
             self.settings = settings
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
 
         data = {
             "eden_sdmc_path": str(self.settings.eden_sdmc_path) if self.settings.eden_sdmc_path else None,
@@ -54,10 +59,14 @@ class ConfigManager:
             "backup_before_merge": self.settings.backup_before_merge,
             "emulator": self.settings.emulator,
             "debug_mode": self.settings.debug_mode,
+            "ui_scale": self.settings.ui_scale,
         }
 
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+        except OSError:
+            pass
 
     def update_setting(self, key: str, value) -> None:
         """Update a single setting and save."""

@@ -24,48 +24,60 @@ class DashboardPage(BasePage):
         header_frame.pack(fill="x", padx=30, pady=(25, 5))
 
         title = ctk.CTkLabel(header_frame, text="SSBU Mod Manager",
-                             font=ctk.CTkFont(size=28, weight="bold"), anchor="w")
+                             font=ctk.CTkFont(family="Segoe UI", size=28, weight="bold"),
+                             anchor="w")
         title.pack(side="left")
 
         self.loading_label = ctk.CTkLabel(header_frame, text="",
-                                          font=ctk.CTkFont(size=12), text_color="#888888")
+                                          font=ctk.CTkFont(size=12), text_color="#6a6a8a")
         self.loading_label.pack(side="right")
 
         desc = ctk.CTkLabel(scroll,
                             text="Manage your Super Smash Bros. Ultimate mods, plugins, music, and more.",
-                            font=ctk.CTkFont(size=13), text_color="#999999", anchor="w")
-        desc.pack(fill="x", padx=30, pady=(0, 15))
+                            font=ctk.CTkFont(size=13), text_color="#7a7a9a", anchor="w")
+        desc.pack(fill="x", padx=30, pady=(0, 18))
 
         # Stats cards row
         stats_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        stats_frame.pack(fill="x", padx=30, pady=(0, 15))
+        stats_frame.pack(fill="x", padx=28, pady=(0, 18))
 
         self.stat_cards = {}
         stats = [
-            ("mods_enabled", "Mods Enabled", "0", "#2fa572"),
-            ("mods_disabled", "Mods Disabled", "0", "#666666"),
-            ("plugins", "Plugins Active", "0", "#1f538d"),
-            ("conflicts", "Text Conflicts", "0", "#e94560"),
+            ("mods_enabled", "Mods Enabled", "0", "#2fa572", "\u25a3"),
+            ("mods_disabled", "Mods Disabled", "0", "#555570", "\u25a2"),
+            ("plugins", "Plugins Active", "0", "#1f538d", "\u2699"),
+            ("conflicts", "Text Conflicts", "0", "#e94560", "\u26a0"),
         ]
 
-        for i, (key, title_text, value, color) in enumerate(stats):
-            card = ctk.CTkFrame(stats_frame, fg_color="#242438", corner_radius=12)
+        for i, (key, title_text, value, color, icon) in enumerate(stats):
+            card = ctk.CTkFrame(stats_frame, fg_color="#1a1a30", corner_radius=14)
             card.grid(row=0, column=i, padx=6, pady=5, sticky="nsew")
             stats_frame.columnconfigure(i, weight=1)
 
-            # Colored top accent line
-            accent = ctk.CTkFrame(card, height=3, fg_color=color, corner_radius=0)
-            accent.pack(fill="x", padx=15, pady=(12, 0))
+            # Colored left accent
+            accent = ctk.CTkFrame(card, width=4, fg_color=color, corner_radius=2)
+            accent.pack(side="left", fill="y", padx=(6, 0), pady=10)
 
-            val_label = ctk.CTkLabel(card, text=value,
-                                     font=ctk.CTkFont(size=36, weight="bold"),
+            card_inner = ctk.CTkFrame(card, fg_color="transparent")
+            card_inner.pack(fill="both", expand=True, padx=(10, 16), pady=12)
+
+            # Icon + value row
+            top_row = ctk.CTkFrame(card_inner, fg_color="transparent")
+            top_row.pack(fill="x")
+
+            ctk.CTkLabel(top_row, text=icon,
+                         font=ctk.CTkFont(size=18), text_color=color,
+                         ).pack(side="left", padx=(0, 8))
+
+            val_label = ctk.CTkLabel(top_row, text=value,
+                                     font=ctk.CTkFont(size=32, weight="bold"),
                                      text_color=color)
-            val_label.pack(padx=20, pady=(8, 4))
+            val_label.pack(side="left")
 
-            title_label = ctk.CTkLabel(card, text=title_text,
-                                       font=ctk.CTkFont(size=12),
-                                       text_color="#999999")
-            title_label.pack(padx=20, pady=(0, 16))
+            title_label = ctk.CTkLabel(card_inner, text=title_text,
+                                       font=ctk.CTkFont(size=11),
+                                       text_color="#6a6a8a", anchor="w")
+            title_label.pack(fill="x", pady=(2, 0))
 
             self.stat_cards[key] = val_label
 
@@ -77,7 +89,8 @@ class DashboardPage(BasePage):
         actions_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         actions_frame.pack(fill="x", padx=30)
 
-        btn_style = {"height": 38, "corner_radius": 8, "font": ctk.CTkFont(size=13)}
+        btn_style = {"height": 40, "corner_radius": 10,
+                     "font": ctk.CTkFont(family="Segoe UI", size=13)}
 
         scan_btn = ctk.CTkButton(actions_frame, text="\u26a0  Scan Conflicts",
                                  command=self._go_to_conflicts, width=170, **btn_style)
@@ -90,41 +103,41 @@ class DashboardPage(BasePage):
 
         refresh_btn = ctk.CTkButton(actions_frame, text="\u27f3  Refresh All",
                                     command=self._force_refresh, width=130,
-                                    fg_color="#555555", hover_color="#444444", **btn_style)
+                                    fg_color="#2a2a44", hover_color="#3a3a55", **btn_style)
         refresh_btn.pack(side="left", padx=(0, 8))
 
         open_btn = ctk.CTkButton(actions_frame, text="\u2750  Mods Folder",
                                  command=self._open_mods_folder, width=140,
-                                 fg_color="#555555", hover_color="#444444", **btn_style)
+                                 fg_color="#2a2a44", hover_color="#3a3a55", **btn_style)
         open_btn.pack(side="left", padx=(0, 8))
 
         music_btn = ctk.CTkButton(actions_frame, text="\u266b  Music",
                                   command=lambda: self.app.navigate("music"), width=100,
-                                  fg_color="#555555", hover_color="#444444", **btn_style)
+                                  fg_color="#2a2a44", hover_color="#3a3a55", **btn_style)
         music_btn.pack(side="left")
 
         # Conflict info banner
-        self.info_frame = ctk.CTkFrame(scroll, fg_color="#2a2a1e", corner_radius=10)
+        self.info_frame = ctk.CTkFrame(scroll, fg_color="#1e1e30", corner_radius=12)
         self.info_frame.pack(fill="x", padx=30, pady=(15, 0))
 
         self.xmsbt_info = ctk.CTkLabel(
             self.info_frame, text="Click 'Refresh All' to scan your mod setup.",
-            font=ctk.CTkFont(size=13), text_color="#bbbb88", anchor="w", wraplength=900,
+            font=ctk.CTkFont(size=13), text_color="#7a7a9a", anchor="w", wraplength=900,
         )
         self.xmsbt_info.pack(fill="x", padx=20, pady=14)
 
         # Emulator path status
-        path_frame = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        path_frame = ctk.CTkFrame(scroll, fg_color="#1a1a30", corner_radius=12)
         path_frame.pack(fill="x", padx=30, pady=(15, 10))
 
         self.path_label = ctk.CTkLabel(
-            path_frame, text="Emulator: Not configured",
-            font=ctk.CTkFont(size=13), text_color="#999999", anchor="w",
+            path_frame, text="\u2022  Emulator: Not configured",
+            font=ctk.CTkFont(size=13), text_color="#7a7a9a", anchor="w",
         )
         self.path_label.pack(fill="x", padx=20, pady=14)
 
         # Getting started section (shows when not configured)
-        self.getting_started = ctk.CTkFrame(scroll, fg_color="#1e1e38", corner_radius=10)
+        self.getting_started = ctk.CTkFrame(scroll, fg_color="#141430", corner_radius=12)
         self.getting_started.pack(fill="x", padx=30, pady=(5, 20))
 
         gs_inner = ctk.CTkFrame(self.getting_started, fg_color="transparent")
@@ -143,7 +156,7 @@ class DashboardPage(BasePage):
         ]
         for step in steps:
             ctk.CTkLabel(gs_inner, text=step,
-                         font=ctk.CTkFont(size=12), text_color="#999999",
+                         font=ctk.CTkFont(size=12), text_color="#7a7a9a",
                          anchor="w").pack(fill="x", pady=1)
 
     def on_show(self):
@@ -159,17 +172,21 @@ class DashboardPage(BasePage):
             if settings.eden_sdmc_path:
                 emu = settings.emulator or "Emulator"
                 self.path_label.configure(
-                    text=f"{emu}: {settings.eden_sdmc_path}",
+                    text=f"\u2022  {emu}: {settings.eden_sdmc_path}",
                     text_color="#2fa572")
                 configured = True
             else:
                 self.path_label.configure(
-                    text="Emulator: Not configured \u2014 go to Settings to set up",
+                    text="\u2022  Emulator: Not configured \u2014 go to Settings to set up",
                     text_color="#e94560")
 
             # Show/hide getting started based on config state
             if configured:
                 self.getting_started.pack_forget()
+            else:
+                # Re-show if not currently packed (e.g., after settings reset)
+                if not self.getting_started.winfo_ismapped():
+                    self.getting_started.pack(fill="x", padx=30, pady=(5, 20))
 
             if settings.mods_path and settings.mods_path.exists():
                 mods = self.app.mod_manager.list_mods()
@@ -236,15 +253,15 @@ class DashboardPage(BasePage):
         self.stat_cards["conflicts"].configure(text=str(conflict_count))
 
         if conflict_count > 0:
-            self.info_frame.configure(fg_color="#2e2020")
+            self.info_frame.configure(fg_color="#2a1820")
             self.xmsbt_info.configure(
-                text=f"Found {conflict_count} text file conflict(s). These can cause missing "
+                text=f"\u26a0  Found {conflict_count} text file conflict(s). These can cause missing "
                      f"text in-game. Click 'Fix Text Conflicts' to auto-resolve.",
                 text_color="#e94560")
         else:
-            self.info_frame.configure(fg_color="#1e2e20")
+            self.info_frame.configure(fg_color="#142820")
             self.xmsbt_info.configure(
-                text="No text file conflicts detected. Your mods are compatible.",
+                text="\u2714  No text file conflicts detected. Your mods are compatible.",
                 text_color="#2fa572")
 
         self._refresh_stats_fast()
@@ -310,24 +327,29 @@ class DashboardPage(BasePage):
 
         settings = self.app.config_manager.settings
         resolver = self.app.conflict_resolver
-        if settings.backup_before_merge:
-            for conflict in mergeable:
-                try:
-                    resolver.backup_originals(conflict)
-                except Exception:
-                    pass
 
-        resolved = resolver.resolve_all_auto(mergeable)
-        logger.info("Dashboard", f"Resolved {len(resolved)} conflicts")
+        resolved = resolver.resolve_all_auto(mergeable, create_backup=settings.backup_before_merge)
+        actually_resolved = sum(1 for c in mergeable if c.resolved)
+        failed = len(mergeable) - actually_resolved
+        logger.info("Dashboard", f"Resolved {actually_resolved}/{len(mergeable)} conflicts")
 
-        self._conflict_cache = 0
-        self.stat_cards["conflicts"].configure(text="0")
-        self.info_frame.configure(fg_color="#1e2e20")
-        self.xmsbt_info.configure(text="All text conflicts resolved.", text_color="#2fa572")
+        self._conflict_cache = failed
+        self.stat_cards["conflicts"].configure(text=str(failed))
 
-        messagebox.showinfo("Fixed",
-            f"Merged {len(resolved)} text file(s) into _MergedResources.\n\n"
-            "Text should now display correctly in-game.")
+        if failed == 0:
+            self.info_frame.configure(fg_color="#142820")
+            self.xmsbt_info.configure(text="\u2714  All text conflicts resolved.", text_color="#2fa572")
+        else:
+            self.info_frame.configure(fg_color="#2a1820")
+            self.xmsbt_info.configure(
+                text=f"{failed} conflict(s) could not be auto-merged (overlapping labels).",
+                text_color="#e94560")
+
+        msg = f"Merged {actually_resolved} text file(s) into _MergedResources."
+        if failed > 0:
+            msg += f"\n\n{failed} conflict(s) could not be auto-merged."
+        msg += "\n\nText should now display correctly in-game."
+        messagebox.showinfo("Fixed", msg)
 
     def _fix_error(self, error_msg):
         self.loading_label.configure(text="")
@@ -337,10 +359,10 @@ class DashboardPage(BasePage):
         self.app.navigate("conflicts")
 
     def _open_mods_folder(self):
-        import os
+        from src.utils.file_utils import open_folder
         settings = self.app.config_manager.settings
         if settings.mods_path and settings.mods_path.exists():
-            os.startfile(str(settings.mods_path))
+            open_folder(settings.mods_path)
             logger.info("Dashboard", f"Opened mods folder: {settings.mods_path}")
         else:
             messagebox.showwarning("Warning", "No mods path configured. Go to Settings first.")

@@ -33,6 +33,18 @@ class PluginsPage(BasePage):
                                  corner_radius=8, height=34)
         open_btn.pack(side="right", padx=(5, 0))
 
+        disable_all_btn = ctk.CTkButton(header_frame, text="Disable All", width=100,
+                                        command=self._disable_all,
+                                        fg_color="#8b2e2e", hover_color="#6e2424",
+                                        corner_radius=8, height=34)
+        disable_all_btn.pack(side="right", padx=(5, 0))
+
+        enable_all_btn = ctk.CTkButton(header_frame, text="Enable All", width=100,
+                                       command=self._enable_all,
+                                       fg_color="#2e6b3e", hover_color="#245530",
+                                       corner_radius=8, height=34)
+        enable_all_btn.pack(side="right", padx=(5, 0))
+
         # Plugin count
         self.count_label = ctk.CTkLabel(self, text="",
                                         font=ctk.CTkFont(size=12),
@@ -175,8 +187,55 @@ class PluginsPage(BasePage):
             logger.error("Plugins", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle plugin: {e}")
 
+    def _enable_all(self):
+        """Enable all disabled plugins."""
+        plugins = self.app.plugin_manager.list_plugins()
+        disabled = [p for p in plugins if p.status == PluginStatus.DISABLED]
+        if not disabled:
+            messagebox.showinfo("Info", "All plugins are already enabled.")
+            return
+        confirm = messagebox.askyesno(
+            "Enable All Plugins",
+            f"Enable all {len(disabled)} disabled plugin(s)?")
+        if not confirm:
+            return
+        try:
+            count = self.app.plugin_manager.enable_all()
+            logger.info("Plugins", f"Enabled {count} plugins")
+            messagebox.showinfo("Done", f"Enabled {count} plugin(s).")
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Plugins", f"Enable all failed: {e}")
+            messagebox.showerror("Error", f"Failed to enable all plugins: {e}")
+
+    def _disable_all(self):
+        """Disable all enabled plugins (skips required ones by default)."""
+        plugins = self.app.plugin_manager.list_plugins()
+        enabled = [p for p in plugins if p.status == PluginStatus.ENABLED]
+        if not enabled:
+            messagebox.showinfo("Info", "All plugins are already disabled.")
+            return
+        required = [p for p in enabled if p.known_info and p.known_info.required]
+        skip_msg = ""
+        if required:
+            names = ", ".join(p.display_name for p in required)
+            skip_msg = f"\n\nRequired plugins will be skipped: {names}"
+        confirm = messagebox.askyesno(
+            "Disable All Plugins",
+            f"Disable all {len(enabled)} enabled plugin(s)?{skip_msg}")
+        if not confirm:
+            return
+        try:
+            count = self.app.plugin_manager.disable_all(skip_required=True)
+            logger.info("Plugins", f"Disabled {count} plugins")
+            messagebox.showinfo("Done", f"Disabled {count} plugin(s).")
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Plugins", f"Disable all failed: {e}")
+            messagebox.showerror("Error", f"Failed to disable all plugins: {e}")
+
     def _open_folder(self):
-        import os
+        from src.utils.file_utils import open_folder
         settings = self.app.config_manager.settings
         if settings.plugins_path and settings.plugins_path.exists():
-            os.startfile(str(settings.plugins_path))
+            open_folder(settings.plugins_path)

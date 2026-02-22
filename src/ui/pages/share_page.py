@@ -8,6 +8,7 @@ from src.utils.logger import logger
 class SharePage(BasePage):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
+        self._loaded_profile = None
         self._build_ui()
 
     def _build_ui(self):
@@ -288,7 +289,7 @@ class SharePage(BasePage):
 
     def _import_refresh(self):
         """Re-run comparison after installing plugins."""
-        if hasattr(self, '_loaded_profile') and self._loaded_profile:
+        if self._loaded_profile:
             for w in self.import_result_frame.winfo_children():
                 w.destroy()
 

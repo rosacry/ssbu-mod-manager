@@ -198,6 +198,20 @@ VANILLA_STAGES = {
 CONFLICT_EXTENSIONS = {".xmsbt", ".msbt", ".prc", ".stprm", ".stdat"}
 MERGEABLE_EXTENSIONS = {".xmsbt"}
 
+# Tournament-legal competitive stages (commonly used in official rulesets)
+COMPETITIVE_STAGES = {
+    "ui_stage_id_battlefield",
+    "ui_stage_id_battlefield_s",
+    "ui_stage_id_end",
+    "ui_stage_id_animal_village",    # Smashville
+    "ui_stage_id_animal_city",       # Town and City
+    "ui_stage_id_poke_stadium2",     # Pokemon Stadium 2
+    "ui_stage_id_poke_kalos",        # Kalos Pokemon League
+    "ui_stage_id_stranger_dungeon",  # Hollow Bastion
+    "ui_stage_id_trail_castle",      # Northern Cave
+    "ui_stage_id_yoshi_story",       # Super Happy Tree (Yoshi's Story)
+}
+
 # File categories based on path patterns
 FILE_CATEGORIES = {
     "character": ["fighter/", "ui/replace/chara/", "sound/bank/narration/"],

@@ -95,6 +95,34 @@ class PluginManager:
         plugin.status = PluginStatus.DISABLED
         self.invalidate_cache()
 
+    def enable_all(self) -> int:
+        """Enable all disabled plugins. Returns count enabled."""
+        count = 0
+        for plugin in self.list_plugins():
+            if plugin.status == PluginStatus.DISABLED:
+                try:
+                    self.enable_plugin(plugin)
+                    count += 1
+                except (FileExistsError, OSError):
+                    pass
+        self.invalidate_cache()
+        return count
+
+    def disable_all(self, skip_required: bool = True) -> int:
+        """Disable all enabled plugins. Skips required plugins by default. Returns count disabled."""
+        count = 0
+        for plugin in self.list_plugins():
+            if plugin.status == PluginStatus.ENABLED:
+                if skip_required and plugin.known_info and plugin.known_info.required:
+                    continue
+                try:
+                    self.disable_plugin(plugin)
+                    count += 1
+                except (FileExistsError, OSError):
+                    pass
+        self.invalidate_cache()
+        return count
+
     def get_plugin_info(self, filename: str) -> Optional[KnownPluginInfo]:
         """Get known info for a plugin by filename."""
         clean_name = filename.replace(".disabled", "")

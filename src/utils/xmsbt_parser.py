@@ -2,6 +2,8 @@
 import re
 from pathlib import Path
 from typing import Optional
+from xml.sax.saxutils import escape as xml_escape
+from src.utils.logger import logger
 
 def parse_xmsbt(file_path: Path) -> dict[str, str]:
     """Parse an XMSBT file and return a dict of label -> text."""
@@ -21,22 +23,34 @@ def parse_xmsbt(file_path: Path) -> dict[str, str]:
             label = match.group(1)
             text = match.group(2).strip()
             entries[label] = text
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warn("XMSBT", f"Failed to parse {file_path.name}: {e}")
     return entries
 
 def write_xmsbt(file_path: Path, entries: dict[str, str]) -> None:
-    """Write entries to an XMSBT file."""
+    """Write entries to an XMSBT file.
+
+    Text values are written as-is (not XML-escaped) to preserve any
+    inline formatting tags the game may use. Only label attributes
+    are escaped to keep the XML structure valid.
+    """
     lines = ['<?xml version="1.0" encoding="utf-16"?>', '<xmsbt>']
     for label, text in sorted(entries.items()):
-        lines.append(f'  <entry label="{label}">')
+        safe_label = xml_escape(label, {'"': '&quot;'})
+        # Do NOT escape text content - XMSBT text values can contain
+        # game-specific inline tags and entities that must be preserved
+        lines.append(f'  <entry label="{safe_label}">')
         lines.append(f'    <text>{text}</text>')
         lines.append('  </entry>')
     lines.append('</xmsbt>')
 
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(file_path, 'w', encoding='utf-16') as f:
-        f.write('\n'.join(lines))
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, 'w', encoding='utf-16') as f:
+            f.write('\n'.join(lines))
+    except OSError as e:
+        logger.error("XMSBT", f"Failed to write {file_path}: {e}")
+        raise
 
 def merge_xmsbt_files(file_paths: list[Path]) -> tuple[dict[str, str], set[str]]:
     """

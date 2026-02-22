@@ -11,6 +11,11 @@ class DeveloperPage(BasePage):
         self._build_ui()
         logger.add_listener(self._on_log)
 
+    def destroy(self):
+        """Clean up listener before destruction to avoid TclError."""
+        logger.remove_listener(self._on_log)
+        super().destroy()
+
     def _build_ui(self):
         # Header
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -33,7 +38,7 @@ class DeveloperPage(BasePage):
         copy_btn.pack(side="right")
 
         # Toggle
-        toggle_frame = ctk.CTkFrame(self, fg_color="#242438", corner_radius=10)
+        toggle_frame = ctk.CTkFrame(self, fg_color="#1a1a30", corner_radius=12)
         toggle_frame.pack(fill="x", padx=30, pady=(0, 10))
 
         toggle_inner = ctk.CTkFrame(toggle_frame, fg_color="transparent")
@@ -72,16 +77,16 @@ class DeveloperPage(BasePage):
         log_frame.pack(fill="both", expand=True, padx=30, pady=(0, 15))
 
         self.log_text = tk.Text(
-            log_frame, bg="#1a1a2e", fg="#cccccc", font=("Consolas", 10),
+            log_frame, bg="#0e0e1a", fg="#b0b0cc", font=("Consolas", 10),
             relief="flat", bd=0, highlightthickness=0,
-            wrap="word", insertbackground="#cccccc",
+            wrap="word", insertbackground="#b0b0cc",
             selectbackground="#1f538d", selectforeground="white",
         )
         self.log_text.pack(side="left", fill="both", expand=True)
 
         # Scrollbar
         scrollbar = tk.Scrollbar(log_frame, command=self.log_text.yview,
-                                  bg="#1a1a2e", troughcolor="#1a1a2e")
+                                  bg="#0e0e1a", troughcolor="#0e0e1a")
         scrollbar.pack(side="right", fill="y")
         self.log_text.configure(yscrollcommand=scrollbar.set)
 
@@ -141,7 +146,14 @@ class DeveloperPage(BasePage):
         self.log_text.see(tk.END)
 
     def _on_log(self, entry):
-        """Called when a new log entry is added."""
+        """Called when a new log entry is added (may be from background thread)."""
+        try:
+            self.after(0, lambda e=entry: self._append_log_entry(e))
+        except Exception:
+            pass
+
+    def _append_log_entry(self, entry):
+        """Insert a log entry on the main thread and scroll to end."""
         try:
             self._insert_log_entry(entry)
             self.log_text.see(tk.END)

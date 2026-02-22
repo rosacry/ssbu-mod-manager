@@ -1,8 +1,21 @@
 import os
+import sys
+import subprocess
 import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+
+
+def open_folder(path) -> None:
+    """Open a folder in the system file manager. Cross-platform."""
+    path_str = str(path)
+    if sys.platform == "win32":
+        os.startfile(path_str)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path_str])
+    else:
+        subprocess.Popen(["xdg-open", path_str])
 
 def safe_rename(path: Path, new_name: str) -> Path:
     """Rename a file or directory safely."""

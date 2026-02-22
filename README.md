@@ -8,32 +8,40 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 
 ### Mod Management
 - **Enable/Disable Mods** — Toggle mods on and off with a single click (rename or move method)
+- **Enable/Disable All** — Bulk-toggle all mods with confirmation dialogs
 - **Category Detection** — Mods are automatically categorized by content type (Character, Audio, Stage, UI, Effect, etc.)
 - **Grouping & Filtering** — Group mods by category, filter by status, and search by name
+- **Fix Nested Folders** — Auto-detect and flatten unnecessarily nested mod subfolders
 - **Undo/Redo** — All mod actions support undo (Ctrl+Z) and redo (Ctrl+Y)
 
 ### CSS Editor
 - **1-Click Add Character** — Auto-detects `name_id`, `fighter_kind`, costumes, announcer voice, and display name from mod folders
+- **Generate Custom CSS Template** — Automatically build a CSS mod containing only characters with installed mods
 - **Alphabetical Ordering** — Custom characters are sorted alphabetically on the CSS grid
 - **Auto-Detect & Hide Unused** — Syncs CSS entries with currently installed mods
 - **Manual Editing** — Edit any PRC field directly: `ui_chara_id`, `fighter_kind`, `name_id`, `disp_order`, costume indices, announcer labels
 
 ### Plugin Management
 - **Enable/Disable Plugins** — Manage ARCropolis, HDR, and other Skyline plugins
+- **Enable/Disable All** — Bulk-toggle with automatic protection for required plugins (e.g., ARCropolis)
 - **Known Plugin Info** — Displays descriptions and links for recognized plugins
 
 ### Music Management
 - **3-Column Layout** — Stages on the left, playlist in the middle, available tracks on the right
-- **Audio Preview** — Play WAV, OGG, MP3, and FLAC tracks directly in the app
+- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app
 - **Volume Control** — Adjustable volume slider for playback
 - **Stage Playlists** — Assign tracks to specific stages with drag-to-reorder
+- **Competitive Stages Filter** — Filter stage list to show only tournament-legal stages (Battlefield, Small Battlefield, Final Destination, Smashville, Town and City, Pokemon Stadium 2, Kalos Pokemon League, Hollow Bastion, Northern Cave, Yoshi's Story)
 - **Bulk Operations** — Assign all tracks to all stages, clear all assignments
 - **Save & Apply** — Generates PRC configuration for in-game music
 
 ### Conflict Detection & Resolution
 - **Automatic Scanning** — Detects when multiple mods modify the same game file
 - **Type-Based Grouping** — Conflicts grouped by file type (XMSBT, MSBT, PRC, STPRM, STDAT) with explanations
-- **Auto-Merge** — XMSBT text conflicts can be automatically merged
+- **Auto-Merge** — XMSBT text conflicts are merged using a union strategy (all labels from all mods combined); overlapping labels use last-mod-wins
+- **Original File Management** — After merging, original XMSBT files are renamed to `.xmsbt.merged` to prevent ARCropolis from double-loading both the originals and merged file
+- **Restore Originals** — One-click undo of all merges: restores `.xmsbt.merged` files and cleans up `_MergedResources`
+- **Backup Before Merge** — Configurable automatic backup creation before any merge or resolution operation
 - **Manual Resolution** — Choose which mod's version to keep for non-mergeable conflicts
 
 ### Profile Sharing
@@ -44,6 +52,8 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Multi-Emulator Support** — Works with Eden, Ryujinx, Yuzu, Suyu, Sudachi, Citron, and others
 - **Auto-Detection** — Automatically finds your emulator's SDMC path on startup
 - **Developer Mode** — Built-in debug logging with search, auto-scroll, and clipboard support
+- **Zoom / Scaling** — Ctrl+Plus and Ctrl+Minus to zoom the entire UI in/out (60%–200%), Ctrl+0 to reset; persisted across sessions
+- **Resizable Panels** — Drag the splitter handles between columns on the Music and CSS Editor pages to resize panes
 - **Smooth UI** — Resize debouncing, proper cleanup, and consistent dark theme
 
 ## Screenshots
@@ -52,7 +62,7 @@ The application features a modern dark theme with sidebar navigation:
 
 - **Dashboard** — Overview stats, quick actions, and conflict status
 - **Mods** — Category-grouped mod list with toggle switches
-- **Music** — 3-column layout for stage music assignment
+- **Music** — 3-column resizable layout for stage music assignment
 - **Conflicts** — Type-grouped conflict display with explanations
 - **Settings** — Emulator path configuration and preferences
 
@@ -186,6 +196,7 @@ ssbu-mod-manager/
 │       ├── file_utils.py           # File operation utilities
 │       ├── hashing.py              # PRC hash resolution
 │       ├── logger.py               # In-memory debug logger
+│       ├── nus3audio.py            # NUS3AUDIO container parser (LOPUS/OPUS/IDSP/BWAV)
 │       ├── resource_path.py        # PyInstaller resource paths
 │       └── xmsbt_parser.py         # XMSBT text file parser
 └── tests/                          # Test files
@@ -205,6 +216,9 @@ ssbu-mod-manager/
 |----------|--------|
 | Ctrl+Z | Undo last action |
 | Ctrl+Y | Redo last undone action |
+| Ctrl+Plus | Zoom in (increase UI scale by 10%) |
+| Ctrl+Minus | Zoom out (decrease UI scale by 10%) |
+| Ctrl+0 | Reset zoom to 100% |
 
 ## License
 

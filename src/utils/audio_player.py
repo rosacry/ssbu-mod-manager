@@ -3,12 +3,23 @@ from pathlib import Path
 from typing import Optional
 
 _pygame_available = False
+_pygame_error = ""
 try:
     import pygame
     pygame.mixer.init(frequency=48000, size=-16, channels=2, buffer=4096)
     _pygame_available = True
-except (ImportError, Exception):
-    pass
+except ImportError:
+    _pygame_error = "pygame not installed"
+except Exception as e:
+    _pygame_error = str(e)
+    # Try with different settings
+    try:
+        import pygame
+        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+        _pygame_available = True
+        _pygame_error = ""
+    except Exception:
+        pass
 
 
 class AudioPlayer:
@@ -41,7 +52,15 @@ class AudioPlayer:
     def play(self, file_path: Path) -> tuple[bool, str]:
         """Play an audio file. Returns (success, message)."""
         if not _pygame_available:
-            return False, "Audio playback requires pygame. Install with: pip install pygame"
+            msg = "Audio playback requires pygame. Install with: pip install pygame"
+            if _pygame_error:
+                msg += f"\nInit error: {_pygame_error}"
+            return False, msg
+
+        try:
+            from src.utils.logger import logger
+        except ImportError:
+            logger = None
 
         suffix = file_path.suffix.lower()
 
@@ -58,16 +77,24 @@ class AudioPlayer:
         """Extract and play a NUS3AUDIO file."""
         try:
             from src.utils.nus3audio import extract_and_convert
+            from src.utils.logger import logger
+        except ImportError:
+            from src.utils.nus3audio import extract_and_convert
+            logger = None
+
+        try:
             success, message, temp_path = extract_and_convert(file_path)
             if not success or temp_path is None:
+                if logger:
+                    logger.warn("AudioPlayer", f"NUS3AUDIO conversion failed: {message}")
                 return False, message
             ok, play_msg = self._play_file(temp_path)
             if ok:
                 return True, f"Playing: {file_path.name}"
             return False, play_msg
-        except ImportError:
-            return False, "NUS3AUDIO parser not available"
         except Exception as e:
+            if logger:
+                logger.error("AudioPlayer", f"NUS3AUDIO playback error: {e}")
             return False, f"NUS3AUDIO playback failed: {e}"
 
     def _play_file(self, file_path: Path) -> tuple[bool, str]:
@@ -82,6 +109,8 @@ class AudioPlayer:
             self._paused = False
             return True, f"Playing: {file_path.name}"
         except Exception as e:
+            from src.utils.logger import logger as _logger
+            _logger.error("AudioPlayer", f"Playback failed for {file_path}: {e}")
             return False, f"Playback failed: {e}"
 
     def stop(self):

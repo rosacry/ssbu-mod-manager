@@ -12,6 +12,7 @@ class CSSPage(BasePage):
         super().__init__(parent, app, **kwargs)
         self.selected_index = -1
         self.filtered_indices = []
+        self._updating_fields = False
         self._build_ui()
 
     def _build_ui(self):
@@ -43,14 +44,17 @@ class CSSPage(BasePage):
                                          font=ctk.CTkFont(size=12), text_color="#999999", anchor="w")
         self.status_label.pack(side="left")
 
-        # Main content frame
-        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        # Main content frame with resizable splitter
+        main_frame = tk.PanedWindow(
+            self, orient=tk.HORIZONTAL, sashwidth=6,
+            bg="#12121e", sashpad=0, opaqueresize=False,
+            borderwidth=0, relief="flat", sashcursor="sb_h_double_arrow",
+        )
         main_frame.pack(fill="both", expand=True, padx=30, pady=(0, 5))
 
         # Left panel - character list
         left_frame = ctk.CTkFrame(main_frame, width=420, fg_color="#242438", corner_radius=10)
-        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
-        left_frame.pack_propagate(False)
+        main_frame.add(left_frame, minsize=250, stretch="never")
 
         ctk.CTkLabel(left_frame, text="Characters",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -75,6 +79,14 @@ class CSSPage(BasePage):
             corner_radius=6, height=30, font=ctk.CTkFont(size=11),
         )
         self.auto_hide_btn.pack(fill="x", pady=2)
+
+        self.gen_template_btn = ctk.CTkButton(
+            action_row, text="Generate Custom CSS Template",
+            command=self.generate_css_template, state="disabled",
+            fg_color="#1f538d", hover_color="#163d6a",
+            corner_radius=6, height=30, font=ctk.CTkFont(size=11),
+        )
+        self.gen_template_btn.pack(fill="x", pady=2)
 
         self.search_var = tk.StringVar()
         self.search_var.trace("w", self._update_listbox)
@@ -114,7 +126,7 @@ class CSSPage(BasePage):
 
         # Right panel - character details
         right_frame = ctk.CTkFrame(main_frame, fg_color="#242438", corner_radius=10)
-        right_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        main_frame.add(right_frame, minsize=300, stretch="always")
 
         ctk.CTkLabel(right_frame, text="Character Details",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -190,7 +202,8 @@ class CSSPage(BasePage):
 
     def _enable_buttons(self):
         for btn in [self.save_btn, self.add_btn, self.hide_btn,
-                    self.one_click_btn, self.delete_btn, self.auto_hide_btn]:
+                    self.one_click_btn, self.delete_btn, self.auto_hide_btn,
+                    self.gen_template_btn]:
             btn.configure(state="normal")
 
     def _update_listbox(self, *args):
@@ -219,13 +232,15 @@ class CSSPage(BasePage):
         self.selected_index = self.filtered_indices[list_index]
         chara = self.css_manager.characters[self.selected_index]
 
+        self._updating_fields = True
         for field in self.fields:
             self.fields[field].set(str(chara[field]))
+        self._updating_fields = False
 
         self.autofill_btn.configure(state="normal")
 
     def _on_field_change(self, field):
-        if self.selected_index == -1:
+        if self._updating_fields or self.selected_index == -1:
             return
         val = self.fields[field].get()
         chara = self.css_manager.characters[self.selected_index]
@@ -353,6 +368,7 @@ class CSSPage(BasePage):
 
         try:
             result = self.css_manager.auto_fill_from_config(config_path)
+            self._updating_fields = True
             self.fields["fighter_kind"].set(result["fighter_kind"])
             self.fields["color_num"].set(str(len(result["costumes"])))
             for i in range(8):
@@ -360,6 +376,11 @@ class CSSPage(BasePage):
                     self.fields[f"c0{i}_index"].set(str(result["costumes"][i]))
                 else:
                     self.fields[f"c0{i}_index"].set(str(result["costumes"][0]))
+            self._updating_fields = False
+            # Apply all values at once now
+            chara = self.css_manager.characters[self.selected_index]
+            for field in self.fields:
+                self.css_manager.update_field(chara, field, self.fields[field].get())
             logger.info("CSS", f"Auto-filled from config: {result['fighter_kind']}")
             messagebox.showinfo("Success",
                 f"Auto-filled for {result['fighter_kind']} with "
@@ -367,6 +388,49 @@ class CSSPage(BasePage):
         except Exception as e:
             logger.error("CSS", f"Failed to parse config.json: {e}")
             messagebox.showerror("Error", f"Failed to parse config.json: {e}")
+
+    def generate_css_template(self):
+        """Generate a custom CSS template based on enabled character mods."""
+        if not self.css_manager.mod_folder:
+            messagebox.showwarning("Warning", "Load a CSS mod folder first.")
+            return
+
+        settings = self.app.config_manager.settings
+        if not settings.mods_path or not settings.mods_path.exists():
+            messagebox.showwarning("Warning", "No mods path configured. Go to Settings first.")
+            return
+
+        confirm = messagebox.askyesno(
+            "Generate CSS Template",
+            "This will scan your enabled mods and generate a custom CSS template\n"
+            "containing only the characters that have corresponding mods installed.\n\n"
+            "The template will be saved as '_CustomCSSTemplate' in your mods folder.\n\n"
+            "Continue?",
+        )
+        if not confirm:
+            return
+
+        try:
+            mods_root = str(settings.mods_path)
+            result = self.css_manager.generate_custom_css_template(mods_root, mods_root)
+
+            char_names = [c["display_name"] for c in result["characters_detected"]]
+            char_list = "\n".join(f"  - {n}" for n in sorted(char_names)) if char_names else "  (none detected)"
+
+            summary = (
+                f"Custom CSS Template Generated!\n\n"
+                f"Characters detected: {result['total_characters']}\n"
+                f"Characters hidden: {result['hidden_characters']}\n"
+                f"Output: {result['output_path']}\n\n"
+                f"Detected characters:\n{char_list}\n\n"
+                f"You can copy this template into your CSS mod folder\n"
+                f"or use it as-is. The vanilla characters are preserved."
+            )
+            logger.info("CSS", f"Generated CSS template with {result['total_characters']} characters")
+            messagebox.showinfo("Template Generated", summary)
+        except Exception as e:
+            logger.error("CSS", f"Failed to generate CSS template: {e}")
+            messagebox.showerror("Error", f"Failed to generate CSS template: {e}")
 
     def save_changes(self):
         try:

@@ -12,37 +12,44 @@ class MainWindow(ctk.CTkFrame):
         self.pages = {}
         self.current_page = None
 
-        # Layout: sidebar | content
+        # Layout: sidebar | separator | content
         self.sidebar = Sidebar(self, on_navigate=self.navigate)
         self.sidebar.pack(side="left", fill="y")
 
+        # Subtle vertical separator between sidebar and content
+        import tkinter as tk
+        sep = tk.Frame(self, width=1, bg="#1a1a30")
+        sep.pack(side="left", fill="y")
+
         # Right side: toolbar + content + status bar
-        right = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
+        right = ctk.CTkFrame(self, fg_color="#12121e", corner_radius=0)
         right.pack(side="left", fill="both", expand=True)
 
-        # Toolbar with undo/redo
-        self.toolbar = ctk.CTkFrame(right, height=36, fg_color="#1a1a2e", corner_radius=0)
+        # Toolbar with undo/redo - sleeker design
+        self.toolbar = ctk.CTkFrame(right, height=40, fg_color="#14142a", corner_radius=0)
         self.toolbar.pack(fill="x", side="top")
         self.toolbar.pack_propagate(False)
 
         toolbar_inner = ctk.CTkFrame(self.toolbar, fg_color="transparent")
-        toolbar_inner.pack(fill="x", padx=10, pady=2)
+        toolbar_inner.pack(fill="x", padx=14, pady=4)
 
         self.undo_btn = ctk.CTkButton(
-            toolbar_inner, text="Undo", width=70, height=28,
-            fg_color="#333344", hover_color="#444455",
+            toolbar_inner, text="\u21b6 Undo", width=80, height=30,
+            fg_color="#1e1e38", hover_color="#2a2a4a",
             font=ctk.CTkFont(size=11), corner_radius=6,
             state="disabled", command=self._undo,
+            text_color="#8888aa",
         )
         self.undo_btn.pack(side="left", padx=(0, 4))
 
         self.redo_btn = ctk.CTkButton(
-            toolbar_inner, text="Redo", width=70, height=28,
-            fg_color="#333344", hover_color="#444455",
+            toolbar_inner, text="\u21b7 Redo", width=80, height=30,
+            fg_color="#1e1e38", hover_color="#2a2a4a",
             font=ctk.CTkFont(size=11), corner_radius=6,
             state="disabled", command=self._redo,
+            text_color="#8888aa",
         )
-        self.redo_btn.pack(side="left", padx=(0, 8))
+        self.redo_btn.pack(side="left", padx=(0, 12))
 
         self.action_label = ctk.CTkLabel(
             toolbar_inner, text="",

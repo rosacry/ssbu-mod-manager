@@ -103,8 +103,9 @@ class FileScanner:
                             metadata.fighter_kind = match.group(1)
                         metadata.costume_slots.append(int(match.group(2)))
                 metadata.costume_slots = sorted(set(metadata.costume_slots))
-            except Exception:
-                pass
+            except Exception as e:
+                from src.utils.logger import logger
+                logger.warn("FileScanner", f"Failed to parse config.json in {mod_path.name}: {e}")
 
         return metadata
 

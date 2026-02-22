@@ -46,11 +46,15 @@ class ModManagerApp(ctk.CTk):
         self._resize_after_id = None
         self._last_width = 0
         self._last_height = 0
-        self._resize_overlay = None
+        self._is_maximized = False
+        self._zoom_indicator_id = None
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
+
+        # Set consistent dark background
+        self.configure(fg_color="#0e0e1a")
 
         # Set window icon
         try:
@@ -58,8 +62,11 @@ class ModManagerApp(ctk.CTk):
             icon_path = resource_path("assets/icon.ico")
             if Path(icon_path).exists():
                 self.iconbitmap(icon_path)
-        except Exception:
-            pass
+                logger.info("App", f"Window icon loaded from {icon_path}")
+            else:
+                logger.warn("App", f"Icon file not found: {icon_path}")
+        except Exception as e:
+            logger.warn("App", f"Failed to set window icon: {e}")
 
         # Load param labels
         if not load_param_labels():
@@ -71,8 +78,10 @@ class ModManagerApp(ctk.CTk):
         self.config_manager = ConfigManager()
         settings = self.config_manager.load()
 
-        # Initialize logger
+        # Initialize logger (INFO always logged, DEBUG needs dev mode)
         logger.enabled = settings.debug_mode
+        logger.info("App", "SSBU Mod Manager starting up...")
+        logger.info("App", f"Config loaded - debug_mode={settings.debug_mode}")
 
         # Initialize action history
         self.action_history = action_history
@@ -124,37 +133,115 @@ class ModManagerApp(ctk.CTk):
         # Resize debounce for smoother resizing
         self.bind("<Configure>", self._on_configure)
 
+        # Zoom / scaling keybindings (Ctrl+Plus, Ctrl+Minus, Ctrl+0)
+        self._current_scale = settings.ui_scale
+        self._apply_scale(self._current_scale, save=False)
+        # Bind multiple key combinations for zoom to ensure cross-platform reliability
+        self.bind("<Control-plus>", lambda e: self._zoom_in())
+        self.bind("<Control-equal>", lambda e: self._zoom_in())     # Ctrl+= (unshifted +)
+        self.bind("<Control-minus>", lambda e: self._zoom_out())
+        self.bind("<Control-0>", lambda e: self._zoom_reset())
+        # Windows-specific: also bind KeyPress with keysym check for reliability
+        self.bind("<Control-Key-=>", lambda e: self._zoom_in())
+        self.bind("<Control-Key-minus>", lambda e: self._zoom_out())
+        self.bind("<Control-Key-0>", lambda e: self._zoom_reset())
+        # Numpad keys
+        self.bind("<Control-KP_Add>", lambda e: self._zoom_in())
+        self.bind("<Control-KP_Subtract>", lambda e: self._zoom_out())
+        self.bind("<Control-KP_0>", lambda e: self._zoom_reset())
+        # Fallback: low-level key handler for Windows where keysyms may mismatch
+        self.bind_all("<KeyPress>", self._on_keypress_zoom)
+
         logger.info("App", "Application startup complete")
 
+    def _apply_scale(self, scale: float, save: bool = True):
+        """Apply UI scaling factor and optionally persist it."""
+        self._current_scale = scale
+        ctk.set_widget_scaling(scale)
+        if save:
+            settings = self.config_manager.settings
+            settings.ui_scale = scale
+            self.config_manager.save(settings)
+        logger.info("App", f"UI scale set to {int(scale * 100)}%")
+        # Show brief zoom indicator in status bar
+        if hasattr(self, "main_window"):
+            self.main_window.update_status(f"Zoom: {int(scale * 100)}%")
+            if hasattr(self.main_window, "status_bar"):
+                self.main_window.status_bar.set_zoom(int(scale * 100))
+            # Clear the status message after a short delay
+            if self._zoom_indicator_id:
+                self.after_cancel(self._zoom_indicator_id)
+            self._zoom_indicator_id = self.after(2000, self._update_status)
+
+    def _zoom_in(self):
+        """Increase UI scale by 10%, max 200%."""
+        new_scale = min(2.0, round(self._current_scale + 0.1, 1))
+        if new_scale != self._current_scale:
+            self._apply_scale(new_scale)
+
+    def _zoom_out(self):
+        """Decrease UI scale by 10%, min 60%."""
+        new_scale = max(0.6, round(self._current_scale - 0.1, 1))
+        if new_scale != self._current_scale:
+            self._apply_scale(new_scale)
+
+    def _zoom_reset(self):
+        """Reset UI scale to 100%."""
+        if self._current_scale != 1.0:
+            self._apply_scale(1.0)
+
+    def _on_keypress_zoom(self, event):
+        """Low-level key handler for zoom shortcuts on Windows."""
+        # Check if Ctrl is held (state bit 0x4 on Windows)
+        if not (event.state & 0x4):
+            return
+        # Avoid double-handling if explicit bindings already caught it
+        char = event.char
+        keysym = event.keysym
+        if char == '+' or char == '=' or keysym in ('plus', 'equal', 'KP_Add'):
+            self._zoom_in()
+            return "break"
+        elif char == '-' or keysym in ('minus', 'KP_Subtract'):
+            self._zoom_out()
+            return "break"
+        elif char == '0' or keysym in ('0', 'KP_0'):
+            self._zoom_reset()
+            return "break"
+
     def _on_configure(self, event):
-        """Hide content during resize to prevent visual glitching."""
+        """Handle window resize events smoothly."""
         if event.widget != self or self._shutting_down:
             return
 
         w, h = event.width, event.height
         if w == self._last_width and h == self._last_height:
             return
+
+        # Detect maximize/restore (large instant change)
+        is_state_change = (
+            abs(w - self._last_width) > 100 or abs(h - self._last_height) > 100
+        )
+
         self._last_width = w
         self._last_height = h
 
-        # Show a solid overlay to hide the re-layout
-        if self._resize_overlay is None:
-            import tkinter as tk
-            self._resize_overlay = tk.Frame(self, bg="#1a1a2e")
-        self._resize_overlay.place(x=0, y=0, relwidth=1, relheight=1)
-        self._resize_overlay.lift()
-
-        if self._resize_after_id:
-            self.after_cancel(self._resize_after_id)
-        self._resize_after_id = self.after(80, self._finalize_resize)
+        if is_state_change:
+            # For maximize/restore, just force immediate relayout
+            if self._resize_after_id:
+                self.after_cancel(self._resize_after_id)
+                self._resize_after_id = None
+            self.update_idletasks()
+        else:
+            # For drag resize, debounce the relayout
+            if self._resize_after_id:
+                self.after_cancel(self._resize_after_id)
+            self._resize_after_id = self.after(16, self._finalize_resize)
 
     def _finalize_resize(self):
-        """Remove overlay after resize settles."""
+        """Finalize layout after resize settles."""
         self._resize_after_id = None
         try:
             self.update_idletasks()
-            if self._resize_overlay:
-                self._resize_overlay.place_forget()
         except Exception:
             pass
 
@@ -248,5 +335,6 @@ class ModManagerApp(ctk.CTk):
                 self.main_window.update_status("Emulator not configured")
 
             self.main_window.update_stats(mods=mods, plugins=plugins)
-        except Exception:
+        except Exception as e:
+            logger.warn("App", f"Status bar update failed: {e}")
             self.main_window.update_status("Ready")

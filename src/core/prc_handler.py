@@ -1,12 +1,20 @@
 """Wrapper around pyprc for common PRC operations."""
-import pyprc
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    import pyprc
+    _pyprc_available = True
+except ImportError:
+    pyprc = None
+    _pyprc_available = False
 
 
 class PRCHandler:
     def load(self, path: Path) -> Any:
         """Load a PRC file and return the parsed param object."""
+        if not _pyprc_available:
+            raise ImportError("pyprc is not installed. Install with: pip install pyprc")
         return pyprc.param(str(path))
 
     def save(self, prc_root: Any, path: Path) -> None:
@@ -34,6 +42,8 @@ class PRCHandler:
 
     def set_hash_value(self, ref: Any, field: str, value: str) -> None:
         """Set a hash40 value on a PRC field."""
+        if not _pyprc_available:
+            raise ImportError("pyprc is not installed")
         if value.startswith("0x"):
             ref[field].value = pyprc.hash(int(value, 16))
         else:

@@ -49,5 +49,6 @@ class MSBTHandler:
             msbt.add_data(label)
             # The new entry is at the end of messages
             msbt.TXT2.messages[-1] = text
-        except Exception:
-            pass
+        except Exception as e:
+            from src.utils.logger import logger
+            logger.warn("MSBT", f"Failed to add entry '{label}': {e}")

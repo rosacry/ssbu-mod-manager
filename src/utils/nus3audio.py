@@ -217,23 +217,480 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
 
 
 def _find_sections(data: bytes) -> dict[str, tuple[int, int]]:
-    """Find all sections in a NUS3AUDIO file. Returns {name: (data_offset, data_size)}."""
+    """Find all sections in a NUS3AUDIO file. Returns {name: (data_offset, data_size)}.
+
+    NUS3AUDIO has an 8-byte header ("NUS3" + u32 file_size), then sections.
+    The first section is typically "AUDIINDX" with an 8-byte magic (unlike the
+    other sections which use 4-byte magics).  All subsequent sections use
+    4-byte magic + 4-byte size.
+    """
     sections = {}
     pos = 8  # Skip "NUS3" + total size
+
+    # Handle AUDIINDX section (8-byte magic, 4-byte size)
+    if pos + 12 <= len(data) and data[pos:pos + 8] == b'AUDIINDX':
+        size = struct.unpack_from('<I', data, pos + 8)[0]
+        sections['AUDIINDX'] = (pos + 12, size)
+        pos += 12 + size
+        # Align to 4 bytes
+        if pos % 4:
+            pos += 4 - (pos % 4)
+
+    # Parse remaining sections (4-byte magic + 4-byte size)
     while pos + 8 <= len(data):
-        # Section name (4 or 8 bytes, but we read 4 and check)
         name = data[pos:pos + 4]
         try:
             name_str = name.decode('ascii').strip()
         except UnicodeDecodeError:
             break
         size = struct.unpack_from('<I', data, pos + 4)[0]
+        # Sanity check: size must not exceed remaining data
+        if size > len(data) - pos - 8:
+            break
         sections[name_str] = (pos + 8, size)
         pos += 8 + size
         # Align to 4 bytes
         if pos % 4:
             pos += 4 - (pos % 4)
     return sections
+
+
+def _extract_audio_entries(data: bytes, sections: dict) -> list[bytes]:
+    """Extract individual audio entries from NUS3AUDIO using ADOF offsets."""
+    from src.utils.logger import logger
+    entries = []
+
+    logger.debug("NUS3AUDIO", f"Sections found: {list(sections.keys())}")
+
+    # Get audio entry offsets from ADOF section
+    if 'ADOF' in sections and 'PACK' in sections:
+        adof_off, adof_size = sections['ADOF']
+        pack_off, pack_size = sections['PACK']
+
+        # ADOF contains pairs of (offset, size) for each audio entry
+        num_entries = adof_size // 8
+        for i in range(num_entries):
+            entry_offset = struct.unpack_from('<I', data, adof_off + i * 8)[0]
+            entry_size = struct.unpack_from('<I', data, adof_off + i * 8 + 4)[0]
+            if entry_size > 0 and pack_off + entry_offset + entry_size <= len(data):
+                entries.append(data[pack_off + entry_offset:pack_off + entry_offset + entry_size])
+
+    # Fallback: treat entire PACK as single entry
+    if not entries and 'PACK' in sections:
+        pack_off, pack_size = sections['PACK']
+        if pack_size > 0:
+            entries.append(data[pack_off:pack_off + pack_size])
+
+    return entries
+
+
+# --- IDSP (Nintendo DSP ADPCM) decoder ---
+_DSP_COEF = [
+    (0, 0), (2048, 0), (0, 2048), (1024, 1024),
+    (4096, -2048), (3584, -1536), (3072, -1024), (2560, -512),
+    (4096, -2048), (3584, -1536), (3072, -1024), (4608, -2560),
+    (4200, -2248), (4800, -2300), (5120, -3072), (4384, -2112),
+]
+
+
+def _decode_dsp_adpcm(adpcm_data: bytes, sample_count: int, coefs: list,
+                       initial_hist1: int = 0, initial_hist2: int = 0) -> bytes:
+    """Decode Nintendo DSP ADPCM to 16-bit PCM."""
+    samples = []
+    hist1 = initial_hist1
+    hist2 = initial_hist2
+    pos = 0
+    decoded = 0
+
+    while decoded < sample_count and pos < len(adpcm_data):
+        # Each frame is 8 bytes: 1 header + 7 data bytes = 14 samples
+        if pos >= len(adpcm_data):
+            break
+        header = adpcm_data[pos]
+        scale = 1 << (header & 0x0F)
+        coef_idx = (header >> 4) & 0x0F
+        if coef_idx >= len(coefs):
+            coef_idx = 0
+        coef1, coef2 = coefs[coef_idx]
+        pos += 1
+
+        for byte_i in range(7):
+            if pos >= len(adpcm_data):
+                break
+            byte = adpcm_data[pos]
+            pos += 1
+
+            for nibble in range(2):
+                if decoded >= sample_count:
+                    break
+                if nibble == 0:
+                    nib = (byte >> 4) & 0x0F
+                else:
+                    nib = byte & 0x0F
+
+                # Sign extend
+                if nib >= 8:
+                    nib -= 16
+
+                sample = (nib * scale + (coef1 * hist1 + coef2 * hist2 + 1024)) >> 11
+                sample = max(-32768, min(32767, sample))
+                samples.append(sample)
+                hist2 = hist1
+                hist1 = sample
+                decoded += 1
+
+    # Convert to bytes (16-bit little-endian PCM)
+    import array
+    pcm = array.array('h', samples)
+    return pcm.tobytes()
+
+
+def _idsp_to_wav(audio_data: bytes) -> bytes:
+    """Convert IDSP (Nintendo DSP ADPCM) to WAV."""
+    if len(audio_data) < 0x60:
+        raise ValueError("IDSP data too short")
+
+    # IDSP header parsing
+    # Offset 0x00: "IDSP" magic
+    # Offset 0x04: version/channel count varies
+    channel_count = struct.unpack_from('>I', audio_data, 0x08)[0]
+    sample_rate = struct.unpack_from('>I', audio_data, 0x0C)[0]
+    sample_count = struct.unpack_from('>I', audio_data, 0x10)[0]
+
+    if channel_count == 0:
+        channel_count = 1
+    if channel_count > 2:
+        channel_count = 2
+    if sample_rate == 0 or sample_rate > 200000:
+        sample_rate = 48000
+    if sample_count == 0 or sample_count > 100000000:
+        raise ValueError("Invalid sample count in IDSP")
+
+    # Try to find header size and coefficient locations
+    # IDSP v2/v3 structure varies; try common layouts
+    header_size = struct.unpack_from('>I', audio_data, 0x04)[0]
+    if header_size < 0x40 or header_size > len(audio_data):
+        header_size = 0x60  # Common default
+
+    # Read DSP coefficients (16 pairs per channel, big-endian int16)
+    channels_pcm = []
+    for ch in range(min(channel_count, 2)):
+        coefs = []
+        coef_offset = 0x14 + ch * 0x3C  # Approximate offset for coefficients
+        if coef_offset + 32 > len(audio_data):
+            coefs = list(_DSP_COEF)  # Use defaults
+        else:
+            for j in range(16):
+                if coef_offset + j * 2 + 2 <= len(audio_data):
+                    c = struct.unpack_from('>h', audio_data, coef_offset + j * 2)[0]
+                    coefs.append(c)
+                else:
+                    coefs.append(0)
+            # Reform into pairs
+            coefs = [(coefs[i], coefs[i + 1]) for i in range(0, min(len(coefs), 32), 2)]
+
+        # Calculate data position
+        data_start = header_size + ch * ((sample_count + 13) // 14 * 8)
+        if data_start >= len(audio_data):
+            data_start = header_size
+        adpcm = audio_data[data_start:]
+        pcm = _decode_dsp_adpcm(adpcm, sample_count, coefs)
+        channels_pcm.append(pcm)
+
+    # Interleave channels if stereo
+    if len(channels_pcm) == 2:
+        import array
+        left = array.array('h')
+        left.frombytes(channels_pcm[0])
+        right = array.array('h')
+        right.frombytes(channels_pcm[1])
+        min_len = min(len(left), len(right))
+        interleaved = array.array('h')
+        for i in range(min_len):
+            interleaved.append(left[i])
+            interleaved.append(right[i])
+        pcm_data = interleaved.tobytes()
+    else:
+        pcm_data = channels_pcm[0]
+
+    return _make_wav(pcm_data, channel_count, sample_rate, 16)
+
+
+def _bwav_to_wav(audio_data: bytes) -> bytes:
+    """Convert BWAV to WAV. BWAV can contain DSP ADPCM or PCM16."""
+    if len(audio_data) < 0x40:
+        raise ValueError("BWAV data too short")
+
+    # BWAV header
+    # 0x00: "BWAV"
+    # 0x04: BOM (0xFEFF = LE)
+    # 0x06: version
+    # 0x08: CRC or flags
+    # 0x0C: sample count or offset info varies
+
+    bom = struct.unpack_from('<H', audio_data, 0x04)[0]
+    is_le = (bom == 0xFEFF)
+
+    fmt = '<' if is_le else '>'
+
+    channel_count = struct.unpack_from(f'{fmt}H', audio_data, 0x0E)[0]
+    if channel_count == 0 or channel_count > 8:
+        channel_count = 1
+
+    # Read channel info entries
+    channels_pcm = []
+    sample_rate = 48000
+    sample_count = 0
+
+    for ch in range(min(channel_count, 2)):
+        ch_info_offset = 0x10 + ch * 0x4C  # Approximate channel info offset
+        if ch_info_offset + 0x4C > len(audio_data):
+            break
+
+        codec = struct.unpack_from(f'{fmt}H', audio_data, ch_info_offset)[0]
+        ch_sample_rate = struct.unpack_from(f'{fmt}I', audio_data, ch_info_offset + 0x04)[0]
+        ch_sample_count = struct.unpack_from(f'{fmt}I', audio_data, ch_info_offset + 0x08)[0]
+        data_offset = struct.unpack_from(f'{fmt}I', audio_data, ch_info_offset + 0x10)[0]
+
+        if ch_sample_rate > 0 and ch_sample_rate < 200000:
+            sample_rate = ch_sample_rate
+        if ch_sample_count > sample_count:
+            sample_count = ch_sample_count
+
+        if codec == 0x0000:  # PCM16
+            end = min(data_offset + sample_count * 2, len(audio_data))
+            channels_pcm.append(audio_data[data_offset:end])
+        elif codec == 0x0200:  # DSP ADPCM
+            # Coefficients are embedded in the channel info
+            coefs = []
+            coef_start = ch_info_offset + 0x14
+            for j in range(16):
+                if coef_start + j * 2 + 2 <= len(audio_data):
+                    c = struct.unpack_from(f'{fmt}h', audio_data, coef_start + j * 2)[0]
+                    coefs.append(c)
+                else:
+                    coefs.append(0)
+            coefs = [(coefs[i], coefs[i + 1]) for i in range(0, min(len(coefs), 32), 2)]
+            adpcm = audio_data[data_offset:]
+            pcm = _decode_dsp_adpcm(adpcm, ch_sample_count, coefs)
+            channels_pcm.append(pcm)
+        else:
+            # Unknown codec, skip
+            continue
+
+    if not channels_pcm:
+        raise ValueError("No decodable channels in BWAV")
+
+    # Interleave if stereo
+    if len(channels_pcm) >= 2:
+        import array
+        left = array.array('h')
+        left.frombytes(channels_pcm[0])
+        right = array.array('h')
+        right.frombytes(channels_pcm[1])
+        min_len = min(len(left), len(right))
+        interleaved = array.array('h')
+        for i in range(min_len):
+            interleaved.append(left[i])
+            interleaved.append(right[i])
+        pcm_data = interleaved.tobytes()
+        actual_channels = 2
+    else:
+        pcm_data = channels_pcm[0]
+        actual_channels = 1
+
+    return _make_wav(pcm_data, actual_channels, sample_rate, 16)
+
+
+def _make_wav(pcm_data: bytes, channels: int, sample_rate: int, bits: int) -> bytes:
+    """Create a WAV file from raw PCM data."""
+    byte_rate = sample_rate * channels * bits // 8
+    block_align = channels * bits // 8
+    data_size = len(pcm_data)
+    file_size = 36 + data_size
+
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF', file_size, b'WAVE',
+        b'fmt ', 16,
+        1,  # PCM format
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits,
+        b'data', data_size,
+    )
+    return header + pcm_data
+
+
+def _opus_container_to_ogg(audio_data: bytes) -> bytes:
+    """Convert a raw OPUS container (magic 'OPUS') to standard OGG Opus.
+
+    The OPUS container format found in NUS3AUDIO files:
+    - 4 bytes: "OPUS" magic
+    - Data is essentially LOPUS-format Opus frames following the header.
+    
+    We try several approaches:
+    1. Check if there's a LOPUS-style sub-header (0x80000001..0x80000004)
+    2. Try to extract raw Opus frames directly
+    3. Fall back to treating the data after "OPUS" as raw Opus data
+    """
+    if len(audio_data) < 8:
+        raise ValueError("OPUS container too short")
+
+    # Skip the "OPUS" magic (4 bytes)
+    inner_data = audio_data[4:]
+
+    # Check if the remaining data has a LOPUS sub-header
+    if len(inner_data) >= 4:
+        sub_magic = struct.unpack_from('<I', inner_data, 0)[0]
+        if sub_magic & 0x80000000:
+            # Has LOPUS-style header, convert that
+            return _lopus_to_ogg(inner_data)
+
+    # The OPUS container may have: u32 data_size, then opus frame data
+    # Try parsing as: total_data_size (4 bytes) + opus frames
+    if len(inner_data) >= 4:
+        declared_size = struct.unpack_from('<I', inner_data, 0)[0]
+        # If declared_size is reasonable, it may be a length prefix
+        if 0 < declared_size <= len(inner_data) - 4:
+            # Try to parse as length-prefixed raw opus frames
+            opus_data = inner_data[4:4 + declared_size]
+            try:
+                return _raw_opus_frames_to_ogg(opus_data)
+            except Exception:
+                pass
+
+    # Try the entire inner data as raw opus frames (each prefixed by u32 size)
+    try:
+        return _raw_opus_frames_to_ogg(inner_data)
+    except Exception:
+        pass
+
+    # Last resort: try treating the whole container minus "OPUS" as LOPUS
+    # with a synthetic header
+    return _raw_opus_to_ogg_fallback(inner_data)
+
+
+def _raw_opus_frames_to_ogg(data: bytes) -> bytes:
+    """Convert a sequence of length-prefixed raw Opus frames to OGG Opus.
+
+    Each frame: u32 frame_size + frame_data (frame_size bytes).
+    """
+    frames = []
+    pos = 0
+    while pos + 4 <= len(data):
+        frame_size = struct.unpack_from('<I', data, pos)[0]
+        if frame_size == 0 or frame_size > 0xFFFF:
+            break
+        if pos + 4 + frame_size > len(data):
+            break
+        frames.append(data[pos + 4:pos + 4 + frame_size])
+        # Advance by 4 + frame_size, no fixed slot padding
+        pos += 4 + frame_size
+
+    if not frames:
+        # Try with fixed-size frame slots (common in LOPUS)
+        # Guess frame slot size from first frame
+        pos = 0
+        if pos + 4 <= len(data):
+            first_size = struct.unpack_from('<I', data, pos)[0]
+            if 0 < first_size < 0xFFFF and pos + 4 + first_size <= len(data):
+                frames.append(data[pos + 4:pos + 4 + first_size])
+                # Estimate slot size: try common sizes
+                for slot in [first_size + 4, 0x280, 0x500, 0x200, 0x400]:
+                    test_frames = [frames[0]]
+                    test_pos = slot
+                    valid = True
+                    count = 0
+                    while test_pos + 4 <= len(data) and count < 5:
+                        fs = struct.unpack_from('<I', data, test_pos)[0]
+                        if fs == 0 or fs > slot or test_pos + 4 + fs > len(data):
+                            valid = False
+                            break
+                        test_frames.append(data[test_pos + 4:test_pos + 4 + fs])
+                        test_pos += slot
+                        count += 1
+                    if valid and count >= 2:
+                        # Confirmed slot size, extract all
+                        frames = []
+                        p = 0
+                        while p + 4 <= len(data):
+                            fs = struct.unpack_from('<I', data, p)[0]
+                            if fs == 0 or fs > slot:
+                                break
+                            if p + 4 + fs > len(data):
+                                break
+                            frames.append(data[p + 4:p + 4 + fs])
+                            p += slot
+                        break
+
+    if not frames:
+        raise ValueError("No Opus frames extracted from raw OPUS data")
+
+    return _build_ogg_opus_from_frames(frames, channels=2, sample_rate=48000, pre_skip=312)
+
+
+def _raw_opus_to_ogg_fallback(data: bytes) -> bytes:
+    """Last-resort conversion: treat data as LOPUS with default params."""
+    # Construct a synthetic LOPUS header and parse with _lopus_to_ogg
+    # This creates a fake 0x80000001 header wrapping the data
+    header_size = 0x28
+    synthetic = struct.pack('<II', 0x80000001, header_size)
+    # Pad to header_size
+    synthetic += b'\x00' * (header_size - len(synthetic))
+    # Set sample_rate at 0x0C, channel_count at 0x10, frame_size at 0x14
+    synthetic = synthetic[:0x0C] + struct.pack('<III', 48000, 2, 640) + synthetic[0x1C:]
+    synthetic += data
+
+    return _lopus_to_ogg(synthetic)
+
+
+def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
+                                 sample_rate: int = 48000, pre_skip: int = 312) -> bytes:
+    """Build an OGG Opus file from a list of raw Opus frame data."""
+    serial = 0x53534255  # "SSBU"
+    pages = []
+
+    # Page 0: OpusHead (BOS)
+    head_data = _make_opus_head(channels, pre_skip, sample_rate)
+    head_segs = _segment_table_for_packet(len(head_data))
+    pages.append(_make_ogg_page(head_data, serial, 0, 0, 0x02, head_segs))
+
+    # Page 1: OpusTags
+    tags_data = _make_opus_tags()
+    tags_segs = _segment_table_for_packet(len(tags_data))
+    pages.append(_make_ogg_page(tags_data, serial, 1, 0, 0x00, tags_segs))
+
+    # Data pages
+    samples_per_frame = 960  # 20ms at 48kHz
+    granule = pre_skip
+    page_seq = 2
+    i = 0
+
+    while i < len(opus_frames):
+        page_data_parts = []
+        page_segments = []
+        segs_used = 0
+
+        while i < len(opus_frames) and segs_used < 240:
+            frame = opus_frames[i]
+            frame_segs = _segment_table_for_packet(len(frame))
+            if segs_used + len(frame_segs) > 255:
+                break
+            page_data_parts.append(frame)
+            page_segments.extend(frame_segs)
+            segs_used += len(frame_segs)
+            granule += samples_per_frame
+            i += 1
+
+        flags = 0x04 if i >= len(opus_frames) else 0x00
+        page_data = b''.join(page_data_parts)
+        pages.append(_make_ogg_page(page_data, serial, page_seq, granule, flags, page_segments))
+        page_seq += 1
+
+    return b''.join(pages)
 
 
 # Cache directory for converted audio
@@ -251,6 +708,7 @@ def _get_cache_dir() -> Path:
 def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]]:
     """
     Extract audio from a NUS3AUDIO file and convert to a playable format.
+    Supports LOPUS, IDSP, BWAV, WAV, and OGG formats inside NUS3AUDIO containers.
 
     Returns:
         (success, message, temp_file_path)
@@ -263,9 +721,12 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     except OSError:
         file_size = 0
     cache_key = f"{nus3audio_path.stem}_{file_size}"
-    cached = cache_dir / f"{cache_key}.ogg"
-    if cached.exists():
-        return True, f"Playing: {nus3audio_path.name}", cached
+
+    # Check for any cached format
+    for ext in ('.ogg', '.wav'):
+        cached = cache_dir / f"{cache_key}{ext}"
+        if cached.exists():
+            return True, f"Playing: {nus3audio_path.name}", cached
 
     try:
         with open(nus3audio_path, 'rb') as f:
@@ -277,63 +738,105 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     if len(data) < 8 or data[:4] != b'NUS3':
         return False, "Not a valid NUS3AUDIO file", None
 
-    # Find PACK section (contains the actual audio data)
-    # Simple approach: search for section markers
     sections = _find_sections(data)
 
-    pack_offset = None
-    pack_size = None
+    # Extract audio entries using ADOF if available
+    audio_entries = _extract_audio_entries(data, sections)
 
-    if 'PACK' in sections:
-        pack_offset, pack_size = sections['PACK']
-    else:
-        # Fallback: search for PACK marker
-        idx = data.find(b'PACK')
-        if idx >= 0 and idx + 8 <= len(data):
-            pack_size = struct.unpack_from('<I', data, idx + 4)[0]
-            pack_offset = idx + 8
+    if not audio_entries:
+        return False, "No audio data found in NUS3AUDIO", None
 
-    if pack_offset is None:
-        return False, "No PACK section found in NUS3AUDIO", None
+    # Try the first (usually only) audio entry
+    audio_data = audio_entries[0]
 
-    audio_data = data[pack_offset:pack_offset + pack_size]
-
-    if len(audio_data) < 16:
+    if len(audio_data) < 4:
         return False, "Audio data too short", None
 
-    # Detect format of the audio data
+    # Try each format, returning the first successful conversion
+    result = _try_convert_audio(audio_data, cache_dir, cache_key, nus3audio_path.name)
+    if result[0]:
+        return result
+
+    # If first entry failed and there are more, try others
+    for i, entry in enumerate(audio_entries[1:], 1):
+        if len(entry) < 4:
+            continue
+        result = _try_convert_audio(entry, cache_dir, f"{cache_key}_{i}", nus3audio_path.name)
+        if result[0]:
+            return result
+
+    return False, f"Could not convert audio (format: 0x{struct.unpack_from('<I', audio_data, 0)[0]:08X})", None
+
+
+def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
+                        display_name: str) -> tuple[bool, str, Optional[Path]]:
+    """Try converting audio data from various Nintendo formats to a playable format."""
     # Standard WAV
     if audio_data[:4] == b'RIFF':
         out = cache_dir / f"{cache_key}.wav"
         out.write_bytes(audio_data)
-        return True, f"Playing: {nus3audio_path.name}", out
+        return True, f"Playing: {display_name}", out
 
     # Standard OGG
     if audio_data[:4] == b'OggS':
         out = cache_dir / f"{cache_key}.ogg"
         out.write_bytes(audio_data)
-        return True, f"Playing: {nus3audio_path.name}", out
+        return True, f"Playing: {display_name}", out
 
     # LOPUS (Nintendo Opus) — magic starts with 0x80000001..0x80000004
-    lopus_magic = struct.unpack_from('<I', audio_data, 0)[0]
-    if lopus_magic & 0x80000000:
-        try:
-            ogg_data = _lopus_to_ogg(audio_data)
-            out = cache_dir / f"{cache_key}.ogg"
-            out.write_bytes(ogg_data)
-            return True, f"Playing: {nus3audio_path.name}", out
-        except Exception as e:
-            return False, f"LOPUS conversion failed: {e}", None
+    if len(audio_data) >= 4:
+        lopus_magic = struct.unpack_from('<I', audio_data, 0)[0]
+        if lopus_magic & 0x80000000:
+            try:
+                ogg_data = _lopus_to_ogg(audio_data)
+                out = cache_dir / f"{cache_key}.ogg"
+                out.write_bytes(ogg_data)
+                return True, f"Playing: {display_name}", out
+            except Exception as e:
+                from src.utils.logger import logger
+                logger.warn("NUS3AUDIO", f"LOPUS conversion failed: {e}")
+                pass  # Fall through to try other formats
 
-    # IDSP (Nintendo ADPCM) — not easily convertible in Python
+    # IDSP (Nintendo DSP ADPCM)
     if audio_data[:4] == b'IDSP':
-        return False, "IDSP audio format not supported for preview. Use vgmstream to convert.", None
+        try:
+            wav_data = _idsp_to_wav(audio_data)
+            out = cache_dir / f"{cache_key}.wav"
+            out.write_bytes(wav_data)
+            return True, f"Playing: {display_name}", out
+        except Exception as e:
+            return False, f"IDSP conversion failed: {e}", None
 
     # BWAV
     if audio_data[:4] == b'BWAV':
-        return False, "BWAV audio format not supported for preview.", None
+        try:
+            wav_data = _bwav_to_wav(audio_data)
+            out = cache_dir / f"{cache_key}.wav"
+            out.write_bytes(wav_data)
+            return True, f"Playing: {display_name}", out
+        except Exception as e:
+            return False, f"BWAV conversion failed: {e}", None
 
-    return False, f"Unknown audio format (magic: 0x{lopus_magic:08X})", None
+    # OPUS raw container (magic "OPUS" = 0x4F505553)
+    # Found in some NUS3AUDIO files where audio data starts with "OPUS" header
+    if audio_data[:4] == b'OPUS':
+        try:
+            ogg_data = _opus_container_to_ogg(audio_data)
+            out = cache_dir / f"{cache_key}.ogg"
+            out.write_bytes(ogg_data)
+            return True, f"Playing: {display_name}", out
+        except Exception as e:
+            from src.utils.logger import logger
+            logger.warn("NUS3AUDIO", f"OPUS container conversion failed: {e}")
+            pass  # Fall through
+
+    # MP3
+    if audio_data[:3] == b'ID3' or (len(audio_data) >= 2 and audio_data[0] == 0xFF and (audio_data[1] & 0xE0) == 0xE0):
+        out = cache_dir / f"{cache_key}.mp3"
+        out.write_bytes(audio_data)
+        return True, f"Playing: {display_name}", out
+
+    return False, f"Unsupported audio format", None
 
 
 def cleanup_cache():

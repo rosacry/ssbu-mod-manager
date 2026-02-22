@@ -185,7 +185,10 @@ class SettingsPage(BasePage):
         valid, msg = validate_sdmc_path(path)
         if valid:
             mods = derive_mods_path(path)
-            mod_count = sum(1 for f in mods.iterdir() if f.is_dir()) if mods.exists() else 0
+            try:
+                mod_count = sum(1 for f in mods.iterdir() if f.is_dir()) if mods.exists() else 0
+            except (PermissionError, OSError):
+                mod_count = 0
             self.sdmc_status.configure(
                 text=f"Valid - {mod_count} mods detected | {msg}",
                 text_color="#2fa572")
@@ -235,3 +238,5 @@ class SettingsPage(BasePage):
         self.auto_detect_var.set(True)
         self.backup_var.set(True)
         self.sdmc_status.configure(text="Reset to defaults", text_color="#888888")
+        self.app._update_managers()
+        logger.info("Settings", "Settings reset to defaults")

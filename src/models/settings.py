@@ -17,3 +17,4 @@ class AppSettings:
     backup_before_merge: bool = True
     emulator: str = ""  # Empty = auto-detect
     debug_mode: bool = False
+    ui_scale: float = 1.0  # Zoom level (0.6 to 2.0)

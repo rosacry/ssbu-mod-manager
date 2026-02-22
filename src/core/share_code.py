@@ -80,8 +80,11 @@ class ShareCodeManager:
                 "stage_assignments": profile.music_config.stage_assignments,
             }
 
-        with open(output_path, 'w') as f:
-            json.dump(data, f, indent=2)
+        try:
+            with open(output_path, 'w') as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            raise OSError(f"Failed to save profile to {output_path}: {e}")
 
     def load_profile(self, input_path: Path) -> ShareProfile:
         """Load a profile from a .smbprofile file."""
@@ -98,21 +101,27 @@ class ShareCodeManager:
         )
 
         for m in data.get("mods", []):
-            profile.mods.append(ProfileModEntry(
-                name=m["name"],
-                enabled=m.get("enabled", True),
-                file_hash=m.get("file_hash", ""),
-                download_url=m.get("download_url"),
-            ))
+            try:
+                profile.mods.append(ProfileModEntry(
+                    name=m.get("name", ""),
+                    enabled=m.get("enabled", True),
+                    file_hash=m.get("file_hash", ""),
+                    download_url=m.get("download_url"),
+                ))
+            except (KeyError, TypeError):
+                continue
 
         for p in data.get("plugins", []):
-            profile.plugins.append(ProfilePluginEntry(
-                filename=p["filename"],
-                enabled=p.get("enabled", True),
-                file_size=p.get("file_size", 0),
-                file_hash=p.get("file_hash", ""),
-                embedded_data=p.get("embedded_data"),
-            ))
+            try:
+                profile.plugins.append(ProfilePluginEntry(
+                    filename=p.get("filename", ""),
+                    enabled=p.get("enabled", True),
+                    file_size=p.get("file_size", 0),
+                    file_hash=p.get("file_hash", ""),
+                    embedded_data=p.get("embedded_data"),
+                ))
+            except (KeyError, TypeError):
+                continue
 
         mc = data.get("music_config")
         if mc:
@@ -168,21 +177,27 @@ class ShareCodeManager:
 
     def _hash_mod(self, mod_path: Path) -> str:
         """Hash a mod folder for identity."""
-        config = mod_path / "config.json"
-        if config.exists():
-            return self._hash_file(config)
-        # Fallback: hash sorted list of relative file paths
-        files = sorted(str(f.relative_to(mod_path)) for f in mod_path.rglob("*") if f.is_file())
-        content = "\n".join(files).encode()
-        return f"sha256:{hashlib.sha256(content).hexdigest()[:16]}"
+        try:
+            config = mod_path / "config.json"
+            if config.exists():
+                return self._hash_file(config)
+            # Fallback: hash sorted list of relative file paths
+            files = sorted(str(f.relative_to(mod_path)) for f in mod_path.rglob("*") if f.is_file())
+            content = "\n".join(files).encode()
+            return f"sha256:{hashlib.sha256(content).hexdigest()[:16]}"
+        except (PermissionError, OSError):
+            return ""
 
     def _hash_file(self, path: Path) -> str:
         """SHA-256 hash of a file (first 16 hex chars for brevity)."""
-        h = hashlib.sha256()
-        with open(path, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192), b''):
-                h.update(chunk)
-        return f"sha256:{h.hexdigest()[:16]}"
+        try:
+            h = hashlib.sha256()
+            with open(path, 'rb') as f:
+                for chunk in iter(lambda: f.read(8192), b''):
+                    h.update(chunk)
+            return f"sha256:{h.hexdigest()[:16]}"
+        except (PermissionError, OSError):
+            return ""
 
     def install_embedded_plugins(self, profile: ShareProfile,
                                 plugins_path: Path) -> dict:
