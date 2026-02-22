@@ -52,7 +52,7 @@ class ModManager:
             return self._mods
 
         self._mods = []
-        if not self.mods_path.exists():
+        if not self.mods_path.exists() or self.mods_path == Path("."):
             self._cached = True
             return self._mods
 
@@ -253,7 +253,9 @@ class ModManager:
     def enable_all(self) -> int:
         """Enable all disabled mods. Returns count of mods enabled."""
         count = 0
-        for mod in self.list_mods():
+        # Snapshot list to avoid iteration-during-mutation
+        mods_snapshot = list(self.list_mods())
+        for mod in mods_snapshot:
             if mod.status == ModStatus.DISABLED:
                 try:
                     self.enable_mod(mod)
@@ -266,7 +268,9 @@ class ModManager:
     def disable_all(self) -> int:
         """Disable all enabled mods. Returns count of mods disabled."""
         count = 0
-        for mod in self.list_mods():
+        # Snapshot list to avoid iteration-during-mutation
+        mods_snapshot = list(self.list_mods())
+        for mod in mods_snapshot:
             if mod.status == ModStatus.ENABLED:
                 try:
                     self.disable_mod(mod)

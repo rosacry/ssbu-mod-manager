@@ -17,7 +17,7 @@ class PluginManager:
             return self._plugins
 
         self._plugins = []
-        if not self.plugins_path.exists():
+        if not self.plugins_path.exists() or self.plugins_path == Path("."):
             self._cached = True
             return self._plugins
 
@@ -98,7 +98,9 @@ class PluginManager:
     def enable_all(self) -> int:
         """Enable all disabled plugins. Returns count enabled."""
         count = 0
-        for plugin in self.list_plugins():
+        # Snapshot list to avoid iteration-during-mutation
+        plugins_snapshot = list(self.list_plugins())
+        for plugin in plugins_snapshot:
             if plugin.status == PluginStatus.DISABLED:
                 try:
                     self.enable_plugin(plugin)
@@ -111,7 +113,9 @@ class PluginManager:
     def disable_all(self, skip_required: bool = True) -> int:
         """Disable all enabled plugins. Skips required plugins by default. Returns count disabled."""
         count = 0
-        for plugin in self.list_plugins():
+        # Snapshot list to avoid iteration-during-mutation
+        plugins_snapshot = list(self.list_plugins())
+        for plugin in plugins_snapshot:
             if plugin.status == PluginStatus.ENABLED:
                 if skip_required and plugin.known_info and plugin.known_info.required:
                     continue

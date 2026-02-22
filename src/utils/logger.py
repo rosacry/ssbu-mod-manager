@@ -69,6 +69,12 @@ class AppLogger:
         tb = traceback.format_exc()
         self.log(source, f"{message}\n{tb}", "ERROR")
 
+    @property
+    def entries(self):
+        """Thread-safe access to log entries. Returns a snapshot list."""
+        with self._lock:
+            return list(self._logs)
+
     def get_logs(self) -> list[str]:
         with self._lock:
             return list(self._logs)

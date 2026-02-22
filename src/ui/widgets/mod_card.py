@@ -72,10 +72,14 @@ class ModCard(ctk.CTkFrame):
     def _toggle(self):
         if self._on_toggle:
             self._on_toggle(self.mod)
-        if self.mod.status == ModStatus.ENABLED:
-            self.name_label.configure(text_color="white")
-        else:
-            self.name_label.configure(text_color="#666666")
+        try:
+            if self.winfo_exists():
+                if self.mod.status == ModStatus.ENABLED:
+                    self.name_label.configure(text_color="white")
+                else:
+                    self.name_label.configure(text_color="#666666")
+        except Exception:
+            pass
 
     def update_card(self):
         name_color = "white" if self.mod.status == ModStatus.ENABLED else "#666666"

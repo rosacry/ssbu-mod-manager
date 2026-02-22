@@ -106,6 +106,6 @@ def validate_sdmc_path(sdmc: Path) -> Tuple[bool, str]:
         issues.append("Plugins directory not found")
 
     if issues:
-        return True, "Path exists but: " + "; ".join(issues)
+        return False, "Path exists but: " + "; ".join(issues)
 
     return True, "Valid SSBU setup detected"

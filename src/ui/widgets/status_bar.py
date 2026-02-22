@@ -1,5 +1,6 @@
 """Bottom status bar widget."""
 import customtkinter as ctk
+from src import __version__
 
 
 class StatusBar(ctk.CTkFrame):
@@ -22,7 +23,7 @@ class StatusBar(ctk.CTkFrame):
         # Version label
         ver_label = ctk.CTkLabel(
             self,
-            text="SSBU Mod Manager v2.3.0",
+            text=f"SSBU Mod Manager v{__version__}",
             font=ctk.CTkFont(size=10),
             text_color="#353550",
         )

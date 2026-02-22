@@ -1,6 +1,7 @@
 """Sidebar navigation component with icons and active indicator."""
 import customtkinter as ctk
 import tkinter as tk
+from src import __version__
 
 SIDEBAR_WIDTH = 230
 SIDEBAR_BG = "#0e0e1a"
@@ -17,6 +18,8 @@ NAV_ITEMS = [
     ("music", "\u266b", "Music"),
     ("conflicts", "\u26a0", "Conflicts"),
     ("share", "\u21c4", "Profiles"),
+    ("migration", "\u21e8", "Migration"),
+    ("online_compat", "\u21af", "Online Guide"),
 ]
 
 
@@ -54,7 +57,7 @@ class Sidebar(ctk.CTkFrame):
         ver_frame = ctk.CTkFrame(brand_inner, fg_color="#1a1a30", corner_radius=6,
                                  height=22)
         ver_frame.pack(anchor="w", pady=(4, 0))
-        ctk.CTkLabel(ver_frame, text="v2.3.0",
+        ctk.CTkLabel(ver_frame, text=f"v{__version__}",
                      font=ctk.CTkFont(size=10), text_color="#555570",
                      ).pack(padx=8, pady=2)
 

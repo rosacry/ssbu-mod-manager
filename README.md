@@ -45,6 +45,18 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Backup Before Merge** — Configurable automatic backup creation before any merge or resolution operation
 - **Manual Resolution** — Choose which mod's version to keep for non-mergeable conflicts
 
+### Emulator Migration
+- **Emulator-to-Emulator Migration** — Migrate all SSBU data (mods, plugins, saves, etc.) between supported emulators with one click
+- **Smart Scanning** — Detects installed emulators and scans their SSBU data (mods, plugins, Skyline framework, RomFS/ExeFS overrides, save data, NAND system files)
+- **Selective Migration** — Choose exactly which data categories to migrate (mods, plugins, saves, etc.)
+- **Export / Import** — Export your entire SSBU setup to a portable folder, or import from a previously exported folder
+- **LDN Network Awareness** — Reminds users that different emulators run separate online multiplayer networks and rooms are NOT cross-compatible
+
+### Online Compatibility Guide
+- **Mod Sync Guide** — In-app reference explaining which mods both players need for online play vs. which are client-side only
+- **Automatic Mod Analysis** — Categorizes your enabled mods by online impact: gameplay mods (both need), visual/audio mods (client-side only), custom stages (shared if selected)
+- **Shareable Summary** — Generates a copyable text summary of your mod setup to share with friends so they know what to install
+
 ### Profile Sharing
 - **Export/Import** — Share your mod setup as a portable profile code
 - **Profile Codes** — Compact base64-encoded strings representing your mod configuration
@@ -133,6 +145,8 @@ The executable will be in the `dist/` folder.
 4. **Manage Music** — Assign custom music tracks to stages in the Music page
 5. **Check Conflicts** — Visit the Conflicts page to detect and resolve file conflicts between mods
 6. **Share Setup** — Export your mod configuration as a profile code on the Profiles page
+7. **Migrate Emulators** — Use Migration to copy your SSBU data between emulators (e.g., Ryujinx → Eden)
+8. **Check Online Compatibility** — Visit the Online Guide to see which mods both players need for multiplayer
 
 ## Project Structure
 
@@ -154,6 +168,7 @@ ssbu-mod-manager/
 │   │   ├── conflict_detector.py    # File conflict detection
 │   │   ├── conflict_resolver.py    # Conflict resolution & merging
 │   │   ├── css_manager.py          # CSS database management
+│   │   ├── emulator_migrator.py    # Emulator-to-emulator migration
 │   │   ├── file_scanner.py         # Mod file scanning
 │   │   ├── mod_manager.py          # Mod enable/disable logic
 │   │   ├── msbt_handler.py         # MSBT message file handling
@@ -179,7 +194,9 @@ ssbu-mod-manager/
 │   │   │   ├── dashboard_page.py   # Dashboard overview
 │   │   │   ├── developer_page.py   # Developer debug log
 │   │   │   ├── mods_page.py        # Mod management page
+│   │   │   ├── migration_page.py   # Emulator migration page
 │   │   │   ├── music_page.py       # Music management page
+│   │   │   ├── online_compat_page.py # Online compatibility guide
 │   │   │   ├── plugins_page.py     # Plugin management page
 │   │   │   ├── settings_page.py    # Settings configuration
 │   │   │   └── share_page.py       # Profile sharing page

@@ -43,7 +43,9 @@ class ConfigManager:
 
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        except OSError:
+        except OSError as e:
+            from src.utils.logger import logger
+            logger.error("Config", f"Failed to create config directory: {e}")
             return
 
         data = {
@@ -65,8 +67,9 @@ class ConfigManager:
         try:
             with open(CONFIG_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
-        except OSError:
-            pass
+        except OSError as e:
+            from src.utils.logger import logger
+            logger.error("Config", f"Failed to save config: {e}")
 
     def update_setting(self, key: str, value) -> None:
         """Update a single setting and save."""

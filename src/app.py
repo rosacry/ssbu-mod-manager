@@ -31,6 +31,8 @@ from src.ui.pages.conflicts_page import ConflictsPage
 from src.ui.pages.share_page import SharePage
 from src.ui.pages.settings_page import SettingsPage
 from src.ui.pages.developer_page import DeveloperPage
+from src.ui.pages.migration_page import MigrationPage
+from src.ui.pages.online_compat_page import OnlineCompatPage
 
 
 class ModManagerApp(ctk.CTk):
@@ -235,7 +237,10 @@ class ModManagerApp(ctk.CTk):
             # For drag resize, debounce the relayout
             if self._resize_after_id:
                 self.after_cancel(self._resize_after_id)
-            self._resize_after_id = self.after(16, self._finalize_resize)
+            try:
+                self._resize_after_id = self.after(16, self._finalize_resize)
+            except Exception:
+                pass
 
     def _finalize_resize(self):
         """Finalize layout after resize settles."""
@@ -289,6 +294,8 @@ class ModManagerApp(ctk.CTk):
             "music": MusicPage(self.main_window.content, self),
             "conflicts": ConflictsPage(self.main_window.content, self),
             "share": SharePage(self.main_window.content, self),
+            "migration": MigrationPage(self.main_window.content, self),
+            "online_compat": OnlineCompatPage(self.main_window.content, self),
             "settings": SettingsPage(self.main_window.content, self),
             "developer": DeveloperPage(self.main_window.content, self),
         }
