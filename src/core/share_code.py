@@ -81,14 +81,14 @@ class ShareCodeManager:
             }
 
         try:
-            with open(output_path, 'w') as f:
+            with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
         except OSError as e:
             raise OSError(f"Failed to save profile to {output_path}: {e}")
 
     def load_profile(self, input_path: Path) -> ShareProfile:
         """Load a profile from a .smbprofile file."""
-        with open(input_path, 'r') as f:
+        with open(input_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         profile = ShareProfile(

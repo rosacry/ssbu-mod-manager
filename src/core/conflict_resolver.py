@@ -1,5 +1,6 @@
 """Resolve conflicts between mods - especially XMSBT merging."""
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 from src.models.conflict import FileConflict, ResolutionStrategy
@@ -55,7 +56,6 @@ class ConflictResolver:
                 backup_dest = originals_dir / mod_name / conflict.relative_path
                 backup_dest.parent.mkdir(parents=True, exist_ok=True)
                 if not backup_dest.exists():
-                    import shutil
                     shutil.move(str(mod_path), str(backup_dest))
                     disabled_count += 1
                     # Clean up empty parent directories in the mod folder
@@ -117,7 +117,6 @@ class ConflictResolver:
             output_path = self.merged_output_dir / conflict.relative_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            import shutil
             shutil.copy2(source, output_path)
             conflict.resolution = strategy
             conflict.resolved = True
@@ -135,7 +134,6 @@ class ConflictResolver:
             output_path = self.merged_output_dir / conflict.relative_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            import shutil
             shutil.copy2(source, output_path)
             conflict.resolution = ResolutionStrategy.MANUAL
             conflict.resolved = True
@@ -179,7 +177,6 @@ class ConflictResolver:
         Also removes the merged XMSBT files from _MergedResources.
         Returns count of files restored.
         """
-        import shutil
         count = 0
         if not self.mods_root.exists():
             return count

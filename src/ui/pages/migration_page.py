@@ -14,6 +14,8 @@ from src.paths import auto_detect_all_emulators, EMULATOR_PATHS
 from src.core.emulator_migrator import (
     scan_emulator_data, create_migration_plan, execute_migration,
     export_ssbu_data, import_ssbu_data, get_emulator_sdmc_path,
+    direct_export_emulator_data, direct_import_emulator_data,
+    scan_emulator_extended_data,
 )
 from src.utils.logger import logger
 
@@ -154,26 +156,96 @@ class MigrationPage(BasePage):
         export_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
         export_section.pack(fill="x", pady=(0, 15))
 
-        ctk.CTkLabel(export_section, text="Export / Import Data",
+        ctk.CTkLabel(export_section, text="Direct Export / Import",
                      font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(export_section,
-                     text="Export your SSBU data to a folder (for backup or manual transfer), or import from an exported folder.",
+                     text="Export ALL emulator data directly — no need to use the emulator's own export tool. "
+                          "This reads data straight from the emulator's AppData directories, including keys, "
+                          "firmware, and profiles that aren't in the SDMC root.",
                      font=ctk.CTkFont(size=12), text_color="#999999", anchor="w", wraplength=700
                      ).pack(fill="x", padx=15, pady=(0, 10))
 
-        exp_btn_frame = ctk.CTkFrame(export_section, fg_color="transparent")
-        exp_btn_frame.pack(fill="x", padx=15, pady=(5, 15))
+        # Direct export info note
+        direct_note = ctk.CTkFrame(export_section, fg_color="#1a1a30", corner_radius=6)
+        direct_note.pack(fill="x", padx=15, pady=(0, 8))
+        ctk.CTkLabel(direct_note,
+            text="\u2139  Direct Export reads from emulator directories automatically — "
+                 "you do NOT need to open the emulator first or use its Data Manager page.",
+            font=ctk.CTkFont(size=11), text_color="#6688bb", anchor="w",
+            wraplength=680, justify="left"
+        ).pack(fill="x", padx=12, pady=8)
 
-        ctk.CTkButton(exp_btn_frame, text="\u21e9  Export to Folder", width=180,
-                      fg_color="#1f538d", hover_color="#163b6a",
-                      command=self._export_data, height=36, corner_radius=8
-                      ).pack(side="left", padx=(0, 10))
+        # Export emulator selection
+        exp_sel_frame = ctk.CTkFrame(export_section, fg_color="transparent")
+        exp_sel_frame.pack(fill="x", padx=15, pady=(0, 5))
+        ctk.CTkLabel(exp_sel_frame, text="Export from:",
+                     font=ctk.CTkFont(size=13), anchor="w").pack(side="left")
+        self.export_emu_var = ctk.StringVar(value=emulator_names[0] if emulator_names else "")
+        ctk.CTkOptionMenu(exp_sel_frame, variable=self.export_emu_var,
+                          values=emulator_names, width=180, height=32,
+                          command=self._on_export_emu_changed
+                          ).pack(side="left", padx=10)
+        self._export_emu_status = ctk.CTkLabel(exp_sel_frame, text="",
+                                               font=ctk.CTkFont(size=11),
+                                               text_color="#888888", anchor="w")
+        self._export_emu_status.pack(side="left", padx=5)
+
+        # Extra data checkboxes
+        self._extra_cat_frame = ctk.CTkFrame(export_section, fg_color="#1e1e38", corner_radius=8)
+        self._extra_cat_frame.pack(fill="x", padx=15, pady=(0, 8))
+        ctk.CTkLabel(self._extra_cat_frame, text="Extended Data (beyond SDMC):",
+                     font=ctk.CTkFont(size=13, weight="bold"), anchor="w"
+                     ).pack(fill="x", padx=12, pady=(10, 5))
+
+        self.extra_include_sdmc = ctk.BooleanVar(value=True)
+        self.extra_include_extra = ctk.BooleanVar(value=True)
+
+        row_sdmc = ctk.CTkFrame(self._extra_cat_frame, fg_color="transparent")
+        row_sdmc.pack(fill="x", padx=12, pady=2)
+        ctk.CTkCheckBox(row_sdmc, text="SDMC Data (mods, plugins, saves)",
+                        variable=self.extra_include_sdmc,
+                        font=ctk.CTkFont(size=12)).pack(side="left")
+
+        row_extra = ctk.CTkFrame(self._extra_cat_frame, fg_color="transparent")
+        row_extra.pack(fill="x", padx=12, pady=2)
+        ctk.CTkCheckBox(row_extra, text="Extended Data (keys, firmware, profiles)",
+                        variable=self.extra_include_extra,
+                        font=ctk.CTkFont(size=12)).pack(side="left")
+
+        self._extra_details = ctk.CTkLabel(self._extra_cat_frame, text="",
+                                           font=ctk.CTkFont(size=11),
+                                           text_color="#888888", anchor="w",
+                                           wraplength=680, justify="left")
+        self._extra_details.pack(fill="x", padx=12, pady=(3, 8))
+
+        exp_btn_frame = ctk.CTkFrame(export_section, fg_color="transparent")
+        exp_btn_frame.pack(fill="x", padx=15, pady=(5, 5))
+
+        self._direct_export_btn = ctk.CTkButton(
+            exp_btn_frame, text="\u21e9  Direct Export", width=180,
+            fg_color="#2fa572", hover_color="#248a5d",
+            command=self._direct_export, height=36, corner_radius=8)
+        self._direct_export_btn.pack(side="left", padx=(0, 10))
 
         ctk.CTkButton(exp_btn_frame, text="\u21e7  Import from Folder", width=180,
                       fg_color="#555555", hover_color="#444444",
                       command=self._import_data, height=36, corner_radius=8
                       ).pack(side="left")
+
+        # Export progress
+        self._export_progress_frame = ctk.CTkFrame(export_section, fg_color="transparent")
+        self._export_progress_frame.pack(fill="x", padx=15, pady=(0, 5))
+
+        self._export_status = ctk.CTkLabel(self._export_progress_frame, text="",
+                                           font=ctk.CTkFont(size=11),
+                                           text_color="#6688bb", anchor="w")
+        self._export_progress_bar = ctk.CTkProgressBar(self._export_progress_frame,
+                                                        height=4, fg_color="#2a2a45",
+                                                        progress_color="#2fa572")
+        # Not shown until export starts
+
+        ctk.CTkFrame(export_section, height=8, fg_color="transparent").pack()
 
         # === Section 3: Detected Emulators Info ===
         info_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
@@ -447,8 +519,124 @@ class MigrationPage(BasePage):
                 f"Active emulator changed to {emulator_name}.\n"
                 f"SDMC path: {path}")
 
+    def _on_export_emu_changed(self, _value=None):
+        """Update export section when emulator selection changes."""
+        emu = self.export_emu_var.get()
+        sdmc = get_emulator_sdmc_path(emu)
+
+        if sdmc:
+            self._export_emu_status.configure(text=f"Found: {sdmc}", text_color="#2fa572")
+            # Show extended data info
+            extra_items = scan_emulator_extended_data(emu)
+            found_extra = [i for i in extra_items if i.exists]
+            if found_extra:
+                labels = ", ".join(i.label for i in found_extra)
+                self._extra_details.configure(
+                    text=f"Available extended data: {labels}")
+            else:
+                self._extra_details.configure(
+                    text="No extended data directories found for this emulator.")
+        else:
+            self._export_emu_status.configure(
+                text="Not installed or no data found", text_color="#e94560")
+            self._extra_details.configure(text="")
+
+    def _direct_export(self):
+        """Direct export: reads data from emulator directories without emulator UI."""
+        if self._migrating:
+            return
+
+        emu = self.export_emu_var.get()
+        if not get_emulator_sdmc_path(emu):
+            messagebox.showwarning("Not Found",
+                f"{emu} data not found. Make sure it is installed with SSBU data.")
+            return
+
+        if not self.extra_include_sdmc.get() and not self.extra_include_extra.get():
+            messagebox.showwarning("Nothing Selected",
+                "Select at least 'SDMC Data' or 'Extended Data' to export.")
+            return
+
+        folder = filedialog.askdirectory(title="Select Export Destination Folder")
+        if not folder:
+            return
+
+        import time as _t
+        export_path = Path(folder) / f"ssbu-{emu.lower()}-export-{_t.strftime('%Y%m%d')}"
+
+        if not messagebox.askyesno("Confirm Direct Export",
+            f"Export {emu} data directly to:\n{export_path}\n\n"
+            f"Include SDMC: {'Yes' if self.extra_include_sdmc.get() else 'No'}\n"
+            f"Include Extended: {'Yes' if self.extra_include_extra.get() else 'No'}\n\n"
+            f"This reads from emulator directories — no emulator UI needed."):
+            return
+
+        self._migrating = True
+        self._direct_export_btn.configure(state="disabled", text="Exporting...")
+        self._export_status.pack(fill="x", pady=(5, 2))
+        self._export_progress_bar.pack(fill="x", pady=(0, 5))
+        self._export_progress_bar.set(0)
+        self._export_status.configure(text="Starting export...", text_color="#6688bb")
+
+        def progress_cb(msg, frac):
+            try:
+                self.after(0, lambda m=msg, f=frac: self._update_export_progress(m, f))
+            except Exception:
+                pass
+
+        def run():
+            try:
+                result = direct_export_emulator_data(
+                    emulator_name=emu,
+                    export_path=export_path,
+                    include_sdmc=self.extra_include_sdmc.get(),
+                    include_extra=self.extra_include_extra.get(),
+                    progress_callback=progress_cb,
+                )
+                self.after(0, lambda: self._direct_export_done(result, export_path))
+            except Exception as e:
+                logger.error("Migration", f"Direct export failed: {e}")
+                self.after(0, lambda: self._direct_export_done(None, export_path))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _update_export_progress(self, message: str, fraction: float):
+        try:
+            self._export_status.configure(text=message)
+            self._export_progress_bar.set(fraction)
+        except Exception:
+            pass
+
+    def _direct_export_done(self, result, export_path: Path):
+        self._migrating = False
+        self._direct_export_btn.configure(state="normal", text="\u21e9  Direct Export")
+
+        if result is None:
+            self._export_status.configure(text="Export failed!", text_color="#e94560")
+            messagebox.showerror("Export Failed", "An unexpected error occurred during export.")
+            return
+
+        if result.success:
+            size_mb = result.bytes_copied / (1024 * 1024)
+            self._export_status.configure(
+                text=f"Exported {result.files_copied} files ({size_mb:.1f} MB)",
+                text_color="#2fa572")
+            self._export_progress_bar.set(1.0)
+            messagebox.showinfo("Export Complete",
+                f"Direct export complete!\n\n"
+                f"Files exported: {result.files_copied}\n"
+                f"Data size: {size_mb:.1f} MB\n"
+                f"Time: {result.duration_seconds:.1f} seconds\n"
+                f"Saved to: {export_path}\n\n"
+                f"You can import this into any emulator using the Import button.")
+        else:
+            self._export_status.configure(text="Export had errors", text_color="#d4a017")
+            messagebox.showwarning("Export Warnings",
+                f"Export completed with {len(result.errors)} error(s):\n"
+                + "\n".join(result.errors[:10]))
+
     def _export_data(self):
-        """Export SSBU data to a user-chosen folder."""
+        """Legacy export: SDMC data only to a user-chosen folder."""
         settings = self.app.config_manager.settings
         if not settings.eden_sdmc_path:
             messagebox.showwarning("Warning", "Set up your emulator SDMC path in Settings first.")
@@ -473,7 +661,7 @@ class MigrationPage(BasePage):
 
         def run_export():
             def progress_cb(msg, frac):
-                pass  # Silent for export
+                pass  # Silent for legacy export
 
             result = export_ssbu_data(
                 settings.eden_sdmc_path, export_path,
@@ -506,35 +694,76 @@ class MigrationPage(BasePage):
 
         import_path = Path(folder)
 
-        # Check if it looks like SSBU data
-        items = scan_emulator_data(import_path)
-        found = [i for i in items if i.exists]
-        if not found:
-            messagebox.showwarning("No Data Found",
-                f"No SSBU data structure found in:\n{import_path}\n\n"
-                f"Expected directories like 'ultimate/mods/', 'atmosphere/contents/', etc.")
-            return
+        # Check if this is a direct export (has export_manifest.json or sdmc/ subfolder)
+        is_direct = (import_path / "export_manifest.json").exists() or (import_path / "sdmc").exists()
 
-        total_files = sum(i.file_count for i in found)
-        categories = [i.label for i in found]
+        if is_direct:
+            # Use direct import which handles sdmc/ and extra/ subfolders
+            emu = settings.emulator or "Current"
+            manifest_text = ""
+            manifest_file = import_path / "export_manifest.json"
+            if manifest_file.exists():
+                try:
+                    import json
+                    with open(manifest_file) as f:
+                        manifest = json.load(f)
+                    manifest_text = (
+                        f"Source emulator: {manifest.get('emulator', 'Unknown')}\n"
+                        f"Export date: {manifest.get('timestamp', 'Unknown')}\n"
+                        f"Categories: {', '.join(manifest.get('categories', []))}\n"
+                    )
+                except Exception:
+                    pass
 
-        if not messagebox.askyesno("Confirm Import",
-            f"Import SSBU data from:\n{import_path}\n\n"
-            f"Found: {', '.join(categories)}\n"
-            f"Total files: {total_files}\n\n"
-            f"Import into: {settings.eden_sdmc_path}"):
-            return
+            if not messagebox.askyesno("Confirm Import",
+                f"Import data from direct export:\n{import_path}\n\n"
+                f"{manifest_text}\n"
+                f"Import into: {settings.eden_sdmc_path}\n"
+                f"Overwrite existing: {'Yes' if self.overwrite_var.get() else 'No'}"):
+                return
 
-        self._migrating = True
+            self._migrating = True
 
-        def run_import():
-            result = import_ssbu_data(
-                import_path, settings.eden_sdmc_path,
-                overwrite=self.overwrite_var.get(),
-            )
-            self.after(0, lambda: self._import_done(result))
+            def run_import():
+                result = direct_import_emulator_data(
+                    import_path=import_path,
+                    emulator_name=settings.emulator or emu,
+                    overwrite=self.overwrite_var.get(),
+                )
+                self.after(0, lambda: self._import_done(result))
 
-        threading.Thread(target=run_import, daemon=True).start()
+            threading.Thread(target=run_import, daemon=True).start()
+        else:
+            # Legacy import: same as before
+            items = scan_emulator_data(import_path)
+            found = [i for i in items if i.exists]
+            if not found:
+                messagebox.showwarning("No Data Found",
+                    f"No SSBU data structure found in:\n{import_path}\n\n"
+                    f"Expected directories like 'ultimate/mods/', 'atmosphere/contents/', etc.\n"
+                    f"Or a direct export with 'sdmc/' and 'export_manifest.json'.")
+                return
+
+            total_files = sum(i.file_count for i in found)
+            categories = [i.label for i in found]
+
+            if not messagebox.askyesno("Confirm Import",
+                f"Import SSBU data from:\n{import_path}\n\n"
+                f"Found: {', '.join(categories)}\n"
+                f"Total files: {total_files}\n\n"
+                f"Import into: {settings.eden_sdmc_path}"):
+                return
+
+            self._migrating = True
+
+            def run_import():
+                result = import_ssbu_data(
+                    import_path, settings.eden_sdmc_path,
+                    overwrite=self.overwrite_var.get(),
+                )
+                self.after(0, lambda: self._import_done(result))
+
+            threading.Thread(target=run_import, daemon=True).start()
 
     def _import_done(self, result):
         self._migrating = False

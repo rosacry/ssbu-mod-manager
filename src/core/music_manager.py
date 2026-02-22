@@ -8,6 +8,8 @@ from src.models.music import MusicTrack, StagePlaylist, StageInfo
 from src.constants import VANILLA_STAGES
 from src.utils.xmsbt_parser import parse_xmsbt
 from src.utils.file_utils import backup_file
+from src.config import CONFIG_DIR
+from src.utils.logger import logger
 
 
 class MusicManager:
@@ -309,10 +311,8 @@ class MusicManager:
                 result["prc_updated"] = True
 
         except ImportError:
-            from src.utils.logger import logger
             logger.warn("MusicManager", "pyprc not installed - PRC stage assignments not applied. Install with: pip install pyprc")
         except Exception as e:
-            from src.utils.logger import logger
             logger.error("MusicManager", f"Failed to update stage DB: {e}")
 
         return result
@@ -340,14 +340,14 @@ class MusicManager:
                 ]
 
         config_file = config_mod / "music_config.json"
-        with open(config_file, 'w') as f:
+        with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2)
 
         return config_mod
 
     def _save_assignment_config(self, mods_root: Path) -> None:
         """Save current assignments to a persistent JSON config."""
-        config_dir = Path.home() / ".ssbu-mod-manager"
+        config_dir = CONFIG_DIR
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "music_assignments.json"
 
@@ -360,17 +360,20 @@ class MusicManager:
             if playlist.tracks:
                 data["assignments"][stage_id] = [t.track_id for t in playlist.tracks]
 
-        with open(config_file, 'w') as f:
-            json.dump(data, f, indent=2)
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            logger.error("Music", f"Failed to save assignment config: {e}")
 
     def _load_saved_assignments(self) -> None:
         """Load previously saved assignments from persistent config."""
-        config_file = Path.home() / ".ssbu-mod-manager" / "music_assignments.json"
+        config_file = CONFIG_DIR / "music_assignments.json"
         if not config_file.exists():
             return
 
         try:
-            with open(config_file, 'r') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
             self.exclude_vanilla = data.get("exclude_vanilla", False)
@@ -382,8 +385,8 @@ class MusicManager:
                 for track_id in track_ids:
                     if track_id in track_lookup:
                         self.assign_track_to_stage(track_lookup[track_id], stage_id)
-        except (json.JSONDecodeError, KeyError, TypeError):
-            pass
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warn("Music", f"Failed to load saved assignments: {e}")
 
     def get_assignment_summary(self) -> dict:
         """Get a summary of current assignments."""

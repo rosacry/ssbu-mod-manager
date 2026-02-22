@@ -156,10 +156,22 @@ class ModsPage(BasePage):
 
     def _bind_mousewheel(self):
         """Bind mousewheel to canvas and all children recursively."""
+        # Unbind existing handlers first to prevent accumulation
+        def _unbind_from(widget):
+            try:
+                widget.unbind("<MouseWheel>")
+            except Exception:
+                pass
+            for child in widget.winfo_children():
+                _unbind_from(child)
+
         def _bind_to(widget):
             widget.bind("<MouseWheel>", self._on_mousewheel)
             for child in widget.winfo_children():
                 _bind_to(child)
+
+        _unbind_from(self._canvas)
+        _unbind_from(self._inner_frame)
         _bind_to(self._canvas)
         _bind_to(self._inner_frame)
 
@@ -378,18 +390,29 @@ class ModsPage(BasePage):
         try:
             was_enabled = mod.status == ModStatus.ENABLED
             mod_name = mod.original_name
+            mod_path = str(mod.path)
+
+            def _find_mod_by_name(name):
+                """Look up the current mod object by original name."""
+                for m in self.app.mod_manager.list_mods():
+                    if m.original_name == name:
+                        return m
+                return None
 
             def do_action():
+                current = _find_mod_by_name(mod_name) or mod
                 if was_enabled:
-                    self.app.mod_manager.disable_mod(mod)
+                    self.app.mod_manager.disable_mod(current)
                 else:
-                    self.app.mod_manager.enable_mod(mod)
+                    self.app.mod_manager.enable_mod(current)
 
             def undo_action():
+                self.app.mod_manager.invalidate_cache()
+                current = _find_mod_by_name(mod_name) or mod
                 if was_enabled:
-                    self.app.mod_manager.enable_mod(mod)
+                    self.app.mod_manager.enable_mod(current)
                 else:
-                    self.app.mod_manager.disable_mod(mod)
+                    self.app.mod_manager.disable_mod(current)
 
             action = Action(
                 description=f"{'Disable' if was_enabled else 'Enable'} {mod_name}",

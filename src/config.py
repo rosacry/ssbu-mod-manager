@@ -32,7 +32,7 @@ class ConfigManager:
                     debug_mode=data.get("debug_mode", False),
                     ui_scale=data.get("ui_scale", 1.0),
                 )
-            except (json.JSONDecodeError, KeyError, TypeError):
+            except (json.JSONDecodeError, KeyError, TypeError, OSError):
                 self.settings = AppSettings()
         return self.settings
 

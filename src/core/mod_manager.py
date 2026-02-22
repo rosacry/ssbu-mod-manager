@@ -1,5 +1,6 @@
 """Mod listing, enable/disable, metadata extraction."""
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 from src.models.mod import Mod, ModStatus, ModMetadata
@@ -65,6 +66,9 @@ class ModManager:
             if folder.name.startswith("."):
                 # Skip the .disabled container directory itself
                 if folder.name == ".disabled":
+                    continue
+                # Skip well-known non-mod dot-directories
+                if folder.name in (".git", ".vscode", ".idea", ".DS_Store", ".svn", ".hg"):
                     continue
                 status = ModStatus.DISABLED
             else:
@@ -206,7 +210,7 @@ class ModManager:
             return
 
         if self.disable_method == "rename":
-            new_name = mod.name.lstrip(".")
+            new_name = mod.name[1:] if mod.name.startswith(".") else mod.name
             new_path = safe_rename(mod.path, new_name)
             mod.name = new_name
             mod.path = new_path
@@ -345,8 +349,6 @@ class ModManager:
         """
         if not self._is_unnecessarily_nested(mod.path):
             return False
-
-        import shutil
 
         subdirs = [c for c in mod.path.iterdir()
                    if c.is_dir() and not c.name.startswith(".")]

@@ -72,11 +72,18 @@ class MainWindow(ctk.CTkFrame):
         self.status_bar = StatusBar(right)
         self.status_bar.pack(fill="x", side="bottom")
 
+    def _safe_after(self, ms, callback):
+        """Schedule a callback, catching TclError if widget is destroyed."""
+        try:
+            self.after(ms, callback)
+        except Exception:
+            pass
+
     def _undo(self):
         desc = action_history.undo()
         if desc:
             self.action_label.configure(text=f"Undone: {desc}", text_color="#e94560")
-            self.after(3000, lambda: self.action_label.configure(text=""))
+            self._safe_after(3000, lambda: self.action_label.configure(text=""))
             # Refresh current page
             if self.current_page and self.current_page in self.pages:
                 page = self.pages[self.current_page]
@@ -88,7 +95,7 @@ class MainWindow(ctk.CTkFrame):
         desc = action_history.redo()
         if desc:
             self.action_label.configure(text=f"Redone: {desc}", text_color="#2fa572")
-            self.after(3000, lambda: self.action_label.configure(text=""))
+            self._safe_after(3000, lambda: self.action_label.configure(text=""))
             if self.current_page and self.current_page in self.pages:
                 page = self.pages[self.current_page]
                 if hasattr(page, '_loaded'):

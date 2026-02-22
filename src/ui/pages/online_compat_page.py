@@ -1,19 +1,28 @@
-"""Online Compatibility page — guides users on what mods are needed for online play.
+"""Online Compatibility page — guides users on what mods are needed for online play
+and provides a Compatibility Code system for tournament/multiplayer verification.
 
-This page provides information about mod compatibility when playing SSBU online
-via emulator multiplayer (LDN) networks. It also analyzes the user's current
-mod setup and categorizes each mod by its online impact.
+Features:
+1. Online Mod Compatibility Guide — explains which mods need to match
+2. Mod Analysis — categorizes your enabled mods by online impact
+3. Compatibility Checker — generate a code the TO/host shares; participants
+   paste it to verify their gameplay setup is compatible.
+
+The checker ONLY fingerprints gameplay-affecting files (fighter params, stage
+collision, gameplay plugins, ExeFS patches). Visual-only mods (skins, audio,
+UI, effects) are completely ignored — they never cause desyncs.
 """
 
 import threading
 import customtkinter as ctk
+from pathlib import Path
 from tkinter import messagebox
 from src.ui.base_page import BasePage
 from src.models.mod import Mod, ModStatus
 from src.utils.logger import logger
 
 
-# Online compatibility categories
+# ─── Online compatibility categories ─────────────────────────────────
+
 COMPAT_CATEGORIES = {
     "required_both": {
         "label": "Required by Both Players",
@@ -147,6 +156,8 @@ class OnlineCompatPage(BasePage):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
         self._analyzed = False
+        self._checker_generating = False
+        self._checker_checking = False
         self._build_ui()
 
     def _build_ui(self):
@@ -165,7 +176,7 @@ class OnlineCompatPage(BasePage):
 
         desc = ctk.CTkLabel(self,
             text="Understand which mods are needed by both players for online multiplayer via emulator LDN networks, "
-                 "and which mods are client-side only.",
+                 "and which mods are client-side only. Use the Compatibility Checker to verify setups before playing.",
             font=ctk.CTkFont(size=12), text_color="#999999", anchor="w", wraplength=800,
             justify="left")
         desc.pack(fill="x", padx=30, pady=(0, 15))
@@ -173,6 +184,9 @@ class OnlineCompatPage(BasePage):
         scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=30)
         self._scroll = scroll
+
+        # === Compatibility Checker (TOP — most important feature) ===
+        self._build_checker_section(scroll)
 
         # === Info Guide ===
         guide_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
@@ -259,6 +273,537 @@ class OnlineCompatPage(BasePage):
         # === Shareable Summary ===
         self.share_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
         # Not shown until analysis is done
+
+    # ─── Compatibility Checker ────────────────────────────────────────
+
+    def _build_checker_section(self, parent):
+        """Build the Compatibility Code checker section."""
+        checker = ctk.CTkFrame(parent, fg_color="#242438", corner_radius=10)
+        checker.pack(fill="x", pady=(0, 15))
+        self._checker_frame = checker
+
+        # Section header
+        header_row = ctk.CTkFrame(checker, fg_color="transparent")
+        header_row.pack(fill="x", padx=15, pady=(15, 5))
+
+        ctk.CTkLabel(header_row, text="\u2611  Compatibility Checker",
+                     font=ctk.CTkFont(size=18, weight="bold"), anchor="w"
+                     ).pack(side="left")
+
+        ctk.CTkLabel(checker,
+            text="Generate a compatibility code to share with tournament hosts or friends. "
+                 "Only gameplay-affecting files are fingerprinted — skins, music, and UI mods are "
+                 "completely ignored since they never cause desyncs.",
+            font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
+            wraplength=760, justify="left"
+        ).pack(fill="x", padx=15, pady=(0, 12))
+
+        # ── Tournament workflow explanation ──
+        workflow = ctk.CTkFrame(checker, fg_color="#1a1a30", corner_radius=8)
+        workflow.pack(fill="x", padx=15, pady=(0, 12))
+
+        ctk.CTkLabel(workflow,
+            text="\u2139  How It Works (Tournament Setup)",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color="#6688bb", anchor="w"
+        ).pack(fill="x", padx=12, pady=(10, 4))
+
+        steps = [
+            "1.  The host/TO clicks 'Generate My Code' and copies the code.",
+            "2.  The host pastes the code in their Discord server or tournament page.",
+            "3.  Each participant pastes the host's code into 'Check Against Code' below.",
+            "4.  The tool compares ONLY gameplay files — if you have different skins or music,",
+            "     that's fine! Only mismatched gameplay mods, plugins, or stage data are flagged.",
+        ]
+        for step in steps:
+            ctk.CTkLabel(workflow, text=step,
+                         font=ctk.CTkFont(size=11), text_color="#8899bb",
+                         anchor="w").pack(fill="x", padx=12, pady=1)
+        ctk.CTkFrame(workflow, height=8, fg_color="transparent").pack()
+
+        # ── Generate Code ──
+        gen_frame = ctk.CTkFrame(checker, fg_color="#1e1e38", corner_radius=8)
+        gen_frame.pack(fill="x", padx=15, pady=(0, 10))
+
+        gen_header = ctk.CTkFrame(gen_frame, fg_color="transparent")
+        gen_header.pack(fill="x", padx=12, pady=(10, 5))
+
+        ctk.CTkLabel(gen_header, text="Generate My Compatibility Code",
+                     font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
+                     ).pack(side="left")
+
+        self._gen_btn = ctk.CTkButton(gen_header, text="\u2192  Generate My Code",
+                                      width=180, height=34, corner_radius=8,
+                                      fg_color="#2fa572", hover_color="#248a5d",
+                                      command=self._generate_code)
+        self._gen_btn.pack(side="right")
+
+        ctk.CTkLabel(gen_frame,
+            text="Scans all your enabled mods and generates a code containing only gameplay file hashes. "
+                 "Your skins, music, and UI mods are NOT included.",
+            font=ctk.CTkFont(size=11), text_color="#888888", anchor="w",
+            wraplength=700, justify="left"
+        ).pack(fill="x", padx=12, pady=(0, 5))
+
+        # Status / progress
+        self._gen_status = ctk.CTkLabel(gen_frame, text="",
+                                        font=ctk.CTkFont(size=11),
+                                        text_color="#6688bb", anchor="w")
+        self._gen_status.pack(fill="x", padx=12, pady=(0, 3))
+
+        self._gen_progress = ctk.CTkProgressBar(gen_frame, height=4,
+                                                fg_color="#2a2a45",
+                                                progress_color="#2fa572")
+        self._gen_progress.pack(fill="x", padx=12, pady=(0, 5))
+        self._gen_progress.set(0)
+
+        # Generated code display
+        self._gen_code_frame = ctk.CTkFrame(gen_frame, fg_color="transparent")
+        self._gen_code_frame.pack(fill="x", padx=12, pady=(0, 10))
+        # Content populated on generation
+
+        # ── Check Against Code ──
+        check_frame = ctk.CTkFrame(checker, fg_color="#1e1e38", corner_radius=8)
+        check_frame.pack(fill="x", padx=15, pady=(0, 10))
+
+        ctk.CTkLabel(check_frame, text="Check Against a Code",
+                     font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
+                     ).pack(fill="x", padx=12, pady=(10, 5))
+
+        ctk.CTkLabel(check_frame,
+            text="Paste the host's / opponent's compatibility code below, then click Check.",
+            font=ctk.CTkFont(size=11), text_color="#888888", anchor="w"
+        ).pack(fill="x", padx=12, pady=(0, 5))
+
+        input_row = ctk.CTkFrame(check_frame, fg_color="transparent")
+        input_row.pack(fill="x", padx=12, pady=(0, 5))
+
+        self._check_entry = ctk.CTkTextbox(input_row, height=60, fg_color="#151528",
+                                           font=ctk.CTkFont(family="Consolas", size=10),
+                                           border_width=1, border_color="#3a3a55")
+        self._check_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        btn_col = ctk.CTkFrame(input_row, fg_color="transparent", width=140)
+        btn_col.pack(side="right")
+        btn_col.pack_propagate(False)
+
+        self._check_btn = ctk.CTkButton(btn_col, text="\u2713  Check", width=130,
+                                        height=34, corner_radius=8,
+                                        fg_color="#1f538d", hover_color="#163b6a",
+                                        command=self._check_code)
+        self._check_btn.pack(pady=(0, 4))
+
+        self._paste_btn = ctk.CTkButton(btn_col, text="\u2398  Paste", width=130,
+                                        height=26, corner_radius=6,
+                                        fg_color="#333352", hover_color="#444470",
+                                        font=ctk.CTkFont(size=11),
+                                        command=self._paste_from_clipboard)
+        self._paste_btn.pack()
+
+        # Check status
+        self._check_status = ctk.CTkLabel(check_frame, text="",
+                                          font=ctk.CTkFont(size=11),
+                                          text_color="#6688bb", anchor="w")
+        self._check_status.pack(fill="x", padx=12, pady=(0, 3))
+
+        self._check_progress = ctk.CTkProgressBar(check_frame, height=4,
+                                                   fg_color="#2a2a45",
+                                                   progress_color="#1f538d")
+        self._check_progress.pack(fill="x", padx=12, pady=(0, 5))
+        self._check_progress.set(0)
+
+        # Results container
+        self._check_results = ctk.CTkFrame(check_frame, fg_color="transparent")
+        self._check_results.pack(fill="x", padx=12, pady=(0, 10))
+
+    def _get_paths(self):
+        """Resolve mods, plugins, and exefs paths from current settings."""
+        settings = self.app.config_manager.settings
+        mods_path = settings.mods_path
+        plugins_path = settings.plugins_path
+        sdmc = settings.eden_sdmc_path
+        emulator = settings.emulator or ""
+
+        # Try to derive from SDMC if direct paths not set
+        if sdmc:
+            from src.paths import derive_mods_path, derive_plugins_path, SSBU_TITLE_ID
+            if not mods_path:
+                mods_path = derive_mods_path(sdmc)
+            if not plugins_path:
+                plugins_path = derive_plugins_path(sdmc)
+            # ExeFS path
+            exefs_path = (sdmc / "atmosphere" / "contents" / SSBU_TITLE_ID / "exefs")
+        else:
+            exefs_path = None
+
+        return mods_path, plugins_path, exefs_path, emulator
+
+    def _generate_code(self):
+        """Generate a compatibility code in a background thread."""
+        if self._checker_generating:
+            return
+
+        mods_path, plugins_path, exefs_path, emulator = self._get_paths()
+
+        if not mods_path or not mods_path.exists():
+            messagebox.showwarning("Warning",
+                "Set up your emulator SDMC path in Settings first.")
+            return
+
+        self._checker_generating = True
+        self._gen_btn.configure(state="disabled", text="Generating...")
+        self._gen_status.configure(text="Starting scan...", text_color="#6688bb")
+        self._gen_progress.set(0)
+
+        # Clear previous code
+        for w in self._gen_code_frame.winfo_children():
+            w.destroy()
+
+        def progress_cb(msg, frac):
+            try:
+                self.after(0, lambda: self._gen_status.configure(text=msg))
+                self.after(0, lambda: self._gen_progress.set(frac))
+            except Exception:
+                pass
+
+        def run():
+            try:
+                from src.core.compat_checker import (
+                    generate_fingerprint, encode_fingerprint
+                )
+                fp = generate_fingerprint(
+                    mods_path=mods_path,
+                    plugins_path=plugins_path,
+                    exefs_path=exefs_path,
+                    emulator_name=emulator,
+                    progress_callback=progress_cb,
+                )
+                code = encode_fingerprint(fp)
+
+                self.after(0, lambda: self._show_generated_code(fp, code))
+            except Exception as e:
+                logger.error("CompatChecker", f"Code generation failed: {e}")
+                self.after(0, lambda: self._gen_status.configure(
+                    text=f"Error: {e}", text_color="#e94560"))
+            finally:
+                self._checker_generating = False
+                self.after(0, lambda: self._gen_btn.configure(
+                    state="normal", text="\u2192  Generate My Code"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_generated_code(self, fp, code: str):
+        """Display the generated compatibility code."""
+        from src.core.compat_checker import CompatFingerprint
+
+        self._gen_status.configure(
+            text=f"Done! {len(fp.gameplay_hashes)} gameplay files, "
+                 f"{len(fp.plugin_hashes)} plugins fingerprinted. "
+                 f"Digest: {fp.digest[:16]}...",
+            text_color="#2fa572")
+        self._gen_progress.set(1.0)
+
+        for w in self._gen_code_frame.winfo_children():
+            w.destroy()
+
+        # Code text box
+        code_box = ctk.CTkTextbox(self._gen_code_frame, height=70,
+                                  fg_color="#151528",
+                                  font=ctk.CTkFont(family="Consolas", size=10),
+                                  border_width=1, border_color="#2fa572")
+        code_box.pack(fill="x", pady=(5, 5))
+        code_box.insert("1.0", code)
+
+        btn_row = ctk.CTkFrame(self._gen_code_frame, fg_color="transparent")
+        btn_row.pack(fill="x", pady=(0, 5))
+
+        ctk.CTkButton(btn_row, text="\u2398  Copy Code", width=130,
+                      height=30, corner_radius=6,
+                      fg_color="#2fa572", hover_color="#248a5d",
+                      command=lambda: self._copy_text(code, "Compatibility code")
+                      ).pack(side="left", padx=(0, 8))
+
+        # Stats
+        if fp.gameplay_mod_names:
+            mods_text = ", ".join(fp.gameplay_mod_names[:5])
+            if len(fp.gameplay_mod_names) > 5:
+                mods_text += f" +{len(fp.gameplay_mod_names) - 5} more"
+            ctk.CTkLabel(btn_row, text=f"Gameplay mods: {mods_text}",
+                         font=ctk.CTkFont(size=10), text_color="#888888",
+                         anchor="w").pack(side="left", fill="x", expand=True)
+
+        if not fp.gameplay_hashes and not fp.plugin_hashes:
+            note = ctk.CTkLabel(self._gen_code_frame,
+                text="\u2713  No gameplay-affecting mods detected — you're running "
+                     "vanilla or visual-only mods. Compatible with anyone else running vanilla!",
+                font=ctk.CTkFont(size=11), text_color="#2fa572", anchor="w",
+                wraplength=700, justify="left")
+            note.pack(fill="x", pady=(0, 5))
+
+    def _paste_from_clipboard(self):
+        """Paste clipboard contents into check entry."""
+        try:
+            text = self.clipboard_get()
+            if text:
+                self._check_entry.delete("1.0", "end")
+                self._check_entry.insert("1.0", text.strip())
+        except Exception:
+            pass
+
+    def _check_code(self):
+        """Check local setup against a pasted compatibility code."""
+        if self._checker_checking:
+            return
+
+        code = self._check_entry.get("1.0", "end").strip()
+        if not code:
+            messagebox.showwarning("Warning", "Paste a compatibility code first.")
+            return
+
+        # Validate code format immediately
+        from src.core.compat_checker import decode_fingerprint
+        ref_fp = decode_fingerprint(code)
+        if ref_fp is None:
+            messagebox.showerror("Invalid Code",
+                "The pasted code is invalid or uses an unsupported format.\n\n"
+                "Make sure you copied the entire code starting with 'SSBU-COMPAT-v2:'")
+            return
+
+        mods_path, plugins_path, exefs_path, emulator = self._get_paths()
+
+        if not mods_path or not mods_path.exists():
+            messagebox.showwarning("Warning",
+                "Set up your emulator SDMC path in Settings first.")
+            return
+
+        self._checker_checking = True
+        self._check_btn.configure(state="disabled", text="Checking...")
+        self._check_status.configure(text="Generating local fingerprint...",
+                                     text_color="#6688bb")
+        self._check_progress.set(0)
+
+        for w in self._check_results.winfo_children():
+            w.destroy()
+
+        def progress_cb(msg, frac):
+            try:
+                self.after(0, lambda: self._check_status.configure(text=msg))
+                self.after(0, lambda: self._check_progress.set(frac))
+            except Exception:
+                pass
+
+        def run():
+            try:
+                from src.core.compat_checker import (
+                    generate_fingerprint, compare_fingerprints
+                )
+                local_fp = generate_fingerprint(
+                    mods_path=mods_path,
+                    plugins_path=plugins_path,
+                    exefs_path=exefs_path,
+                    emulator_name=emulator,
+                    progress_callback=progress_cb,
+                )
+                result = compare_fingerprints(local_fp, ref_fp)
+
+                self.after(0, lambda: self._show_check_result(result, ref_fp, local_fp))
+            except Exception as e:
+                logger.error("CompatChecker", f"Check failed: {e}")
+                self.after(0, lambda: self._check_status.configure(
+                    text=f"Error: {e}", text_color="#e94560"))
+            finally:
+                self._checker_checking = False
+                self.after(0, lambda: self._check_btn.configure(
+                    state="normal", text="\u2713  Check"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_check_result(self, result, ref_fp, local_fp):
+        """Display compatibility check results."""
+        self._check_progress.set(1.0)
+
+        for w in self._check_results.winfo_children():
+            w.destroy()
+
+        if result.compatible:
+            self._check_status.configure(
+                text="\u2713  COMPATIBLE — Your gameplay setup matches!",
+                text_color="#2fa572")
+
+            compat_frame = ctk.CTkFrame(self._check_results, fg_color="#1a2e22",
+                                        corner_radius=8, border_width=1,
+                                        border_color="#2fa572")
+            compat_frame.pack(fill="x", pady=5)
+
+            ctk.CTkLabel(compat_frame,
+                text="\u2713  COMPATIBLE",
+                font=ctk.CTkFont(size=16, weight="bold"),
+                text_color="#2fa572", anchor="w"
+            ).pack(fill="x", padx=12, pady=(10, 3))
+
+            ctk.CTkLabel(compat_frame,
+                text="Your gameplay-affecting files match the host's setup. "
+                     "You're good to play online without desyncs!",
+                font=ctk.CTkFont(size=12), text_color="#88bb88", anchor="w",
+                wraplength=700, justify="left"
+            ).pack(fill="x", padx=12, pady=(0, 5))
+
+            details = []
+            details.append(f"Gameplay files compared: {len(ref_fp.gameplay_hashes)}")
+            details.append(f"Plugins compared: {len(ref_fp.plugin_hashes)}")
+            details.append(f"Host emulator: {ref_fp.emulator or 'Unknown'}")
+            details.append(f"Code generated: {ref_fp.timestamp or 'Unknown'}")
+
+            for d in details:
+                ctk.CTkLabel(compat_frame, text=f"  \u2022  {d}",
+                             font=ctk.CTkFont(size=11), text_color="#669966",
+                             anchor="w").pack(fill="x", padx=12, pady=1)
+
+            ctk.CTkFrame(compat_frame, height=8, fg_color="transparent").pack()
+
+        else:
+            self._check_status.configure(
+                text=f"\u2716  INCOMPATIBLE — {result.issue_count} issue(s) found",
+                text_color="#e94560")
+
+            incompat_frame = ctk.CTkFrame(self._check_results, fg_color="#2e1a1a",
+                                          corner_radius=8, border_width=1,
+                                          border_color="#e94560")
+            incompat_frame.pack(fill="x", pady=5)
+
+            ctk.CTkLabel(incompat_frame,
+                text=f"\u2716  INCOMPATIBLE — {result.issue_count} issue(s)",
+                font=ctk.CTkFont(size=16, weight="bold"),
+                text_color="#e94560", anchor="w"
+            ).pack(fill="x", padx=12, pady=(10, 3))
+
+            ctk.CTkLabel(incompat_frame,
+                text="Your gameplay setup differs from the host's. Playing online "
+                     "will likely cause desyncs. See details below:",
+                font=ctk.CTkFont(size=12), text_color="#bb8888", anchor="w",
+                wraplength=700, justify="left"
+            ).pack(fill="x", padx=12, pady=(0, 8))
+
+            # Missing gameplay files
+            if result.missing_gameplay:
+                self._build_issue_group(incompat_frame,
+                    f"\u2716  Missing Gameplay Files ({len(result.missing_gameplay)})",
+                    "The host has these gameplay files but you don't. "
+                    "You may be missing a required gameplay mod.",
+                    result.missing_gameplay, "#e94560")
+
+            # Extra gameplay files
+            if result.extra_gameplay:
+                self._build_issue_group(incompat_frame,
+                    f"\u26a0  Extra Gameplay Files ({len(result.extra_gameplay)})",
+                    "You have these gameplay files but the host doesn't. "
+                    "You have a gameplay mod the host doesn't use.",
+                    result.extra_gameplay, "#d4a017")
+
+            # Mismatched gameplay files
+            if result.mismatched_gameplay:
+                self._build_issue_group(incompat_frame,
+                    f"\u2716  Mismatched Gameplay Files ({len(result.mismatched_gameplay)})",
+                    "Both you and the host have these files but they differ. "
+                    "You may have a different version of the same mod.",
+                    result.mismatched_gameplay, "#e94560")
+
+            # Plugin issues
+            if result.missing_plugins:
+                self._build_issue_group(incompat_frame,
+                    f"\u2716  Missing Plugins ({len(result.missing_plugins)})",
+                    "The host has these gameplay plugins but you don't.",
+                    result.missing_plugins, "#e94560")
+
+            if result.extra_plugins:
+                self._build_issue_group(incompat_frame,
+                    f"\u26a0  Extra Plugins ({len(result.extra_plugins)})",
+                    "You have these gameplay plugins but the host doesn't.",
+                    result.extra_plugins, "#d4a017")
+
+            if result.mismatched_plugins:
+                self._build_issue_group(incompat_frame,
+                    f"\u2716  Mismatched Plugins ({len(result.mismatched_plugins)})",
+                    "Both sides have these plugins but versions differ.",
+                    result.mismatched_plugins, "#e94560")
+
+            # ExeFS
+            if result.mismatched_exefs:
+                self._build_issue_group(incompat_frame,
+                    f"\u26a0  ExeFS Differences ({len(result.mismatched_exefs)})",
+                    "Framework-level hooks differ between setups.",
+                    result.mismatched_exefs, "#d4a017")
+
+            ctk.CTkFrame(incompat_frame, height=8, fg_color="transparent").pack()
+
+        # Warnings (shown for both compatible and incompatible)
+        if result.warnings:
+            warn_frame = ctk.CTkFrame(self._check_results, fg_color="#2e2a1a",
+                                      corner_radius=8, border_width=1,
+                                      border_color="#d4a017")
+            warn_frame.pack(fill="x", pady=5)
+
+            ctk.CTkLabel(warn_frame,
+                text=f"\u25b2  Warnings ({len(result.warnings)})",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#d4a017", anchor="w"
+            ).pack(fill="x", padx=12, pady=(10, 5))
+
+            for w in result.warnings:
+                ctk.CTkLabel(warn_frame, text=f"  \u2022  {w}",
+                             font=ctk.CTkFont(size=11), text_color="#bbaa66",
+                             anchor="w", wraplength=680, justify="left"
+                             ).pack(fill="x", padx=12, pady=1)
+
+            ctk.CTkFrame(warn_frame, height=8, fg_color="transparent").pack()
+
+    def _build_issue_group(self, parent, title: str, description: str,
+                           items: list[str], color: str):
+        """Build a collapsible issue group in check results."""
+        grp = ctk.CTkFrame(parent, fg_color="#1e1e38", corner_radius=6)
+        grp.pack(fill="x", padx=12, pady=4)
+
+        ctk.CTkLabel(grp, text=title,
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=color, anchor="w"
+                     ).pack(fill="x", padx=10, pady=(8, 2))
+
+        ctk.CTkLabel(grp, text=description,
+                     font=ctk.CTkFont(size=10), text_color="#888888",
+                     anchor="w", wraplength=680, justify="left"
+                     ).pack(fill="x", padx=10, pady=(0, 5))
+
+        # Show up to 15 items, collapse the rest
+        display_items = items[:15]
+        for item in display_items:
+            # Shorten long paths for readability
+            display = item
+            if len(display) > 80:
+                display = "..." + display[-77:]
+            ctk.CTkLabel(grp, text=f"    {display}",
+                         font=ctk.CTkFont(family="Consolas", size=10),
+                         text_color="#aaaaaa", anchor="w"
+                         ).pack(fill="x", padx=10, pady=0)
+
+        if len(items) > 15:
+            ctk.CTkLabel(grp,
+                text=f"    ... and {len(items) - 15} more",
+                font=ctk.CTkFont(size=10), text_color="#666666", anchor="w"
+            ).pack(fill="x", padx=10, pady=(2, 0))
+
+        ctk.CTkFrame(grp, height=6, fg_color="transparent").pack()
+
+    # ─── Utility ──────────────────────────────────────────────────────
+
+    def _copy_text(self, text: str, label: str = "Text"):
+        """Copy text to clipboard with feedback."""
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            messagebox.showinfo("Copied", f"{label} copied to clipboard!")
+        except Exception:
+            messagebox.showerror("Error", "Failed to copy to clipboard.")
+
+    # ─── Existing features ────────────────────────────────────────────
 
     def on_show(self):
         """Auto-analyze on first visit, but don't block UI."""
@@ -435,15 +980,6 @@ class OnlineCompatPage(BasePage):
 
         copy_btn = ctk.CTkButton(self.share_section, text="\u2398  Copy to Clipboard",
                                  width=160, fg_color="#1f538d", hover_color="#163b6a",
-                                 command=lambda: self._copy_summary(summary_text),
+                                 command=lambda: self._copy_text(summary_text, "Summary"),
                                  height=34, corner_radius=8)
         copy_btn.pack(padx=15, pady=(5, 15), anchor="w")
-
-    def _copy_summary(self, text: str):
-        """Copy summary text to clipboard."""
-        try:
-            self.clipboard_clear()
-            self.clipboard_append(text)
-            messagebox.showinfo("Copied", "Summary copied to clipboard!")
-        except Exception:
-            messagebox.showerror("Error", "Failed to copy to clipboard.")

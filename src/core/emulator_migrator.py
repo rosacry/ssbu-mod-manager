@@ -7,7 +7,9 @@ on a different LDN server), they must migrate ALL of their SSBU data — mods,
 plugins, save data, shader caches, etc.
 
 This module automates that migration so users don't have to manually copy
-files between AppData directories.
+files between AppData directories. It also supports DIRECT data export —
+reading data straight from emulator directories without requiring users
+to go through the emulator's own export UI first.
 """
 
 import os
@@ -98,6 +100,41 @@ SSBU_DATA_DIRS = [
         src_rel="nand",
         description="NAND system data (user profiles, settings)",
     ),
+]
+
+# Extended data directories OUTSIDE SDMC — resolved relative to emulator data root.
+# These let us export data directly without requiring the emulator's own export UI.
+EMULATOR_EXTRA_DIRS: dict[str, list[MigrationItem]] = {
+    # Ryujinx stores keys & profiles alongside sdmc
+    "Ryujinx": [
+        MigrationItem(label="Encryption Keys", src_rel="system",
+                      description="prod.keys, title.keys, console.keys for game decryption"),
+        MigrationItem(label="Registered Content", src_rel="bis/system/Contents/registered",
+                      description="Firmware and system NCA files"),
+        MigrationItem(label="User Profiles", src_rel="bis/system/save/8000000000000010",
+                      description="Emulated Switch user profiles"),
+    ],
+    # Yuzu-family emulators (Yuzu, Suyu, Sudachi, Citron)
+    "Yuzu": [
+        MigrationItem(label="Encryption Keys", src_rel="keys",
+                      description="prod.keys, title.keys for game decryption"),
+        MigrationItem(label="Game Load Mods", src_rel=f"load/{SSBU_TITLE_ID}",
+                      description="Alternative mod path used by Yuzu's load directory"),
+        MigrationItem(label="Registered NAND Content", src_rel="nand/system/Contents/registered",
+                      description="Installed firmware and system NCA files"),
+    ],
+}
+# Copy/apply Yuzu template to its forks
+for _fork in ("Suyu", "Sudachi", "Citron"):
+    EMULATOR_EXTRA_DIRS[_fork] = EMULATOR_EXTRA_DIRS["Yuzu"]
+# Eden layout is similar to Yuzu
+EMULATOR_EXTRA_DIRS["Eden"] = [
+    MigrationItem(label="Encryption Keys", src_rel="keys",
+                  description="prod.keys, title.keys for game decryption"),
+    MigrationItem(label="Game Load Mods", src_rel=f"load/{SSBU_TITLE_ID}",
+                  description="Alternative mod path used by Eden's load directory"),
+    MigrationItem(label="Registered NAND Content", src_rel="nand/system/Contents/registered",
+                  description="Installed firmware and system NCA files"),
 ]
 
 
@@ -367,3 +404,296 @@ def import_ssbu_data(
         selected_categories=selected_categories,
     )
     return execute_migration(plan, overwrite=overwrite, progress_callback=progress_callback)
+
+
+# ─── Direct Export (no emulator UI required) ──────────────────────────
+
+def scan_emulator_extended_data(emulator_name: str) -> list[MigrationItem]:
+    """Scan for extra data directories outside SDMC for a given emulator.
+
+    This discovers keys, firmware, profiles, and other data that exists
+    in the emulator's data root but outside the SDMC directory — data
+    that would normally require using the emulator's own export tools.
+    """
+    data_root = get_emulator_data_root(emulator_name)
+    if not data_root or not data_root.exists():
+        return []
+
+    templates = EMULATOR_EXTRA_DIRS.get(emulator_name, [])
+    items = []
+
+    for template in templates:
+        full = data_root / template.src_rel
+        item = MigrationItem(
+            label=template.label,
+            src_rel=template.src_rel,
+            description=template.description,
+        )
+        if full.exists():
+            item.exists = True
+            if full.is_dir():
+                item.file_count, item.total_size = _count_dir(full)
+            else:
+                item.file_count = 1
+                item.total_size = full.stat().st_size
+        items.append(item)
+
+    return items
+
+
+def direct_export_emulator_data(
+    emulator_name: str,
+    export_path: Path,
+    include_sdmc: bool = True,
+    include_extra: bool = True,
+    selected_categories: Optional[list[str]] = None,
+    progress_callback: Optional[Callable[[str, float], None]] = None,
+) -> MigrationResult:
+    """Export ALL emulator data directly from its data directories.
+
+    Unlike the emulator's built-in export tools, this reads data straight
+    from AppData directories — no emulator GUI interaction required.
+
+    Exports both SDMC data (mods, plugins, saves) and extended data
+    (keys, firmware, profiles) into a structured directory.
+
+    Args:
+        emulator_name: Which emulator to export from
+        export_path: Destination directory for the export
+        include_sdmc: Whether to include standard SDMC data
+        include_extra: Whether to include keys, firmware, profiles
+        selected_categories: Only export these category labels (all if None)
+        progress_callback: Optional (message, fraction) callback
+    """
+    result = MigrationResult(success=True)
+    start = time.time()
+
+    sdmc_path = get_emulator_sdmc_path(emulator_name)
+    data_root = get_emulator_data_root(emulator_name)
+
+    if not sdmc_path and not data_root:
+        return MigrationResult(
+            success=False,
+            errors=[f"Could not find data directories for {emulator_name}"],
+        )
+
+    # Build the list of items to copy
+    all_items: list[tuple[Path, MigrationItem]] = []
+
+    if include_sdmc and sdmc_path and sdmc_path.exists():
+        sdmc_items = scan_emulator_data(sdmc_path)
+        for item in sdmc_items:
+            if item.exists:
+                if selected_categories is None or item.label in selected_categories:
+                    all_items.append((sdmc_path, item))
+
+    if include_extra and data_root and data_root.exists():
+        extra_items = scan_emulator_extended_data(emulator_name)
+        for item in extra_items:
+            if item.exists:
+                if selected_categories is None or item.label in selected_categories:
+                    all_items.append((data_root, item))
+
+    if not all_items:
+        return MigrationResult(
+            success=False,
+            errors=["No data found to export."],
+        )
+
+    total_files = sum(i.file_count for _, i in all_items) or 1
+    copied = 0
+
+    # Export structure: export_path/sdmc/... for SDMC data,
+    #                   export_path/extra/... for extended data
+    for base_path, item in all_items:
+        src_dir = base_path / item.src_rel
+
+        if base_path == sdmc_path:
+            dst_dir = export_path / "sdmc" / item.src_rel
+        else:
+            dst_dir = export_path / "extra" / item.src_rel
+
+        if not src_dir.exists():
+            continue
+
+        if progress_callback:
+            progress_callback(f"Exporting {item.label}...", copied / total_files)
+
+        try:
+            if src_dir.is_file():
+                dst_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src_dir), str(dst_dir))
+                result.files_copied += 1
+                result.bytes_copied += src_dir.stat().st_size
+                copied += 1
+            else:
+                for root, dirs, files in os.walk(src_dir):
+                    rel = os.path.relpath(root, src_dir)
+                    target_root = dst_dir / rel
+                    target_root.mkdir(parents=True, exist_ok=True)
+
+                    for fname in files:
+                        src_file = Path(root) / fname
+                        dst_file = target_root / fname
+                        try:
+                            shutil.copy2(str(src_file), str(dst_file))
+                            result.files_copied += 1
+                            result.bytes_copied += src_file.stat().st_size
+                        except (PermissionError, OSError) as e:
+                            result.errors.append(f"Failed to copy {src_file}: {e}")
+
+                        copied += 1
+                        if progress_callback and copied % 50 == 0:
+                            progress_callback(
+                                f"Exporting {item.label}... ({copied}/{total_files})",
+                                copied / total_files,
+                            )
+        except Exception as e:
+            result.errors.append(f"Error exporting {item.label}: {e}")
+
+    # Write a manifest file for the export
+    try:
+        manifest = {
+            "emulator": emulator_name,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "files_exported": result.files_copied,
+            "bytes_exported": result.bytes_copied,
+            "categories": [item.label for _, item in all_items],
+        }
+        import json
+        manifest_path = export_path / "export_manifest.json"
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+    except Exception:
+        pass
+
+    result.duration_seconds = time.time() - start
+    result.success = len(result.errors) < 5
+
+    if progress_callback:
+        progress_callback("Export complete!", 1.0)
+
+    logger.info("Migrator",
+        f"Direct export from {emulator_name}: {result.files_copied} files, "
+        f"{result.bytes_copied / (1024*1024):.1f} MB, "
+        f"{result.duration_seconds:.1f}s")
+
+    return result
+
+
+def direct_import_emulator_data(
+    import_path: Path,
+    emulator_name: str,
+    overwrite: bool = False,
+    progress_callback: Optional[Callable[[str, float], None]] = None,
+) -> MigrationResult:
+    """Import data from a direct export into an emulator's directories.
+
+    Reads the export_manifest.json and copies data into the correct
+    SDMC and data root paths for the target emulator.
+    """
+    result = MigrationResult(success=True)
+    start = time.time()
+
+    sdmc_path = get_emulator_sdmc_path(emulator_name)
+    data_root = get_emulator_data_root(emulator_name)
+
+    if not sdmc_path and not data_root:
+        # Try to create
+        templates = EMULATOR_PATHS.get(emulator_name, [])
+        for template in templates:
+            expanded = template
+            for var in ("APPDATA", "LOCALAPPDATA", "USERPROFILE"):
+                val = os.environ.get(var, "")
+                expanded = expanded.replace("{" + var + "}", val)
+            candidate = Path(expanded)
+            try:
+                candidate.mkdir(parents=True, exist_ok=True)
+                sdmc_path = candidate
+                data_root = candidate.parent
+                break
+            except OSError:
+                continue
+
+    if not sdmc_path:
+        return MigrationResult(
+            success=False,
+            errors=[f"Could not find or create data directories for {emulator_name}"],
+        )
+
+    # Determine what to import
+    import_sources = []
+
+    sdmc_export = import_path / "sdmc"
+    if sdmc_export.exists() and sdmc_path:
+        import_sources.append((sdmc_export, sdmc_path, "SDMC"))
+
+    extra_export = import_path / "extra"
+    if extra_export.exists() and data_root:
+        import_sources.append((extra_export, data_root, "Extra"))
+
+    # Also support flat import (old export format without sdmc/extra split)
+    if not import_sources:
+        if sdmc_path:
+            import_sources.append((import_path, sdmc_path, "Flat"))
+
+    if not import_sources:
+        return MigrationResult(
+            success=False,
+            errors=["No importable data found in the selected directory."],
+        )
+
+    # Count total files
+    total_files = 0
+    for src, _, _ in import_sources:
+        cnt, _ = _count_dir(src)
+        total_files += cnt
+    total_files = total_files or 1
+    copied = 0
+
+    for src_root, dst_root, label in import_sources:
+        if progress_callback:
+            progress_callback(f"Importing {label} data...", copied / total_files)
+
+        try:
+            for root, dirs, files in os.walk(src_root):
+                rel = os.path.relpath(root, src_root)
+                target_dir = dst_root / rel
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+                for fname in files:
+                    if fname == "export_manifest.json":
+                        continue
+
+                    src_file = Path(root) / fname
+                    dst_file = target_dir / fname
+
+                    try:
+                        if overwrite or not dst_file.exists():
+                            shutil.copy2(str(src_file), str(dst_file))
+                            result.files_copied += 1
+                            result.bytes_copied += src_file.stat().st_size
+                    except (PermissionError, OSError) as e:
+                        result.errors.append(f"Failed to copy {src_file}: {e}")
+
+                    copied += 1
+                    if progress_callback and copied % 50 == 0:
+                        progress_callback(
+                            f"Importing {label}... ({copied}/{total_files})",
+                            copied / total_files,
+                        )
+        except Exception as e:
+            result.errors.append(f"Error importing {label}: {e}")
+
+    result.duration_seconds = time.time() - start
+    result.success = len(result.errors) < 5
+
+    if progress_callback:
+        progress_callback("Import complete!", 1.0)
+
+    logger.info("Migrator",
+        f"Direct import to {emulator_name}: {result.files_copied} files, "
+        f"{result.bytes_copied / (1024*1024):.1f} MB, "
+        f"{result.duration_seconds:.1f}s")
+
+    return result

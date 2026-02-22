@@ -49,10 +49,15 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Emulator-to-Emulator Migration** — Migrate all SSBU data (mods, plugins, saves, etc.) between supported emulators with one click
 - **Smart Scanning** — Detects installed emulators and scans their SSBU data (mods, plugins, Skyline framework, RomFS/ExeFS overrides, save data, NAND system files)
 - **Selective Migration** — Choose exactly which data categories to migrate (mods, plugins, saves, etc.)
-- **Export / Import** — Export your entire SSBU setup to a portable folder, or import from a previously exported folder
+- **Direct Export / Import** — Export your entire SSBU setup (SDMC + extended data like encryption keys, firmware, profiles, NAND content) directly from our app — no emulator GUI required. Import seamlessly with auto-detection of export format
+- **Extended Data Support** — Exports emulator-specific data beyond SDMC: encryption keys, registered content, user profiles, game load mods, NAND system files
+- **Legacy Import** — Supports importing from both the new direct export format and legacy emulator-exported folders
 - **LDN Network Awareness** — Reminds users that different emulators run separate online multiplayer networks and rooms are NOT cross-compatible
 
-### Online Compatibility Guide
+### Online Compatibility
+- **Compatibility Code Checker** — Tournament-ready system: host generates a compact compatibility code, players paste it to instantly verify their gameplay mods match. Intelligently distinguishes between desync-causing files (PRC params, stage collision, gameplay plugins, ExeFS patches) and safe cosmetic differences (textures, models, audio, UI skins, effects)
+- **Tournament Workflow** — TO generates code → shares in Discord/lobby → players check before starting matches
+- **Detailed Mismatch Report** — When incompatible, shows exactly which gameplay files differ, grouped by category (missing mods, extra mods, mismatched files, plugin differences)
 - **Mod Sync Guide** — In-app reference explaining which mods both players need for online play vs. which are client-side only
 - **Automatic Mod Analysis** — Categorizes your enabled mods by online impact: gameplay mods (both need), visual/audio mods (client-side only), custom stages (shared if selected)
 - **Shareable Summary** — Generates a copyable text summary of your mod setup to share with friends so they know what to install
@@ -165,6 +170,7 @@ ssbu-mod-manager/
 │   ├── constants.py                # Game constants (stages, fighters)
 │   ├── paths.py                    # Emulator path detection
 │   ├── core/
+│   │   ├── compat_checker.py       # Online compatibility code system
 │   │   ├── conflict_detector.py    # File conflict detection
 │   │   ├── conflict_resolver.py    # Conflict resolution & merging
 │   │   ├── css_manager.py          # CSS database management

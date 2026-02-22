@@ -27,6 +27,8 @@ def safe_rename(path: Path, new_name: str) -> Path:
 
 def backup_file(file_path: Path, backup_dir: Optional[Path] = None) -> Path:
     """Create a timestamped backup of a file."""
+    if not file_path.exists():
+        raise FileNotFoundError(f"Cannot backup: source file '{file_path}' does not exist")
     if backup_dir is None:
         backup_dir = Path.home() / ".ssbu-mod-manager" / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)

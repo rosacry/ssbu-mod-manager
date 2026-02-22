@@ -109,7 +109,10 @@ class CSSManager:
 
     def duplicate_character(self, base_chara: dict) -> dict:
         """Duplicate a character and add to the database."""
-        import pyprc
+        try:
+            import pyprc
+        except ImportError:
+            raise ImportError("pyprc is required for character duplication. Install it with: pip install pyprc")
 
         new_chara_ref = base_chara['chara_ref'].clone()
         new_list = list(self.db_root) + [new_chara_ref]
@@ -184,8 +187,12 @@ class CSSManager:
             xmsbt_path = os.path.join(mod_dir, "ui", "message", "msg_name.xmsbt")
             if os.path.exists(xmsbt_path):
                 try:
-                    with open(xmsbt_path, 'r', encoding='utf-16') as xf:
-                        xmsbt_content = xf.read()
+                    try:
+                        with open(xmsbt_path, 'r', encoding='utf-16') as xf:
+                            xmsbt_content = xf.read()
+                    except (UnicodeDecodeError, UnicodeError):
+                        with open(xmsbt_path, 'r', encoding='utf-8') as xf:
+                            xmsbt_content = xf.read()
                     m = re.search(r'nam_chr1_00_(\w+)', xmsbt_content)
                     if m:
                         detected_name_id = m.group(1)
@@ -280,7 +287,10 @@ class CSSManager:
 
     def one_click_add(self, mod_dir: str) -> dict:
         """Auto-detect and add a character from a mod directory. Returns info dict or raises."""
-        import pyprc
+        try:
+            import pyprc
+        except ImportError:
+            raise ImportError("pyprc is required for CSS editing. Install it with: pip install pyprc")
 
         config_path = os.path.join(mod_dir, "config.json")
         if not os.path.exists(config_path):
@@ -326,8 +336,12 @@ class CSSManager:
         xmsbt_path = os.path.join(mod_dir, "ui", "message", "msg_name.xmsbt")
         if os.path.exists(xmsbt_path):
             try:
-                with open(xmsbt_path, 'r', encoding='utf-16') as xf:
-                    xmsbt_content = xf.read()
+                try:
+                    with open(xmsbt_path, 'r', encoding='utf-16') as xf:
+                        xmsbt_content = xf.read()
+                except (UnicodeDecodeError, UnicodeError):
+                    with open(xmsbt_path, 'r', encoding='utf-8') as xf:
+                        xmsbt_content = xf.read()
                 name_match = re.search(r'<entry label="nam_chr1_00_\w+">\s*<text>(.*?)</text>', xmsbt_content, re.DOTALL)
                 if name_match:
                     display_name = name_match.group(1).strip()
@@ -366,7 +380,10 @@ class CSSManager:
 
     def finalize_add_character(self, detection_info: dict, final_name: str) -> dict:
         """Finalize adding a character after user confirmation."""
-        import pyprc
+        try:
+            import pyprc
+        except ImportError:
+            raise ImportError("pyprc is required for CSS editing. Install it with: pip install pyprc")
 
         fighter_kind_str = detection_info["fighter_kind_str"]
         detected_name_id = detection_info["detected_name_id"]
@@ -440,7 +457,7 @@ class CSSManager:
         costumes = set()
 
         for dir_path in dir_infos:
-            match = re.search(r'fighter/([^/]+)/c([0-9]{2})', dir_path)
+            match = re.search(r'fighter/([^/]+)/c(\d{2,3})', dir_path)
             if match:
                 if not fighter_kind:
                     fighter_kind = match.group(1)
@@ -487,8 +504,12 @@ class CSSManager:
                 xmsbt_path = os.path.join(folder_path, "ui", "message", "msg_name.xmsbt")
                 if os.path.exists(xmsbt_path):
                     try:
-                        with open(xmsbt_path, 'r', encoding='utf-16') as xf:
-                            xmsbt_content = xf.read()
+                        try:
+                            with open(xmsbt_path, 'r', encoding='utf-16') as xf:
+                                xmsbt_content = xf.read()
+                        except (UnicodeDecodeError, UnicodeError):
+                            with open(xmsbt_path, 'r', encoding='utf-8') as xf:
+                                xmsbt_content = xf.read()
                         m = re.search(r'<entry label="nam_chr1_00_\w+">\s*<text>(.*?)</text>',
                                       xmsbt_content, re.DOTALL)
                         if m:
