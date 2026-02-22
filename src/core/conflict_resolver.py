@@ -17,8 +17,9 @@ class ConflictResolver:
 
         Uses a union strategy: all labels from all files are included.
         For overlapping labels (same label, different text), the last mod's value wins.
-        After merging, original XMSBT files are renamed to .xmsbt.merged so that
-        ARCropolis only loads the single merged version.
+        After merging, original XMSBT files are moved to
+        _MergedResources/.originals/<mod_name>/ so that ARCropolis
+        only loads the single merged version.
         """
         if not conflict.is_mergeable:
             return None
@@ -37,15 +38,34 @@ class ConflictResolver:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         write_xmsbt(output_path, merged_entries)
 
-        # Disable (rename) the original conflicting files so ARCropolis
-        # doesn't load both originals AND the merged file
+        # Move the original conflicting files out of their mod folders
+        # into _MergedResources/.originals/<mod_name>/<relative_path> so that
+        # ARCropolis doesn't see them at all (renaming in-place still causes
+        # ARCropolis to detect the renamed files as conflicts).
+        originals_dir = self.merged_output_dir / ".originals"
         disabled_count = 0
-        for mod_path in conflict.mod_paths:
+        for mod_name, mod_path in zip(conflict.mods_involved, conflict.mod_paths):
             try:
-                disabled_path = mod_path.parent / (mod_path.name + ".merged")
-                if mod_path.exists() and not disabled_path.exists():
-                    mod_path.rename(disabled_path)
+                if not mod_path.exists():
+                    continue
+                backup_dest = originals_dir / mod_name / conflict.relative_path
+                backup_dest.parent.mkdir(parents=True, exist_ok=True)
+                if not backup_dest.exists():
+                    import shutil
+                    shutil.move(str(mod_path), str(backup_dest))
                     disabled_count += 1
+                    # Clean up empty parent directories in the mod folder
+                    parent = mod_path.parent
+                    mod_root = self.mods_root / mod_name
+                    while parent != mod_root and parent.exists():
+                        try:
+                            if not any(parent.iterdir()):
+                                parent.rmdir()
+                                parent = parent.parent
+                            else:
+                                break
+                        except OSError:
+                            break
             except OSError as e:
                 logger.warn("ConflictResolver",
                             f"Could not disable original: {mod_path.name} - {e}")
@@ -149,16 +169,47 @@ class ConflictResolver:
         return resolved_paths
 
     def restore_originals(self) -> int:
-        """Restore all .xmsbt.merged files back to .xmsbt (undoing previous merges).
+        """Restore original XMSBT files from _MergedResources/.originals/ back
+        to their mod folders, undoing previous merges.
 
-        Also removes the _MergedResources directory content for XMSBT files.
+        Also removes the merged XMSBT files from _MergedResources.
         Returns count of files restored.
         """
+        import shutil
         count = 0
         if not self.mods_root.exists():
             return count
 
-        # Find all .xmsbt.merged files and rename them back
+        originals_dir = self.merged_output_dir / ".originals"
+
+        # Restore originals from _MergedResources/.originals/<mod_name>/<path>
+        if originals_dir.exists():
+            for mod_dir in originals_dir.iterdir():
+                if not mod_dir.is_dir():
+                    continue
+                mod_name = mod_dir.name
+                target_mod = self.mods_root / mod_name
+                for orig_file in mod_dir.rglob("*"):
+                    if not orig_file.is_file():
+                        continue
+                    rel = orig_file.relative_to(mod_dir)
+                    dest = target_mod / rel
+                    try:
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        if not dest.exists():
+                            shutil.move(str(orig_file), str(dest))
+                            count += 1
+                        else:
+                            orig_file.unlink()
+                            count += 1
+                    except OSError as e:
+                        logger.warn("ConflictResolver",
+                                    f"Could not restore {rel} to {mod_name}: {e}")
+
+            # Clean up the .originals directory
+            shutil.rmtree(str(originals_dir), ignore_errors=True)
+
+        # Also handle legacy .xmsbt.merged files from older versions
         for merged_file in self.mods_root.rglob("*.xmsbt.merged"):
             original_path = merged_file.parent / merged_file.name.replace(".merged", "")
             try:
@@ -166,7 +217,6 @@ class ConflictResolver:
                     merged_file.rename(original_path)
                     count += 1
                 else:
-                    # Original already exists (maybe manually restored) — remove the .merged copy
                     merged_file.unlink()
                     count += 1
             except OSError as e:

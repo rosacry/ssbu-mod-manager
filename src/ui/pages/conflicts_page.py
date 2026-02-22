@@ -326,7 +326,7 @@ class ConflictsPage(BasePage):
                 messagebox.showinfo("Merged",
                     f"Merged {conflict.relative_path}\n"
                     f"Output: {path}\n\n"
-                    f"Original files have been renamed to .xmsbt.merged\n"
+                    f"Original files have been moved to _MergedResources/.originals/\n"
                     f"to prevent double-loading by ARCropolis.")
                 self._render()
             else:
@@ -369,7 +369,7 @@ class ConflictsPage(BasePage):
             actually_resolved = sum(1 for c in unresolved if c.resolved)
             failed = len(unresolved) - actually_resolved
             msg = f"Resolved {actually_resolved} conflict(s) into _MergedResources."
-            msg += f"\nOriginal files renamed to .xmsbt.merged to prevent double-loading."
+            msg += f"\nOriginal files moved to _MergedResources/.originals/ to prevent double-loading."
             if failed > 0:
                 msg += f"\n\n{failed} conflict(s) could not be auto-merged."
             logger.info("Conflicts", f"Auto-resolved {actually_resolved}/{len(unresolved)} conflicts")
@@ -384,7 +384,7 @@ class ConflictsPage(BasePage):
         confirm = messagebox.askyesno(
             "Restore Originals",
             "This will:\n"
-            "  - Rename all .xmsbt.merged files back to .xmsbt\n"
+            "  - Move original XMSBT files back to their mod folders\n"
             "  - Remove merged files from _MergedResources\n\n"
             "This undoes previous conflict merges so you can re-merge\n"
             "or let individual mods handle text independently.\n\nContinue?"

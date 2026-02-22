@@ -39,8 +39,8 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Automatic Scanning** — Detects when multiple mods modify the same game file
 - **Type-Based Grouping** — Conflicts grouped by file type (XMSBT, MSBT, PRC, STPRM, STDAT) with explanations
 - **Auto-Merge** — XMSBT text conflicts are merged using a union strategy (all labels from all mods combined); overlapping labels use last-mod-wins
-- **Original File Management** — After merging, original XMSBT files are renamed to `.xmsbt.merged` to prevent ARCropolis from double-loading both the originals and merged file
-- **Restore Originals** — One-click undo of all merges: restores `.xmsbt.merged` files and cleans up `_MergedResources`
+- **Original File Management** — After merging, original XMSBT files are moved to `_MergedResources/.originals/` to prevent ARCropolis from double-loading both the originals and merged file
+- **Restore Originals** — One-click undo of all merges: restores original files to their mod folders and cleans up `_MergedResources`
 - **Backup Before Merge** — Configurable automatic backup creation before any merge or resolution operation
 - **Manual Resolution** — Choose which mod's version to keep for non-mergeable conflicts
 

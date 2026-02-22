@@ -232,7 +232,7 @@ class DashboardPage(BasePage):
                     merged_files = set()
                     if merged_dir.exists():
                         for f in merged_dir.rglob("*"):
-                            if f.is_file():
+                            if f.is_file() and ".originals" not in f.parts:
                                 merged_files.add(str(f.relative_to(merged_dir)).replace("\\", "/"))
 
                     conflicts = self.app.conflict_detector.detect_conflicts(settings.mods_path)
@@ -287,7 +287,7 @@ class DashboardPage(BasePage):
                 merged_files = set()
                 if merged_dir.exists():
                     for f in merged_dir.rglob("*"):
-                        if f.is_file():
+                        if f.is_file() and ".originals" not in f.parts:
                             merged_files.add(str(f.relative_to(merged_dir)).replace("\\", "/"))
 
                 mergeable = [c for c in conflicts

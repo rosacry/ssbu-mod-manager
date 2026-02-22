@@ -52,6 +52,9 @@ class FileScanner:
                 mod_name = folder.name
                 for fpath in folder.rglob("*"):
                     if fpath.is_file():
+                        # Skip leftover .merged backup files from older versions
+                        if fpath.name.endswith(".merged"):
+                            continue
                         rel = str(fpath.relative_to(folder)).replace("\\", "/")
                         if rel not in file_index:
                             file_index[rel] = []
