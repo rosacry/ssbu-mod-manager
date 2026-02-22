@@ -1,0 +1,79 @@
+"""Parser for XMSBT files (XML-based MSBT overlay format used by ARCropolis)."""
+import re
+from pathlib import Path
+from typing import Optional
+
+def parse_xmsbt(file_path: Path) -> dict[str, str]:
+    """Parse an XMSBT file and return a dict of label -> text."""
+    entries = {}
+    try:
+        # Try UTF-16 first (most common for XMSBT)
+        try:
+            with open(file_path, 'r', encoding='utf-16') as f:
+                content = f.read()
+        except (UnicodeError, UnicodeDecodeError):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+        # Parse <entry label="..."><text>...</text></entry> blocks
+        pattern = r'<entry\s+label="([^"]+)">\s*<text>(.*?)</text>\s*</entry>'
+        for match in re.finditer(pattern, content, re.DOTALL):
+            label = match.group(1)
+            text = match.group(2).strip()
+            entries[label] = text
+    except Exception:
+        pass
+    return entries
+
+def write_xmsbt(file_path: Path, entries: dict[str, str]) -> None:
+    """Write entries to an XMSBT file."""
+    lines = ['<?xml version="1.0" encoding="utf-16"?>', '<xmsbt>']
+    for label, text in sorted(entries.items()):
+        lines.append(f'  <entry label="{label}">')
+        lines.append(f'    <text>{text}</text>')
+        lines.append('  </entry>')
+    lines.append('</xmsbt>')
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(file_path, 'w', encoding='utf-16') as f:
+        f.write('\n'.join(lines))
+
+def merge_xmsbt_files(file_paths: list[Path]) -> tuple[dict[str, str], set[str]]:
+    """
+    Merge multiple XMSBT files. Returns (merged_entries, overlapping_labels).
+    overlapping_labels contains labels that appear in multiple files with different values.
+    """
+    merged = {}
+    seen_labels = {}  # label -> (first_value, first_file)
+    overlapping = set()
+
+    for fpath in file_paths:
+        entries = parse_xmsbt(fpath)
+        for label, text in entries.items():
+            if label in seen_labels:
+                if seen_labels[label][0] != text:
+                    overlapping.add(label)
+            else:
+                seen_labels[label] = (text, str(fpath))
+            merged[label] = text  # Last file wins for overlapping
+
+    return merged, overlapping
+
+def diff_xmsbt(file_a: Path, file_b: Path) -> dict:
+    """Compare two XMSBT files and return differences."""
+    entries_a = parse_xmsbt(file_a)
+    entries_b = parse_xmsbt(file_b)
+
+    all_labels = set(entries_a.keys()) | set(entries_b.keys())
+
+    only_in_a = {l: entries_a[l] for l in all_labels if l in entries_a and l not in entries_b}
+    only_in_b = {l: entries_b[l] for l in all_labels if l in entries_b and l not in entries_a}
+    different = {l: (entries_a[l], entries_b[l]) for l in all_labels
+                 if l in entries_a and l in entries_b and entries_a[l] != entries_b[l]}
+
+    return {
+        "only_in_a": only_in_a,
+        "only_in_b": only_in_b,
+        "different": different,
+        "common_count": len(all_labels) - len(only_in_a) - len(only_in_b) - len(different)
+    }

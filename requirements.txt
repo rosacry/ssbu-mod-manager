@@ -1,3 +1,6 @@
-customtkinter
-pyprc
-pylibms
+customtkinter>=5.2.0
+pyprc>=1.0.0
+pylibms>=0.7.0,<2.0.0
+Pillow>=10.0.0
+pygame>=2.5.0
+pyinstaller>=6.0.0

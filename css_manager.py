@@ -4,8 +4,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pyprc
-from lms.message.msbtio import read_msbt_path, write_msbt_path
-from lms.message.msbtentry import MSBTEntry
+from LMS.Message.MSBT import MSBT
+from LMS.Stream.Reader import Reader
+from LMS.Stream.Writer import Writer
+import io
 
 # Initialize customtkinter
 ctk.set_appearance_mode("Dark")
@@ -134,7 +136,10 @@ class CSSManagerApp(ctk.CTk):
         try:
             self.prc_root = pyprc.param(self.prc_path)
             self.db_root = list(self.prc_root)[0][1]
-            self.msbt_file = read_msbt_path(self.msbt_path)
+            with open(self.msbt_path, 'rb') as f:
+                msbt_data = f.read()
+            self.msbt_file = MSBT()
+            self.msbt_file.read(Reader(msbt_data))
             
             self.load_characters()
             self.save_btn.configure(state="normal")
@@ -159,16 +164,16 @@ class CSSManagerApp(ctk.CTk):
             name_upper = ""
             
             try:
-                entry1 = self.msbt_file.get_entry_by_name(f"nam_chr1_00_{name_id}")
-                if entry1:
-                    name_normal = entry1.message.text
+                index1 = self.msbt_file.LBL1.get_index_by_label(f"nam_chr1_00_{name_id}")
+                if index1 is not None and index1 < len(self.msbt_file.TXT2.messages):
+                    name_normal = self.msbt_file.TXT2.messages[index1]
             except Exception:
                 pass
-                
+
             try:
-                entry2 = self.msbt_file.get_entry_by_name(f"nam_chr2_00_{name_id}")
-                if entry2:
-                    name_upper = entry2.message.text
+                index2 = self.msbt_file.LBL1.get_index_by_label(f"nam_chr2_00_{name_id}")
+                if index2 is not None and index2 < len(self.msbt_file.TXT2.messages):
+                    name_upper = self.msbt_file.TXT2.messages[index2]
             except Exception:
                 pass
                 
@@ -449,14 +454,15 @@ class CSSManagerApp(ctk.CTk):
     def msbt_set_entry(self, label, text):
         """Set an MSBT entry, updating if it exists or creating if it doesn't. No warnings."""
         try:
-            entry = self.msbt_file.get_entry_by_name(label)
-            if entry:
-                entry.message.text = text
+            index = self.msbt_file.LBL1.get_index_by_label(label)
+            if index is not None and index < len(self.msbt_file.TXT2.messages):
+                self.msbt_file.TXT2.messages[index] = text
                 return
         except (KeyError, Exception):
             pass
         try:
-            self.msbt_file.add_entry(MSBTEntry(name=label, message=text, attribute=b''))
+            self.msbt_file.add_data(label)
+            self.msbt_file.TXT2.messages[-1] = text
         except Exception:
             pass  # Entry already exists via xmsbt overlay
 
@@ -769,7 +775,10 @@ class CSSManagerApp(ctk.CTk):
     def save_changes(self):
         try:
             self.prc_root.save(self.prc_path)
-            write_msbt_path(self.msbt_path, self.msbt_file)
+            buffer = io.BytesIO()
+            self.msbt_file.write(Writer(buffer))
+            with open(self.msbt_path, 'wb') as f:
+                f.write(buffer.getvalue())
             messagebox.showinfo("Success", "Changes saved successfully!")
             self.load_characters() # Reload to reflect changes
         except Exception as e:

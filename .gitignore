@@ -6,6 +6,7 @@ __pycache__/
 dist/
 build/
 *.egg
+*.spec
 
 # Virtual environment
 .venv/
@@ -25,3 +26,12 @@ Desktop.ini
 
 # Large data file (download separately)
 ParamLabels.csv
+
+# PyInstaller
+*.manifest
+
+# App data
+_MergedResources/
+
+# Temp files
+tmpclaude-*

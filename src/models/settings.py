@@ -1,0 +1,19 @@
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+
+@dataclass
+class AppSettings:
+    eden_sdmc_path: Optional[Path] = None
+    mods_path: Optional[Path] = None
+    plugins_path: Optional[Path] = None
+    css_mod_folder: Optional[Path] = None
+    mod_disable_method: str = "rename"
+    theme: str = "Dark"
+    window_geometry: str = "1400x900"
+    last_opened_page: str = "dashboard"
+    auto_detect_eden: bool = True
+    backup_before_merge: bool = True
+    emulator: str = ""  # Empty = auto-detect
+    debug_mode: bool = False
