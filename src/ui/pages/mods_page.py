@@ -144,13 +144,34 @@ class ModsPage(BasePage):
         self._canvas.itemconfig(self._canvas_window, width=event.width)
 
     def _on_frame_configure(self, event):
-        """Update scroll region when inner frame changes."""
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        """Update scroll region when inner frame changes, debounced."""
+        # Debounce to prevent scroll jumps when scrollbar is being dragged
+        new_region = (event.width, event.height)
+        if new_region != self._last_scroll_region:
+            self._last_scroll_region = new_region
+            if self._scroll_after_id:
+                try:
+                    self.after_cancel(self._scroll_after_id)
+                except Exception:
+                    pass
+            try:
+                self._scroll_after_id = self.after(5, self._update_scroll_region)
+            except Exception:
+                pass
+
+    def _update_scroll_region(self):
+        """Actually update the scroll region."""
+        self._scroll_after_id = None
+        try:
+            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        except tk.TclError:
+            pass
 
     def _on_mousewheel(self, event):
-        """Handle mouse wheel scrolling."""
+        """Handle mouse wheel scrolling with faster speed."""
         try:
-            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            # Scroll 5 units per tick instead of 1 for faster scrolling
+            self._canvas.yview_scroll(int(-5 * (event.delta / 120)), "units")
         except tk.TclError:
             pass
 

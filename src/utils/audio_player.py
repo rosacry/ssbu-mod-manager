@@ -4,22 +4,31 @@ from typing import Optional
 
 _pygame_available = False
 _pygame_error = ""
-try:
-    import pygame
-    pygame.mixer.init(frequency=48000, size=-16, channels=2, buffer=4096)
-    _pygame_available = True
-except ImportError:
-    _pygame_error = "pygame not installed"
-except Exception as e:
-    _pygame_error = str(e)
-    # Try with different settings
+_pygame_initialized = False
+
+
+def _ensure_mixer():
+    """Lazily initialize pygame mixer on first use."""
+    global _pygame_available, _pygame_error, _pygame_initialized
+    if _pygame_initialized:
+        return
+    _pygame_initialized = True
     try:
         import pygame
-        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+        pygame.mixer.init(frequency=48000, size=-16, channels=2, buffer=4096)
         _pygame_available = True
-        _pygame_error = ""
-    except Exception:
-        pass
+    except ImportError:
+        _pygame_error = "pygame not installed"
+    except Exception as e:
+        _pygame_error = str(e)
+        # Try with different settings
+        try:
+            import pygame
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+            _pygame_available = True
+            _pygame_error = ""
+        except Exception:
+            pass
 
 
 class AudioPlayer:
@@ -33,11 +42,12 @@ class AudioPlayer:
 
     @property
     def available(self) -> bool:
+        _ensure_mixer()
         return _pygame_available
 
     @property
     def is_playing(self) -> bool:
-        if not _pygame_available:
+        if not _pygame_initialized or not _pygame_available:
             return False
         return pygame.mixer.music.get_busy() or self._paused
 
@@ -51,6 +61,7 @@ class AudioPlayer:
 
     def play(self, file_path: Path) -> tuple[bool, str]:
         """Play an audio file. Returns (success, message)."""
+        _ensure_mixer()
         if not _pygame_available:
             msg = "Audio playback requires pygame. Install with: pip install pygame"
             if _pygame_error:
@@ -115,7 +126,7 @@ class AudioPlayer:
 
     def stop(self):
         """Stop playback."""
-        if not _pygame_available:
+        if not _pygame_initialized or not _pygame_available:
             return
         try:
             pygame.mixer.music.stop()
@@ -128,7 +139,7 @@ class AudioPlayer:
 
     def pause(self):
         """Pause playback."""
-        if not _pygame_available or not self._playing:
+        if not _pygame_initialized or not _pygame_available or not self._playing:
             return
         try:
             pygame.mixer.music.pause()
@@ -138,7 +149,7 @@ class AudioPlayer:
 
     def unpause(self):
         """Resume paused playback."""
-        if not _pygame_available or not self._paused:
+        if not _pygame_initialized or not _pygame_available or not self._paused:
             return
         try:
             pygame.mixer.music.unpause()
@@ -156,7 +167,7 @@ class AudioPlayer:
     def set_volume(self, volume: float):
         """Set volume (0.0 to 1.0)."""
         self._volume = max(0.0, min(1.0, volume))
-        if _pygame_available:
+        if _pygame_initialized and _pygame_available:
             try:
                 pygame.mixer.music.set_volume(self._volume)
             except Exception:
@@ -169,7 +180,7 @@ class AudioPlayer:
     def cleanup(self):
         """Clean up audio resources."""
         self.stop()
-        if _pygame_available:
+        if _pygame_initialized and _pygame_available:
             try:
                 pygame.mixer.quit()
             except Exception:

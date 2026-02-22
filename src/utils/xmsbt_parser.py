@@ -47,7 +47,7 @@ def extract_entries_from_msbt(msbt_path: Path) -> dict[str, str]:
     return entries
 
 
-def filter_custom_entries(entries: dict[str, str]) -> dict[str, str]:
+def filter_custom_entries(entries: dict[str, str], inclusive: bool = False) -> dict[str, str]:
     """Filter entries to keep only custom (mod-added) ones.
 
     Custom entries typically have alphanumeric label suffixes (e.g.
@@ -55,6 +55,11 @@ def filter_custom_entries(entries: dict[str, str]) -> dict[str, str]:
     (e.g. bgm_title_0001).  A generic catch-all also handles labels
     whose numeric suffix exceeds 1605 (the vanilla BGM ceiling in SSBU
     v13.0.1).
+
+    If ``inclusive`` is True, keep all entries that look like BGM titles
+    (bgm_title_*, bgm_author_*) regardless of suffix, plus all entries
+    that pass the normal filter.  This is useful for BGM-related MSBTs
+    where mods may intentionally replace vanilla track names.
     """
     custom = {}
     for label, text in entries.items():
@@ -62,6 +67,14 @@ def filter_custom_entries(entries: dict[str, str]) -> dict[str, str]:
         if len(parts) < 2:
             continue
         suffix = parts[-1]
+
+        # In inclusive mode, keep all BGM title/author entries
+        if inclusive:
+            prefix = parts[0].lower()
+            if any(bgm_key in prefix for bgm_key in ('bgm_title', 'bgm_author', 'bgm_menu')):
+                custom[label] = text
+                continue
+
         # Keep entries with any alphabetic character in the suffix
         if re.search(r'[A-Za-z]', suffix):
             custom[label] = text

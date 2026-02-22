@@ -91,6 +91,7 @@ KNOWN_PLUGINS = {
 
 # SSBU vanilla stages (stage_id -> display name)
 VANILLA_STAGES = {
+    "ui_stage_id_menu": "Main Menu",
     "ui_stage_id_battlefield": "Battlefield",
     "ui_stage_id_battlefield_s": "Small Battlefield",
     "ui_stage_id_end": "Final Destination",

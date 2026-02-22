@@ -332,8 +332,10 @@ class ConflictResolver:
                                 f"(all {len(all_entries)} already in merged XMSBT)")
                     continue
                 # Also apply custom-entry filter to avoid dumping thousands
-                # of vanilla labels that are already in the base game MSBT
-                new_entries = filter_custom_entries(new_entries)
+                # of vanilla labels that are already in the base game MSBT.
+                # Use inclusive mode for BGM-related files to keep track names.
+                is_bgm = 'bgm' in base_name.lower() or 'bgm' in chosen_path.name.lower()
+                new_entries = filter_custom_entries(new_entries, inclusive=is_bgm)
                 if not new_entries:
                     logger.info("ConflictResolver",
                                 f"No custom entries to add from {chosen_path.name}")
@@ -341,8 +343,11 @@ class ConflictResolver:
                 existing.update(new_entries)
                 final_entries = existing
             else:
-                # No existing XMSBT — only keep custom (mod-added) entries
-                final_entries = filter_custom_entries(all_entries)
+                # No existing XMSBT — only keep custom (mod-added) entries.
+                # Use inclusive mode for BGM-related MSBTs to keep all BGM
+                # title/author entries (mods often replace vanilla names).
+                is_bgm = 'bgm' in base_name.lower() or 'bgm' in chosen_path.name.lower()
+                final_entries = filter_custom_entries(all_entries, inclusive=is_bgm)
                 if not final_entries:
                     logger.info("ConflictResolver",
                                 f"No custom entries found in {chosen_path.name}")

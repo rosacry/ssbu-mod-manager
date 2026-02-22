@@ -288,7 +288,10 @@ class MusicPage(BasePage):
             tracks = self.app.music_manager.discover_tracks(mods_path)
             logger.info("Music", f"Found {len(tracks)} tracks")
             if not self.app.shutting_down:
-                self.after(0, lambda: self._on_tracks_loaded(tracks))
+                try:
+                    self.after(0, lambda: self._on_tracks_loaded(tracks))
+                except Exception:
+                    pass
 
         threading.Thread(target=scan, daemon=True).start()
 
@@ -603,6 +606,8 @@ class MusicPage(BasePage):
             msg = f"Music configuration saved!\n\n"
             msg += f"Stages: {result['stages_configured']}\n"
             msg += f"Assignments: {result['tracks_assigned']}\n"
+            if result.get("menu_music_set"):
+                msg += f"\nMain menu music has been set!"
             if result.get("prc_updated"):
                 msg += f"\nPRC updated in: {result['output_mod']}"
             logger.info("Music", f"Saved: {result['stages_configured']} stages, {result['tracks_assigned']} tracks")

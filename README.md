@@ -31,8 +31,11 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app
 - **Volume Control** — Adjustable volume slider for playback
 - **Stage Playlists** — Assign tracks to specific stages with drag-to-reorder
+- **Main Menu Music** — Change the main menu background music by assigning a track to the "Main Menu" stage entry
 - **Competitive Stages Filter** — Filter stage list to show only tournament-legal stages (Battlefield, Small Battlefield, Final Destination, Smashville, Town and City, Pokemon Stadium 2, Kalos Pokemon League, Hollow Bastion, Northern Cave, Yoshi's Story)
 - **Bulk Operations** — Assign all tracks to all stages, clear all assignments
+- **Auto Track Name Detection** — Automatically extracts track names from both XMSBT and binary MSBT files, including extended tracklist mods
+- **Auto MSBT Overlay Generation** — Generates XMSBT overlays during music scan so custom track names display correctly in-game
 - **Save & Apply** — Generates PRC configuration for in-game music
 
 ### Conflict Detection & Resolution
@@ -73,6 +76,9 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Zoom / Scaling** — Ctrl+Plus and Ctrl+Minus to zoom the entire UI in/out (60%–200%), Ctrl+0 to reset; persisted across sessions
 - **Resizable Panels** — Drag the splitter handles between columns on the Music and CSS Editor pages to resize panes
 - **Smooth UI** — Resize debouncing, proper cleanup, and consistent dark theme
+- **Lazy Page Loading** — Pages are created on first navigation for fast startup
+- **Lazy Audio Init** — Pygame mixer initializes only when audio is first played, not at startup
+- **Fast Scrolling** — 5x scroll speed multiplier across all scrollable widgets
 
 ## Screenshots
 

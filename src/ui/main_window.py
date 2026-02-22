@@ -80,7 +80,12 @@ class MainWindow(ctk.CTkFrame):
             pass
 
     def _undo(self):
-        desc = action_history.undo()
+        try:
+            desc = action_history.undo()
+        except Exception as e:
+            self.action_label.configure(text=f"Undo failed: {e}", text_color="#e94560")
+            self._safe_after(3000, lambda: self.action_label.configure(text=""))
+            return
         if desc:
             self.action_label.configure(text=f"Undone: {desc}", text_color="#e94560")
             self._safe_after(3000, lambda: self.action_label.configure(text=""))
@@ -92,7 +97,12 @@ class MainWindow(ctk.CTkFrame):
                 page.on_show()
 
     def _redo(self):
-        desc = action_history.redo()
+        try:
+            desc = action_history.redo()
+        except Exception as e:
+            self.action_label.configure(text=f"Redo failed: {e}", text_color="#e94560")
+            self._safe_after(3000, lambda: self.action_label.configure(text=""))
+            return
         if desc:
             self.action_label.configure(text=f"Redone: {desc}", text_color="#2fa572")
             self._safe_after(3000, lambda: self.action_label.configure(text=""))

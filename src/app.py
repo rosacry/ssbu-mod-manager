@@ -70,11 +70,14 @@ class ModManagerApp(ctk.CTk):
         except Exception as e:
             logger.warn("App", f"Failed to set window icon: {e}")
 
-        # Load param labels
-        if not load_param_labels():
-            from tkinter import messagebox
-            messagebox.showwarning("Warning",
-                "ParamLabels.csv not found. Hash resolution will be limited.")
+        # Load param labels in background to avoid blocking startup
+        import threading
+        def _load_labels_bg():
+            if not load_param_labels():
+                logger.warn("App", "ParamLabels.csv not found. Hash resolution will be limited.")
+            else:
+                logger.info("App", "ParamLabels.csv loaded successfully")
+        threading.Thread(target=_load_labels_bg, daemon=True).start()
 
         # Initialize config
         self.config_manager = ConfigManager()
@@ -120,14 +123,15 @@ class ModManagerApp(ctk.CTk):
         self.main_window = MainWindow(self, self)
         self.main_window.pack(fill="both", expand=True)
 
-        # Create and register pages
-        self._create_pages()
+        # Lazy page registry - pages are created on first navigation
+        self._page_classes = {}
+        self._register_page_classes()
 
-        # Navigate to dashboard
+        # Navigate to dashboard (creates only the dashboard page)
         self.navigate("dashboard")
 
-        # Update status bar
-        self._update_status()
+        # Update status bar in background
+        self.after(100, self._update_status)
 
         # Handle window close properly
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -273,6 +277,11 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._resize_after_id)
         except Exception:
             pass
+        try:
+            if self._zoom_indicator_id:
+                self.after_cancel(self._zoom_indicator_id)
+        except Exception:
+            pass
 
         # Destroy the window
         try:
@@ -285,28 +294,32 @@ class ModManagerApp(ctk.CTk):
     def shutting_down(self) -> bool:
         return self._shutting_down
 
-    def _create_pages(self):
-        pages = {
-            "dashboard": DashboardPage(self.main_window.content, self),
-            "mods": ModsPage(self.main_window.content, self),
-            "plugins": PluginsPage(self.main_window.content, self),
-            "css": CSSPage(self.main_window.content, self),
-            "music": MusicPage(self.main_window.content, self),
-            "conflicts": ConflictsPage(self.main_window.content, self),
-            "share": SharePage(self.main_window.content, self),
-            "migration": MigrationPage(self.main_window.content, self),
-            "online_compat": OnlineCompatPage(self.main_window.content, self),
-            "settings": SettingsPage(self.main_window.content, self),
-            "developer": DeveloperPage(self.main_window.content, self),
+    def _register_page_classes(self):
+        """Register page classes for lazy instantiation."""
+        self._page_classes = {
+            "dashboard": DashboardPage,
+            "mods": ModsPage,
+            "plugins": PluginsPage,
+            "css": CSSPage,
+            "music": MusicPage,
+            "conflicts": ConflictsPage,
+            "share": SharePage,
+            "migration": MigrationPage,
+            "online_compat": OnlineCompatPage,
+            "settings": SettingsPage,
+            "developer": DeveloperPage,
         }
 
-        for page_id, page in pages.items():
-            self.main_window.register_page(page_id, page)
-
     def navigate(self, page_id: str):
-        """Navigate to a page."""
+        """Navigate to a page, creating it lazily if needed."""
         if self._shutting_down:
             return
+        # Lazy page creation
+        if page_id not in self.main_window.pages and page_id in self._page_classes:
+            page_class = self._page_classes[page_id]
+            page = page_class(self.main_window.content, self)
+            self.main_window.register_page(page_id, page)
+            logger.info("App", f"Created page: {page_id}")
         logger.info("App", f"Navigate to: {page_id}")
         self.main_window.navigate(page_id)
 

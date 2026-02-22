@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 from src.models.music import MusicTrack, StagePlaylist, StageInfo
 from src.constants import VANILLA_STAGES
-from src.utils.xmsbt_parser import parse_xmsbt
+from src.utils.xmsbt_parser import parse_xmsbt, extract_entries_from_msbt
 from src.utils.file_utils import backup_file
 from src.config import CONFIG_DIR
 from src.utils.logger import logger
@@ -51,8 +51,32 @@ class MusicManager:
                 )
                 self.tracks.append(track)
 
-            # Try to get track names from XMSBT files
+            # Try to get track names from XMSBT and MSBT files
             self._load_track_names_from_mod(mod_folder)
+
+        # Auto-generate MSBT overlays so custom track names show in-game
+        self._auto_generate_msbt_overlays(mods_root)
+
+        # Load saved assignments if they exist
+        self._load_saved_assignments()
+
+        return self.tracks
+
+    def _auto_generate_msbt_overlays(self, mods_root: Path) -> None:
+        """Auto-generate XMSBT overlays from binary MSBT files.
+
+        This ensures custom track names (e.g. from Sonic Extended Tracklist)
+        are visible in-game even on emulators that require XMSBT overlays.
+        """
+        try:
+            from src.core.conflict_resolver import ConflictResolver
+            resolver = ConflictResolver(mods_root)
+            count = resolver.generate_msbt_overlays()
+            if count > 0:
+                logger.info("MusicManager",
+                            f"Auto-generated {count} MSBT overlay(s) for track names")
+        except Exception as e:
+            logger.warn("MusicManager", f"Failed to auto-generate MSBT overlays: {e}")
 
         # Load saved assignments if they exist
         self._load_saved_assignments()
@@ -61,14 +85,37 @@ class MusicManager:
 
     def _load_track_names_from_mod(self, mod_folder: Path) -> None:
         """Load track display names from XMSBT/MSBT files in a mod."""
+        # Scan XMSBT overlay files
         for xmsbt_file in mod_folder.rglob("*.xmsbt"):
             if "bgm" in xmsbt_file.name.lower() or "msg_bgm" in xmsbt_file.name.lower():
                 entries = parse_xmsbt(xmsbt_file)
-                for label, text in entries.items():
-                    for track in self.tracks:
-                        if track.track_id in label or label.endswith(track.track_id):
-                            if not track.display_name:
-                                track.display_name = text
+                self._apply_track_names(entries)
+
+        # Also scan binary MSBT files (e.g. Sonic Extended Tracklist uses these)
+        for msbt_file in mod_folder.rglob("*.msbt"):
+            if "bgm" in msbt_file.name.lower() or "msg_bgm" in msbt_file.name.lower():
+                entries = extract_entries_from_msbt(msbt_file)
+                self._apply_track_names(entries)
+
+    def _apply_track_names(self, entries: dict[str, str]) -> None:
+        """Apply track names from parsed XMSBT/MSBT entries to discovered tracks."""
+        for label, text in entries.items():
+            if not text or not text.strip():
+                continue
+            for track in self.tracks:
+                if track.display_name:
+                    continue
+                # Match by track_id appearing in the label or label suffix
+                if track.track_id in label or label.endswith(track.track_id):
+                    track.display_name = text.strip()
+                    break
+                # Also try matching by the hash/numeric part after "bgm_title_"
+                # e.g. label "bgm_title_25AR" matches track "bgm_25AR"
+                label_suffix = label.rsplit('_', 1)[-1] if '_' in label else ''
+                track_suffix = track.track_id.rsplit('_', 1)[-1] if '_' in track.track_id else ''
+                if label_suffix and track_suffix and label_suffix == track_suffix:
+                    track.display_name = text.strip()
+                    break
 
     def get_stage_list(self) -> list[StageInfo]:
         """Get list of all vanilla stages."""
@@ -153,6 +200,7 @@ class MusicManager:
         1. Persisting the assignment config to JSON
         2. Generating/modifying the ui_bgm_db.prc and ui_stage_db.prc in a
            _MusicConfig mod folder that ARCropolis will load
+        3. Handling main menu music replacement separately
         Returns a summary dict.
         """
         result = {
@@ -161,11 +209,18 @@ class MusicManager:
             "output_mod": "",
             "prc_updated": False,
             "config_saved": False,
+            "menu_music_set": False,
         }
 
         # Save the JSON config for persistence
         self._save_assignment_config(mods_root)
         result["config_saved"] = True
+
+        # Handle main menu music separately
+        menu_tracks = self.get_tracks_for_stage("ui_stage_id_menu")
+        if menu_tracks:
+            self._apply_menu_music(menu_tracks[0], mods_root)
+            result["menu_music_set"] = True
 
         # Find the music source mod that has ui_bgm_db.prc and ui_stage_db.prc
         source_mod = self._find_music_source_mod(mods_root)
@@ -186,6 +241,29 @@ class MusicManager:
                 result["tracks_assigned"] += len(playlist.tracks)
 
         return result
+
+    def _apply_menu_music(self, track: MusicTrack, mods_root: Path) -> None:
+        """Apply a track as the main menu music.
+
+        Copies the selected track's .nus3audio file into the _MusicConfig mod
+        at the path ARCropolis expects for main menu BGM replacement:
+            stream;/sound/bgm/bgm_z90_menu.nus3audio
+
+        The semicolon in the path is ARCropolis's stream-load syntax.
+        """
+        config_mod = mods_root / "_MusicConfig"
+        menu_bgm_dir = config_mod / "stream;" / "sound" / "bgm"
+        menu_bgm_dir.mkdir(parents=True, exist_ok=True)
+        dest = menu_bgm_dir / "bgm_z90_menu.nus3audio"
+
+        try:
+            # Copy the track's audio file as the menu BGM
+            shutil.copy2(str(track.file_path), str(dest))
+            logger.info("MusicManager",
+                        f"Menu music set to: {track.display_name or track.track_id} "
+                        f"(from {track.source_mod})")
+        except Exception as e:
+            logger.error("MusicManager", f"Failed to set menu music: {e}")
 
     def _find_music_source_mod(self, mods_root: Path) -> Optional[Path]:
         """Find a mod folder that contains ui_bgm_db.prc (the BGM database)."""

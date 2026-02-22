@@ -241,11 +241,17 @@ class DashboardPage(BasePage):
                     logger.info("Dashboard", f"Conflict scan: {count} unresolved conflicts found")
 
                 if not self.app.shutting_down:
-                    self.after(0, lambda: self._on_scan_done(count))
+                    try:
+                        self.after(0, lambda: self._on_scan_done(count))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error("Dashboard", f"Scan failed: {e}")
                 if not self.app.shutting_down:
-                    self.after(0, lambda: self._on_scan_done(0))
+                    try:
+                        self.after(0, lambda: self._on_scan_done(0))
+                    except Exception:
+                        pass
 
         threading.Thread(target=scan, daemon=True).start()
 
@@ -295,7 +301,10 @@ class DashboardPage(BasePage):
 
                 logger.info("Dashboard", f"Found {len(mergeable)} mergeable conflicts")
                 if not self.app.shutting_down:
-                    self.after(0, lambda: self._show_fix_dialog(mergeable))
+                    try:
+                        self.after(0, lambda: self._show_fix_dialog(mergeable))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error("Dashboard", f"Conflict fix failed: {e}")
                 if not self.app.shutting_down:
