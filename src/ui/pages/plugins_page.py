@@ -1,10 +1,10 @@
-"""Plugins management page."""
+"""Plugins management page - compact rows with accent bars."""
 import customtkinter as ctk
 from tkinter import messagebox
 from src.ui.base_page import BasePage
-from src.ui.widgets.plugin_row import PluginRow
 from src.models.plugin import PluginStatus
 from src.utils.logger import logger
+from src.utils.file_utils import format_size
 
 
 class PluginsPage(BasePage):
@@ -16,7 +16,7 @@ class PluginsPage(BasePage):
     def _build_ui(self):
         # Header
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        header_frame.pack(fill="x", padx=30, pady=(25, 10))
+        header_frame.pack(fill="x", padx=30, pady=(20, 8))
 
         title = ctk.CTkLabel(header_frame, text="Skyline Plugin Management",
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
@@ -25,26 +25,34 @@ class PluginsPage(BasePage):
         refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=100,
                                     command=self._force_refresh,
                                     corner_radius=8, height=34)
-        refresh_btn.pack(side="right")
+        refresh_btn.pack(side="right", padx=(5, 0))
+
+        open_btn = ctk.CTkButton(header_frame, text="Open Folder", width=110,
+                                 command=self._open_folder,
+                                 fg_color="#555555", hover_color="#444444",
+                                 corner_radius=8, height=34)
+        open_btn.pack(side="right", padx=(5, 0))
 
         # Plugin count
         self.count_label = ctk.CTkLabel(self, text="",
                                         font=ctk.CTkFont(size=12),
-                                        text_color="#999999", anchor="w")
-        self.count_label.pack(fill="x", padx=30, pady=(0, 8))
+                                        text_color="#888888", anchor="w")
+        self.count_label.pack(fill="x", padx=32, pady=(0, 6))
 
         # Scrollable plugin list
         self.plugin_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.plugin_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        self.plugin_list.pack(fill="both", expand=True, padx=25, pady=(0, 10))
 
         # Warning note
-        note = ctk.CTkLabel(
-            self,
-            text="Note: Disabling required plugins (like ARCropolis) will prevent mods from loading.",
+        note_frame = ctk.CTkFrame(self, fg_color="#2e2020", corner_radius=8)
+        note_frame.pack(fill="x", padx=30, pady=(5, 15))
+
+        ctk.CTkLabel(
+            note_frame,
+            text="\u26a0  Disabling required plugins (like ARCropolis) will prevent mods from loading.",
             font=ctk.CTkFont(size=11),
             text_color="#e94560",
-        )
-        note.pack(fill="x", padx=30, pady=(5, 15))
+        ).pack(fill="x", padx=15, pady=8)
 
     def on_show(self):
         if not self._loaded:
@@ -70,13 +78,79 @@ class PluginsPage(BasePage):
             widget.destroy()
 
         active = sum(1 for p in plugins if p.status == PluginStatus.ENABLED)
-        self.count_label.configure(text=f"{active} active / {len(plugins)} total plugins")
+        self.count_label.configure(
+            text=f"{active} active \u00b7 {len(plugins)} total plugins")
+
+        if not plugins:
+            ctk.CTkLabel(self.plugin_list,
+                         text="No plugins found in the plugins directory.",
+                         font=ctk.CTkFont(size=13), text_color="#666666",
+                         ).pack(pady=40)
+            return
 
         for plugin in plugins:
-            row = PluginRow(self.plugin_list, plugin, on_toggle=self._on_toggle)
-            row.pack(fill="x", pady=3)
+            self._render_plugin_row(plugin)
 
         logger.info("Plugins", f"Rendered {len(plugins)} plugins")
+
+    def _render_plugin_row(self, plugin):
+        """Render a single plugin as a compact row with accent bar."""
+        is_enabled = plugin.status == PluginStatus.ENABLED
+        is_required = plugin.known_info and plugin.known_info.required
+
+        row = ctk.CTkFrame(self.plugin_list, fg_color="#242438", corner_radius=6,
+                           height=52)
+        row.pack(fill="x", pady=2)
+        row.pack_propagate(False)
+
+        # Colored left accent bar
+        accent_color = "#1f538d" if is_enabled else "#3a3a4a"
+        if is_required and is_enabled:
+            accent_color = "#e94560"
+        accent = ctk.CTkFrame(row, width=4, fg_color=accent_color, corner_radius=2)
+        accent.pack(side="left", fill="y", padx=(3, 0), pady=4)
+
+        # Toggle switch
+        switch = ctk.CTkSwitch(
+            row, text="", width=42, height=20,
+            command=lambda p=plugin: self._on_toggle(p),
+            onvalue=True, offvalue=False,
+        )
+        switch.pack(side="left", padx=(8, 6))
+        if is_enabled:
+            switch.select()
+        else:
+            switch.deselect()
+
+        # Plugin info - name + description in single label
+        name = plugin.display_name
+        desc = plugin.description
+        name_color = "white" if is_enabled else "#666666"
+
+        display_text = name
+        if desc and desc != name:
+            display_text += f"  \u2014  {desc}"
+
+        ctk.CTkLabel(
+            row, text=display_text,
+            font=ctk.CTkFont(size=13),
+            text_color=name_color, anchor="w",
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        # Size
+        ctk.CTkLabel(
+            row, text=format_size(plugin.file_size),
+            font=ctk.CTkFont(size=11),
+            text_color="#666666",
+        ).pack(side="right", padx=(0, 10))
+
+        # Required badge
+        if is_required:
+            ctk.CTkLabel(
+                row, text="REQUIRED",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color="#e94560",
+            ).pack(side="right", padx=(0, 5))
 
     def _on_toggle(self, plugin):
         try:
@@ -100,3 +174,9 @@ class PluginsPage(BasePage):
         except Exception as e:
             logger.error("Plugins", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle plugin: {e}")
+
+    def _open_folder(self):
+        import os
+        settings = self.app.config_manager.settings
+        if settings.plugins_path and settings.plugins_path.exists():
+            os.startfile(str(settings.plugins_path))

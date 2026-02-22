@@ -44,6 +44,9 @@ class ModManagerApp(ctk.CTk):
         # Shutdown flag for background threads
         self._shutting_down = False
         self._resize_after_id = None
+        self._last_width = 0
+        self._last_height = 0
+        self._resize_overlay = None
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -124,18 +127,34 @@ class ModManagerApp(ctk.CTk):
         logger.info("App", "Application startup complete")
 
     def _on_configure(self, event):
-        """Debounce resize events to prevent glitchy rendering."""
-        if event.widget != self:
+        """Hide content during resize to prevent visual glitching."""
+        if event.widget != self or self._shutting_down:
             return
+
+        w, h = event.width, event.height
+        if w == self._last_width and h == self._last_height:
+            return
+        self._last_width = w
+        self._last_height = h
+
+        # Show a solid overlay to hide the re-layout
+        if self._resize_overlay is None:
+            import tkinter as tk
+            self._resize_overlay = tk.Frame(self, bg="#1a1a2e")
+        self._resize_overlay.place(x=0, y=0, relwidth=1, relheight=1)
+        self._resize_overlay.lift()
+
         if self._resize_after_id:
             self.after_cancel(self._resize_after_id)
-        self._resize_after_id = self.after(50, self._finalize_resize)
+        self._resize_after_id = self.after(80, self._finalize_resize)
 
     def _finalize_resize(self):
-        """Apply layout after resize settles."""
+        """Remove overlay after resize settles."""
         self._resize_after_id = None
         try:
             self.update_idletasks()
+            if self._resize_overlay:
+                self._resize_overlay.place_forget()
         except Exception:
             pass
 

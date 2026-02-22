@@ -159,11 +159,13 @@ class ConflictsPage(BasePage):
                         c.resolved = True
                         c.resolution = ResolutionStrategy.MERGE
 
-                self.after(0, lambda: self._on_scan_done(conflicts))
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._on_scan_done(conflicts))
             except Exception as e:
                 tb = traceback.format_exc()
                 logger.error("Conflicts", f"Scan failed: {e}\n{tb}")
-                self.after(0, lambda: self._on_scan_error(str(e)))
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._on_scan_error(str(e)))
 
         threading.Thread(target=do_scan, daemon=True).start()
 

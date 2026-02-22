@@ -38,11 +38,16 @@ class PluginManager:
 
             known = KNOWN_PLUGINS.get(lookup_name)
 
+            try:
+                file_size = fpath.stat().st_size
+            except OSError:
+                file_size = 0
+
             plugin = Plugin(
                 filename=fname,
                 path=fpath,
                 status=status,
-                file_size=fpath.stat().st_size,
+                file_size=file_size,
                 known_info=known,
             )
             self._plugins.append(plugin)

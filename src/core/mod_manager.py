@@ -93,10 +93,15 @@ class ModManager:
             return mod
 
         files = self.scanner.scan_mod(mod.path)
-        mod.files = files
-        mod.file_count = len(files)
-        mod.total_size = sum(f.file_size for f in files)
-        mod.metadata = self.scanner.extract_metadata(mod.path, files)
+        if files:
+            mod.files = files
+            mod.file_count = len(files)
+            mod.total_size = sum(f.file_size for f in files)
+            mod.metadata = self.scanner.extract_metadata(mod.path, files)
+        else:
+            mod.files = []
+            mod.file_count = 0
+            mod.total_size = 0
 
         if mod.metadata.fighter_kind:
             mod.metadata.display_name = mod.original_name

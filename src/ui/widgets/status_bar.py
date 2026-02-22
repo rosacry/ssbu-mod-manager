@@ -15,13 +15,21 @@ class StatusBar(ctk.CTkFrame):
         )
         self.status_label.pack(side="left", padx=15)
 
+        # Version label
+        ctk.CTkLabel(
+            self,
+            text="v2.1.0",
+            font=ctk.CTkFont(size=10),
+            text_color="#555555",
+        ).pack(side="right", padx=10)
+
         self.stats_label = ctk.CTkLabel(
             self,
             text="",
             font=ctk.CTkFont(size=11),
             text_color="#888888",
         )
-        self.stats_label.pack(side="right", padx=15)
+        self.stats_label.pack(side="right", padx=5)
 
     def set_status(self, text: str):
         self.status_label.configure(text=text)

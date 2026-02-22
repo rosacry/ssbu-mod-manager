@@ -16,8 +16,11 @@ class DashboardPage(BasePage):
         self._build_ui()
 
     def _build_ui(self):
+        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=0, pady=0)
+
         # Header
-        header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        header_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(25, 5))
 
         title = ctk.CTkLabel(header_frame, text="SSBU Mod Manager",
@@ -28,13 +31,14 @@ class DashboardPage(BasePage):
                                           font=ctk.CTkFont(size=12), text_color="#888888")
         self.loading_label.pack(side="right")
 
-        desc = ctk.CTkLabel(self, text="Manage your Super Smash Bros. Ultimate mods, plugins, music, and more.",
+        desc = ctk.CTkLabel(scroll,
+                            text="Manage your Super Smash Bros. Ultimate mods, plugins, music, and more.",
                             font=ctk.CTkFont(size=13), text_color="#999999", anchor="w")
-        desc.pack(fill="x", padx=30, pady=(0, 20))
+        desc.pack(fill="x", padx=30, pady=(0, 15))
 
         # Stats cards row
-        stats_frame = ctk.CTkFrame(self, fg_color="transparent")
-        stats_frame.pack(fill="x", padx=30, pady=(0, 20))
+        stats_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        stats_frame.pack(fill="x", padx=30, pady=(0, 15))
 
         self.stat_cards = {}
         stats = [
@@ -49,54 +53,58 @@ class DashboardPage(BasePage):
             card.grid(row=0, column=i, padx=6, pady=5, sticky="nsew")
             stats_frame.columnconfigure(i, weight=1)
 
+            # Colored top accent line
+            accent = ctk.CTkFrame(card, height=3, fg_color=color, corner_radius=0)
+            accent.pack(fill="x", padx=15, pady=(12, 0))
+
             val_label = ctk.CTkLabel(card, text=value,
                                      font=ctk.CTkFont(size=36, weight="bold"),
                                      text_color=color)
-            val_label.pack(padx=20, pady=(18, 4))
+            val_label.pack(padx=20, pady=(8, 4))
 
             title_label = ctk.CTkLabel(card, text=title_text,
                                        font=ctk.CTkFont(size=12),
                                        text_color="#999999")
-            title_label.pack(padx=20, pady=(0, 18))
+            title_label.pack(padx=20, pady=(0, 16))
 
             self.stat_cards[key] = val_label
 
         # Quick Actions
-        actions_label = ctk.CTkLabel(self, text="Quick Actions",
+        actions_label = ctk.CTkLabel(scroll, text="Quick Actions",
                                      font=ctk.CTkFont(size=18, weight="bold"), anchor="w")
         actions_label.pack(fill="x", padx=30, pady=(5, 10))
 
-        actions_frame = ctk.CTkFrame(self, fg_color="transparent")
+        actions_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         actions_frame.pack(fill="x", padx=30)
 
         btn_style = {"height": 38, "corner_radius": 8, "font": ctk.CTkFont(size=13)}
 
-        scan_btn = ctk.CTkButton(actions_frame, text="Scan for Conflicts",
-                                 command=self._go_to_conflicts, width=180, **btn_style)
+        scan_btn = ctk.CTkButton(actions_frame, text="\u26a0  Scan Conflicts",
+                                 command=self._go_to_conflicts, width=170, **btn_style)
         scan_btn.pack(side="left", padx=(0, 8))
 
-        fix_btn = ctk.CTkButton(actions_frame, text="Fix Text Conflicts",
+        fix_btn = ctk.CTkButton(actions_frame, text="\u2714  Fix Text Conflicts",
                                 command=self._fix_xmsbt_conflicts, width=180,
                                 fg_color="#b08a2a", hover_color="#8a6a1a", **btn_style)
         fix_btn.pack(side="left", padx=(0, 8))
 
-        refresh_btn = ctk.CTkButton(actions_frame, text="Refresh All",
+        refresh_btn = ctk.CTkButton(actions_frame, text="\u27f3  Refresh All",
                                     command=self._force_refresh, width=130,
                                     fg_color="#555555", hover_color="#444444", **btn_style)
         refresh_btn.pack(side="left", padx=(0, 8))
 
-        open_btn = ctk.CTkButton(actions_frame, text="Open Mods Folder",
-                                 command=self._open_mods_folder, width=160,
+        open_btn = ctk.CTkButton(actions_frame, text="\u2750  Mods Folder",
+                                 command=self._open_mods_folder, width=140,
                                  fg_color="#555555", hover_color="#444444", **btn_style)
         open_btn.pack(side="left", padx=(0, 8))
 
-        music_btn = ctk.CTkButton(actions_frame, text="Music Manager",
-                                  command=lambda: self.app.navigate("music"), width=160,
+        music_btn = ctk.CTkButton(actions_frame, text="\u266b  Music",
+                                  command=lambda: self.app.navigate("music"), width=100,
                                   fg_color="#555555", hover_color="#444444", **btn_style)
         music_btn.pack(side="left")
 
         # Conflict info banner
-        self.info_frame = ctk.CTkFrame(self, fg_color="#2a2a1e", corner_radius=10)
+        self.info_frame = ctk.CTkFrame(scroll, fg_color="#2a2a1e", corner_radius=10)
         self.info_frame.pack(fill="x", padx=30, pady=(15, 0))
 
         self.xmsbt_info = ctk.CTkLabel(
@@ -106,14 +114,37 @@ class DashboardPage(BasePage):
         self.xmsbt_info.pack(fill="x", padx=20, pady=14)
 
         # Emulator path status
-        path_frame = ctk.CTkFrame(self, fg_color="#242438", corner_radius=10)
-        path_frame.pack(fill="x", padx=30, pady=(15, 20))
+        path_frame = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        path_frame.pack(fill="x", padx=30, pady=(15, 10))
 
         self.path_label = ctk.CTkLabel(
             path_frame, text="Emulator: Not configured",
             font=ctk.CTkFont(size=13), text_color="#999999", anchor="w",
         )
         self.path_label.pack(fill="x", padx=20, pady=14)
+
+        # Getting started section (shows when not configured)
+        self.getting_started = ctk.CTkFrame(scroll, fg_color="#1e1e38", corner_radius=10)
+        self.getting_started.pack(fill="x", padx=30, pady=(5, 20))
+
+        gs_inner = ctk.CTkFrame(self.getting_started, fg_color="transparent")
+        gs_inner.pack(fill="x", padx=20, pady=15)
+
+        ctk.CTkLabel(gs_inner, text="Getting Started",
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     anchor="w").pack(fill="x")
+
+        steps = [
+            "1.  Go to Settings and configure your emulator SDMC path",
+            "2.  Your mods and plugins will be detected automatically",
+            "3.  Use the Mods page to enable/disable individual mods",
+            "4.  Use Conflicts to detect and auto-fix text conflicts",
+            "5.  Use Music to assign custom tracks to stages",
+        ]
+        for step in steps:
+            ctk.CTkLabel(gs_inner, text=step,
+                         font=ctk.CTkFont(size=12), text_color="#999999",
+                         anchor="w").pack(fill="x", pady=1)
 
     def on_show(self):
         logger.debug("Dashboard", "Page shown, refreshing stats")
@@ -123,15 +154,22 @@ class DashboardPage(BasePage):
         """Quick refresh using cached data."""
         try:
             settings = self.app.config_manager.settings
+            configured = False
+
             if settings.eden_sdmc_path:
                 emu = settings.emulator or "Emulator"
                 self.path_label.configure(
                     text=f"{emu}: {settings.eden_sdmc_path}",
                     text_color="#2fa572")
+                configured = True
             else:
                 self.path_label.configure(
-                    text="Emulator: Not configured - go to Settings to set up",
+                    text="Emulator: Not configured \u2014 go to Settings to set up",
                     text_color="#e94560")
+
+            # Show/hide getting started based on config state
+            if configured:
+                self.getting_started.pack_forget()
 
             if settings.mods_path and settings.mods_path.exists():
                 mods = self.app.mod_manager.list_mods()
@@ -182,10 +220,12 @@ class DashboardPage(BasePage):
                                if c.is_mergeable and c.relative_path not in merged_files)
                     logger.info("Dashboard", f"Conflict scan: {count} unresolved conflicts found")
 
-                self.after(0, lambda: self._on_scan_done(count))
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._on_scan_done(count))
             except Exception as e:
                 logger.error("Dashboard", f"Scan failed: {e}")
-                self.after(0, lambda: self._on_scan_done(0))
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._on_scan_done(0))
 
         threading.Thread(target=scan, daemon=True).start()
 
@@ -234,10 +274,12 @@ class DashboardPage(BasePage):
                             if c.is_mergeable and c.relative_path not in merged_files]
 
                 logger.info("Dashboard", f"Found {len(mergeable)} mergeable conflicts")
-                self.after(0, lambda: self._show_fix_dialog(mergeable))
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._show_fix_dialog(mergeable))
             except Exception as e:
                 logger.error("Dashboard", f"Conflict fix failed: {e}")
-                self.after(0, lambda: self._fix_error(str(e)))
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._fix_error(str(e)))
 
         threading.Thread(target=do_fix, daemon=True).start()
 

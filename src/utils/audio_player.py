@@ -5,7 +5,7 @@ from typing import Optional
 _pygame_available = False
 try:
     import pygame
-    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+    pygame.mixer.init(frequency=48000, size=-16, channels=2, buffer=4096)
     _pygame_available = True
 except (ImportError, Exception):
     pass
@@ -44,12 +44,34 @@ class AudioPlayer:
             return False, "Audio playback requires pygame. Install with: pip install pygame"
 
         suffix = file_path.suffix.lower()
+
+        # Handle NUS3AUDIO files by extracting and converting
         if suffix == ".nus3audio":
-            return False, "NUS3AUDIO files cannot be played directly. Convert to WAV/OGG first."
+            return self._play_nus3audio(file_path)
 
         if suffix not in (".wav", ".ogg", ".mp3", ".flac"):
             return False, f"Unsupported format: {suffix}"
 
+        return self._play_file(file_path)
+
+    def _play_nus3audio(self, file_path: Path) -> tuple[bool, str]:
+        """Extract and play a NUS3AUDIO file."""
+        try:
+            from src.utils.nus3audio import extract_and_convert
+            success, message, temp_path = extract_and_convert(file_path)
+            if not success or temp_path is None:
+                return False, message
+            ok, play_msg = self._play_file(temp_path)
+            if ok:
+                return True, f"Playing: {file_path.name}"
+            return False, play_msg
+        except ImportError:
+            return False, "NUS3AUDIO parser not available"
+        except Exception as e:
+            return False, f"NUS3AUDIO playback failed: {e}"
+
+    def _play_file(self, file_path: Path) -> tuple[bool, str]:
+        """Play a standard audio file."""
         try:
             self.stop()
             pygame.mixer.music.load(str(file_path))
@@ -123,6 +145,12 @@ class AudioPlayer:
                 pygame.mixer.quit()
             except Exception:
                 pass
+        # Clean up cached files
+        try:
+            from src.utils.nus3audio import cleanup_cache
+            cleanup_cache()
+        except Exception:
+            pass
 
 
 # Singleton
