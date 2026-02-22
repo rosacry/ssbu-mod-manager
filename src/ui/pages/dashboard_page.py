@@ -336,6 +336,14 @@ class DashboardPage(BasePage):
         failed = len(mergeable) - actually_resolved
         logger.info("Dashboard", f"Resolved {actually_resolved}/{len(mergeable)} conflicts")
 
+        # Also generate XMSBT overlays from binary MSBT files
+        # (handles mods that use .msbt instead of .xmsbt, which
+        # don't work on some emulators)
+        msbt_overlays = resolver.generate_msbt_overlays()
+        if msbt_overlays > 0:
+            logger.info("Dashboard",
+                        f"Generated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s)")
+
         self._conflict_cache = failed
         self.stat_cards["conflicts"].configure(text=str(failed))
 
@@ -349,6 +357,8 @@ class DashboardPage(BasePage):
                 text_color="#e94560")
 
         msg = f"Merged {actually_resolved} text file(s) into _MergedResources."
+        if msbt_overlays > 0:
+            msg += f"\nGenerated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s)."
         if failed > 0:
             msg += f"\n\n{failed} conflict(s) could not be auto-merged."
         msg += "\n\nText should now display correctly in-game."

@@ -39,6 +39,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Automatic Scanning** — Detects when multiple mods modify the same game file
 - **Type-Based Grouping** — Conflicts grouped by file type (XMSBT, MSBT, PRC, STPRM, STDAT) with explanations
 - **Auto-Merge** — XMSBT text conflicts are merged using a union strategy (all labels from all mods combined); overlapping labels use last-mod-wins
+- **MSBT-to-XMSBT Overlay Generation** — Automatically extracts custom entries from binary MSBT files and generates XMSBT overlays, ensuring custom text (music names, character names, etc.) displays correctly on emulators
 - **Original File Management** — After merging, original XMSBT files are moved to `_MergedResources/.originals/` to prevent ARCropolis from double-loading both the originals and merged file
 - **Restore Originals** — One-click undo of all merges: restores original files to their mod folders and cleans up `_MergedResources`
 - **Backup Before Merge** — Configurable automatic backup creation before any merge or resolution operation
@@ -207,6 +208,7 @@ ssbu-mod-manager/
 - **PRC (`ui_chara_db.prc`)** — The character database. Each entry defines a CSS slot with fields like `ui_chara_id`, `fighter_kind`, `name_id`, `disp_order`, costume indices, and announcer voice labels.
 - **MSBT (`msg_name.msbt`)** — The display name text file. Labels like `nam_chr1_00_{name_id}` map to character names shown on screen.
 - **XMSBT (`.xmsbt`)** — Text override files used by mods. When multiple mods have XMSBT files for the same path, they can be merged automatically.
+- **MSBT-to-XMSBT Conversion** — Some mods ship binary `.msbt` files (full replacements) which don't work on emulators. The tool auto-detects these and generates `.xmsbt` overlays containing only the custom entries, which ARCropolis can apply correctly.
 - **Mod Detection** — The tool reads `config.json`, portrait filenames, `.xmsbt` text files, and narration sound files from each mod folder to auto-detect properties.
 - **Conflict Detection** — Scans all enabled mods for files at the same relative path. Groups conflicts by type and offers resolution strategies.
 

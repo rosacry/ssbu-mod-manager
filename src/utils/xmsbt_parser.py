@@ -1,9 +1,78 @@
-"""Parser for XMSBT files (XML-based MSBT overlay format used by ARCropolis)."""
+"""Parser for XMSBT files (XML-based MSBT overlay format used by ARCropolis).
+
+Also handles conversion of binary MSBT files to XMSBT overlay format
+for emulators that don't support binary MSBT replacement.
+"""
 import re
 from pathlib import Path
 from typing import Optional
 from xml.sax.saxutils import escape as xml_escape
 from src.utils.logger import logger
+
+
+def extract_entries_from_msbt(msbt_path: Path) -> dict[str, str]:
+    """Extract all text entries from a binary MSBT file.
+
+    Returns a dict of {label: text} compatible with XMSBT format.
+    Only includes entries that contain printable text.
+    """
+    entries = {}
+    try:
+        from LMS.Message.MSBT import MSBT
+        from LMS.Stream.Reader import Reader
+
+        with open(msbt_path, 'rb') as f:
+            data = f.read()
+
+        msbt = MSBT()
+        reader = Reader(data)
+        msbt.read(reader)
+
+        # labels is a dict: {int_index: str_label_name}
+        for idx, label_name in msbt.LBL1.labels.items():
+            if not isinstance(label_name, str):
+                continue
+            if idx >= len(msbt.TXT2.messages):
+                continue
+            msg = msbt.TXT2.messages[idx]
+            text = ''.join(c for c in str(msg) if c.isprintable())
+            if text:
+                entries[label_name] = text
+
+        logger.info("XMSBT", f"Extracted {len(entries)} entries from {msbt_path.name}")
+    except ImportError:
+        logger.warn("XMSBT", "pylibms (LMS) not installed - cannot parse binary MSBT files")
+    except Exception as e:
+        logger.warn("XMSBT", f"Failed to parse MSBT {msbt_path.name}: {e}")
+    return entries
+
+
+def filter_custom_entries(entries: dict[str, str]) -> dict[str, str]:
+    """Filter entries to keep only custom (mod-added) ones.
+
+    Custom entries typically have alphanumeric label suffixes (e.g.
+    bgm_title_25AR) while vanilla entries use purely numeric suffixes
+    (e.g. bgm_title_0001).  A generic catch-all also handles labels
+    whose numeric suffix exceeds 1605 (the vanilla BGM ceiling in SSBU
+    v13.0.1).
+    """
+    custom = {}
+    for label, text in entries.items():
+        parts = label.rsplit('_', 1)
+        if len(parts) < 2:
+            continue
+        suffix = parts[-1]
+        # Keep entries with any alphabetic character in the suffix
+        if re.search(r'[A-Za-z]', suffix):
+            custom[label] = text
+            continue
+        # Keep entries with very high numeric IDs (likely custom)
+        try:
+            if int(suffix) > 1605:
+                custom[label] = text
+        except ValueError:
+            custom[label] = text
+    return custom
 
 def parse_xmsbt(file_path: Path) -> dict[str, str]:
     """Parse an XMSBT file and return a dict of label -> text."""

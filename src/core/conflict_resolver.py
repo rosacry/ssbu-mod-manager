@@ -1,8 +1,12 @@
 """Resolve conflicts between mods - especially XMSBT merging."""
+import re
 from pathlib import Path
 from typing import Optional
 from src.models.conflict import FileConflict, ResolutionStrategy
-from src.utils.xmsbt_parser import parse_xmsbt, write_xmsbt, merge_xmsbt_files
+from src.utils.xmsbt_parser import (
+    parse_xmsbt, write_xmsbt, merge_xmsbt_files,
+    extract_entries_from_msbt, filter_custom_entries,
+)
 from src.utils.file_utils import backup_file
 from src.utils.logger import logger
 
@@ -245,3 +249,113 @@ class ConflictResolver:
                         dirpath.rmdir()
                 except OSError:
                     pass
+
+    # ------------------------------------------------------------------
+    # Binary MSBT → XMSBT overlay generation
+    # ------------------------------------------------------------------
+    def generate_msbt_overlays(self) -> int:
+        """Scan mods for binary .msbt files and generate XMSBT overlays.
+
+        Some mods ship binary MSBT replacements instead of XMSBT overlays.
+        Binary replacement often doesn't work on emulators, but XMSBT
+        overlays do.  This method:
+
+        1. Finds all binary .msbt files across enabled mods.
+        2. Groups them by base message file name (strip locale suffix).
+        3. Extracts custom entries (mod-added labels) from the preferred
+           locale (+us_en) or the first available file.
+        4. Merges the extracted entries into _MergedResources/<path>.xmsbt,
+           combining with any existing merged XMSBT.
+
+        Returns the number of XMSBT overlay files generated / updated.
+        """
+        if not self.mods_root.exists():
+            return 0
+
+        # Collect binary MSBT files, grouped by base name
+        # e.g. "ui/message/msg_bgm" → [("Sonic Extended Tracklist", Path(…+us_en.msbt)), ...]
+        msbt_groups: dict[str, list[tuple[str, Path]]] = {}
+
+        for folder in self.mods_root.iterdir():
+            if not folder.is_dir():
+                continue
+            if folder.name.startswith(".") or folder.name.startswith("_"):
+                continue
+            mod_name = folder.name
+            for fpath in folder.rglob("*.msbt"):
+                # Only process locale-specific MSBTs (e.g. msg_bgm+us_en.msbt).
+                # Non-locale MSBTs are typically handled correctly by ARCropolis
+                # and don't need XMSBT fallback overlays.
+                if '+' not in fpath.stem:
+                    continue
+                # Compute the base name without locale suffix
+                rel = str(fpath.relative_to(folder)).replace("\\", "/")
+                # Strip locale suffix: msg_bgm+us_en.msbt → msg_bgm
+                base = re.sub(r'\+[a-z]{2}_[a-z]{2}\.msbt$', '', rel, flags=re.I)
+                if base.endswith('.msbt'):
+                    base = base[:-5]  # Remove .msbt extension
+                if base not in msbt_groups:
+                    msbt_groups[base] = []
+                msbt_groups[base].append((mod_name, fpath))
+
+        if not msbt_groups:
+            return 0
+
+        generated = 0
+        for base_name, providers in msbt_groups.items():
+            # Prefer +us_en variant; fall back to first available
+            chosen_path = None
+            for _mod, p in providers:
+                if '+us_en' in p.name:
+                    chosen_path = p
+                    break
+            if chosen_path is None:
+                chosen_path = providers[0][1]
+
+            # Extract entries from the binary MSBT
+            all_entries = extract_entries_from_msbt(chosen_path)
+            if not all_entries:
+                continue
+
+            # Determine output XMSBT path (no locale suffix → applies to all locales)
+            xmsbt_rel = base_name + ".xmsbt"
+            output_path = self.merged_output_dir / xmsbt_rel
+
+            # If a merged XMSBT already exists, only add entries that are
+            # NOT yet present.  This fills in gaps (e.g. custom BGM track
+            # names from binary MSBTs) without duplicating or overriding
+            # anything already merged from XMSBT mods.
+            if output_path.exists():
+                existing = parse_xmsbt(output_path)
+                new_entries = {k: v for k, v in all_entries.items()
+                               if k not in existing}
+                if not new_entries:
+                    logger.info("ConflictResolver",
+                                f"No new entries from {chosen_path.name} "
+                                f"(all {len(all_entries)} already in merged XMSBT)")
+                    continue
+                # Also apply custom-entry filter to avoid dumping thousands
+                # of vanilla labels that are already in the base game MSBT
+                new_entries = filter_custom_entries(new_entries)
+                if not new_entries:
+                    logger.info("ConflictResolver",
+                                f"No custom entries to add from {chosen_path.name}")
+                    continue
+                existing.update(new_entries)
+                final_entries = existing
+            else:
+                # No existing XMSBT — only keep custom (mod-added) entries
+                final_entries = filter_custom_entries(all_entries)
+                if not final_entries:
+                    logger.info("ConflictResolver",
+                                f"No custom entries found in {chosen_path.name}")
+                    continue
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            write_xmsbt(output_path, final_entries)
+            generated += 1
+            logger.info("ConflictResolver",
+                        f"Generated XMSBT overlay from {chosen_path.name}: "
+                        f"{len(final_entries)} entries → {xmsbt_rel}")
+
+        return generated
