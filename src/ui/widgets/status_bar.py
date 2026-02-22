@@ -22,7 +22,7 @@ class StatusBar(ctk.CTkFrame):
         # Version label
         ver_label = ctk.CTkLabel(
             self,
-            text="SSBU Mod Manager v2.1.0",
+            text="SSBU Mod Manager v2.2.0",
             font=ctk.CTkFont(size=10),
             text_color="#353550",
         )

@@ -162,6 +162,9 @@ class DashboardPage(BasePage):
     def on_show(self):
         logger.debug("Dashboard", "Page shown, refreshing stats")
         self._refresh_stats_fast()
+        # Auto-scan conflicts in background if we haven't yet
+        if self._conflict_cache is None:
+            self._force_refresh()
 
     def _refresh_stats_fast(self):
         """Quick refresh using cached data."""
