@@ -123,6 +123,17 @@ class ModManagerApp(ctk.CTk):
         self.conflict_resolver = ConflictResolver(settings.mods_path or Path("."))
         self.share_manager = ShareCodeManager()
 
+        # One-time restore: move any files from .originals back to mod folders
+        # (only runs if .originals exists from a previous version's merge logic)
+        originals_dir = (settings.mods_path or Path(".")) / "_MergedResources" / ".originals"
+        if originals_dir.exists():
+            try:
+                restored = self.conflict_resolver.restore_originals()
+                if restored:
+                    logger.info("App", f"Restored {restored} previously moved mod file(s)")
+            except Exception as e:
+                logger.warn("App", f"Failed to restore moved files: {e}")
+
         logger.info("App", "All managers initialized")
 
         # Build UI
@@ -241,6 +252,10 @@ class ModManagerApp(ctk.CTk):
         """Low-level key handler for zoom shortcuts on Windows."""
         # Check if Ctrl is held (state bit 0x4 on Windows)
         if not (event.state & 0x4):
+            return
+        # Skip zoom when focus is in a text input widget
+        widget_class = event.widget.winfo_class()
+        if widget_class in ("Entry", "Text", "TEntry", "Spinbox", "TSpinbox"):
             return
         # Avoid double-handling if explicit bindings already caught it
         char = event.char

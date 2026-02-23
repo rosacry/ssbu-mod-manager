@@ -229,6 +229,8 @@ class CSSPage(BasePage):
         if not selection:
             return
         list_index = selection[0]
+        if list_index >= len(self.filtered_indices):
+            return
         self.selected_index = self.filtered_indices[list_index]
         chara = self.css_manager.characters[self.selected_index]
 

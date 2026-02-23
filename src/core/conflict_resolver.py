@@ -1,4 +1,5 @@
 """Resolve conflicts between mods - especially XMSBT merging."""
+import json
 import re
 import shutil
 from pathlib import Path
@@ -18,13 +19,14 @@ class ConflictResolver:
         self.merged_output_dir = mods_root / "_MergedResources"
 
     def auto_merge_xmsbt(self, conflict: FileConflict, create_backup: bool = True) -> Optional[Path]:
-        """Merge XMSBT files from multiple mods into _MergedResources and disable originals.
+        """Merge XMSBT files from multiple mods into _MergedResources.
 
         Uses a union strategy: all labels from all files are included.
         For overlapping labels (same label, different text), the last mod's value wins.
-        After merging, original XMSBT files are moved to
-        _MergedResources/.originals/<mod_name>/ so that ARCropolis
-        only loads the single merged version.
+
+        The originals are left in place so ARCropolis can still process
+        them individually.  The merged version in _MergedResources acts
+        as an additional overlay that guarantees every label is present.
         """
         if not conflict.is_mergeable:
             return None
@@ -43,36 +45,8 @@ class ConflictResolver:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         write_xmsbt(output_path, merged_entries)
 
-        # Move the original conflicting files out of their mod folders
-        # into _MergedResources/.originals/<mod_name>/<relative_path> so that
-        # ARCropolis doesn't see them at all (renaming in-place still causes
-        # ARCropolis to detect the renamed files as conflicts).
-        originals_dir = self.merged_output_dir / ".originals"
-        disabled_count = 0
-        for mod_name, mod_path in zip(conflict.mods_involved, conflict.mod_paths):
-            try:
-                if not mod_path.exists():
-                    continue
-                backup_dest = originals_dir / mod_name / conflict.relative_path
-                backup_dest.parent.mkdir(parents=True, exist_ok=True)
-                if not backup_dest.exists():
-                    shutil.move(str(mod_path), str(backup_dest))
-                    disabled_count += 1
-                    # Clean up empty parent directories in the mod folder
-                    parent = mod_path.parent
-                    mod_root = self.mods_root / mod_name
-                    while parent != mod_root and parent.exists():
-                        try:
-                            if not any(parent.iterdir()):
-                                parent.rmdir()
-                                parent = parent.parent
-                            else:
-                                break
-                        except OSError:
-                            break
-            except OSError as e:
-                logger.warn("ConflictResolver",
-                            f"Could not disable original: {mod_path.name} - {e}")
+        # Ensure _MergedResources has a config.json so ARCropolis loads it
+        self._ensure_merged_config()
 
         if overlapping:
             logger.info("ConflictResolver",
@@ -82,9 +56,6 @@ class ConflictResolver:
         else:
             logger.info("ConflictResolver",
                         f"Merged {conflict.relative_path}: {len(merged_entries)} labels")
-
-        logger.info("ConflictResolver",
-                    f"Disabled {disabled_count} original file(s) to prevent double-loading")
 
         conflict.resolution = ResolutionStrategy.MERGE
         conflict.resolved = True
@@ -254,15 +225,15 @@ class ConflictResolver:
         """Scan mods for binary .msbt files and generate XMSBT overlays.
 
         Some mods ship binary MSBT replacements instead of XMSBT overlays.
-        Binary replacement often doesn't work on emulators, but XMSBT
-        overlays do.  This method:
+        This method generates a supplemental XMSBT overlay in
+        _MergedResources that has track-name entries extracted from the
+        binary MSBTs.  The overlay acts as an additional safety net —
+        ARCropolis will still load the binary MSBTs normally *and*
+        apply the overlay on top.
 
-        1. Finds all binary .msbt files across enabled mods.
-        2. Groups them by base message file name (strip locale suffix).
-        3. Extracts custom entries (mod-added labels) from the preferred
-           locale (+us_en) or the first available file.
-        4. Merges the extracted entries into _MergedResources/<path>.xmsbt,
-           combining with any existing merged XMSBT.
+        Binary MSBT files are **never moved or disabled**.  This avoids
+        breaking emulators (LayeredFS) or setups where ARCropolis does
+        not load _MergedResources.
 
         Returns the number of XMSBT overlay files generated / updated.
         """
@@ -281,16 +252,12 @@ class ConflictResolver:
             mod_name = folder.name
             for fpath in folder.rglob("*.msbt"):
                 # Only process locale-specific MSBTs (e.g. msg_bgm+us_en.msbt).
-                # Non-locale MSBTs are typically handled correctly by ARCropolis
-                # and don't need XMSBT fallback overlays.
                 if '+' not in fpath.stem:
                     continue
-                # Compute the base name without locale suffix
                 rel = str(fpath.relative_to(folder)).replace("\\", "/")
-                # Strip locale suffix: msg_bgm+us_en.msbt → msg_bgm
                 base = re.sub(r'\+[a-z]{2}_[a-z]{2}\.msbt$', '', rel, flags=re.I)
                 if base.endswith('.msbt'):
-                    base = base[:-5]  # Remove .msbt extension
+                    base = base[:-5]
                 if base not in msbt_groups:
                     msbt_groups[base] = []
                 msbt_groups[base].append((mod_name, fpath))
@@ -314,14 +281,12 @@ class ConflictResolver:
             if not all_entries:
                 continue
 
-            # Determine output XMSBT path (no locale suffix → applies to all locales)
+            # Determine output XMSBT path
             xmsbt_rel = base_name + ".xmsbt"
             output_path = self.merged_output_dir / xmsbt_rel
 
-            # If a merged XMSBT already exists, only add entries that are
-            # NOT yet present.  This fills in gaps (e.g. custom BGM track
-            # names from binary MSBTs) without duplicating or overriding
-            # anything already merged from XMSBT mods.
+            is_bgm = 'bgm' in base_name.lower() or 'bgm' in chosen_path.name.lower()
+
             if output_path.exists():
                 existing = parse_xmsbt(output_path)
                 new_entries = {k: v for k, v in all_entries.items()
@@ -331,10 +296,6 @@ class ConflictResolver:
                                 f"No new entries from {chosen_path.name} "
                                 f"(all {len(all_entries)} already in merged XMSBT)")
                     continue
-                # Also apply custom-entry filter to avoid dumping thousands
-                # of vanilla labels that are already in the base game MSBT.
-                # Use inclusive mode for BGM-related files to keep track names.
-                is_bgm = 'bgm' in base_name.lower() or 'bgm' in chosen_path.name.lower()
                 new_entries = filter_custom_entries(new_entries, inclusive=is_bgm)
                 if not new_entries:
                     logger.info("ConflictResolver",
@@ -343,10 +304,6 @@ class ConflictResolver:
                 existing.update(new_entries)
                 final_entries = existing
             else:
-                # No existing XMSBT — only keep custom (mod-added) entries.
-                # Use inclusive mode for BGM-related MSBTs to keep all BGM
-                # title/author entries (mods often replace vanilla names).
-                is_bgm = 'bgm' in base_name.lower() or 'bgm' in chosen_path.name.lower()
                 final_entries = filter_custom_entries(all_entries, inclusive=is_bgm)
                 if not final_entries:
                     logger.info("ConflictResolver",
@@ -360,36 +317,31 @@ class ConflictResolver:
                         f"Generated XMSBT overlay from {chosen_path.name}: "
                         f"{len(final_entries)} entries → {xmsbt_rel}")
 
-            # Disable the original binary MSBT files so ARCropolis uses
-            # the XMSBT overlay instead. On emulators, binary MSBT
-            # replacement often doesn't work, but XMSBT overlays do.
-            originals_dir = self.merged_output_dir / ".originals"
-            for mod_name, msbt_path in providers:
-                try:
-                    if not msbt_path.exists():
-                        continue
-                    mod_folder = self.mods_root / mod_name
-                    rel = str(msbt_path.relative_to(mod_folder)).replace("\\", "/")
-                    backup_dest = originals_dir / mod_name / rel
-                    backup_dest.parent.mkdir(parents=True, exist_ok=True)
-                    if not backup_dest.exists():
-                        shutil.move(str(msbt_path), str(backup_dest))
-                        logger.info("ConflictResolver",
-                                    f"Disabled binary MSBT: {mod_name}/{rel} "
-                                    f"(moved to .originals)")
-                        # Clean empty dirs
-                        parent = msbt_path.parent
-                        while parent != mod_folder and parent.exists():
-                            try:
-                                if not any(parent.iterdir()):
-                                    parent.rmdir()
-                                    parent = parent.parent
-                                else:
-                                    break
-                            except OSError:
-                                break
-                except OSError as e:
-                    logger.warn("ConflictResolver",
-                                f"Could not disable binary MSBT {msbt_path.name}: {e}")
+        # Ensure _MergedResources is recognized as a mod
+        if generated > 0:
+            self._ensure_merged_config()
 
         return generated
+
+
+
+    def _ensure_merged_config(self) -> None:
+        """Create a minimal config.json in _MergedResources for ARCropolis.
+
+        Without config.json, some ARCropolis versions may not recognise
+        this folder as a mod and skip its XMSBT overlays.
+        """
+        config_path = self.merged_output_dir / "config.json"
+        if config_path.exists():
+            return
+        self.merged_output_dir.mkdir(parents=True, exist_ok=True)
+        config = {
+            "new-dir-infos": [],
+            "new-dir-infos-base": "",
+            "description": "Auto-generated merged resources from SSBU Mod Manager",
+        }
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except OSError:
+            pass

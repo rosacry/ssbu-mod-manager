@@ -44,7 +44,7 @@ class FileScanner:
             for folder in mods_root.iterdir():
                 if not folder.is_dir():
                     continue
-                if folder.name.startswith(".") or folder.name.startswith("_"):
+                if folder.name.startswith("."):
                     continue
                 if folder.name in _SKIP_FOLDERS:
                     continue

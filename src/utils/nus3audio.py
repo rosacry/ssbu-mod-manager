@@ -6,10 +6,72 @@ Opus variant with custom framing). This module extracts the audio
 data and converts LOPUS to standard OGG Opus for playback.
 """
 import struct
+import subprocess
+import shutil
 import tempfile
 import os
 from pathlib import Path
 from typing import Optional
+
+
+# Cache whether ffmpeg is available (checked once)
+_ffmpeg_path: Optional[str] = None
+_ffmpeg_checked = False
+
+
+def _find_ffmpeg() -> Optional[str]:
+    """Find ffmpeg executable. Returns path or None."""
+    global _ffmpeg_path, _ffmpeg_checked
+    if _ffmpeg_checked:
+        return _ffmpeg_path
+    _ffmpeg_checked = True
+    path = shutil.which("ffmpeg")
+    if path:
+        _ffmpeg_path = path
+        return path
+    # Check common install locations on Windows
+    for candidate in [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\ffmpeg\bin\ffmpeg.exe"),
+        os.path.expandvars(r"%ProgramFiles%\ffmpeg\bin\ffmpeg.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\ffmpeg\bin\ffmpeg.exe"),
+    ]:
+        if os.path.isfile(candidate):
+            _ffmpeg_path = candidate
+            return candidate
+    return None
+
+
+def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
+    """Convert an OGG Opus file to WAV using ffmpeg.
+
+    pygame's SDL_mixer uses stb_vorbis for .ogg files, which only
+    supports Vorbis — not Opus. ffmpeg can decode Opus to WAV.
+    Returns path to WAV file, or None if conversion failed.
+    """
+    ffmpeg = _find_ffmpeg()
+    if not ffmpeg:
+        return None
+    # Write WAV next to the OGG if it's already in a temp/cache dir,
+    # otherwise write to the system temp directory to avoid polluting
+    # mod folders.
+    import tempfile
+    parent = str(ogg_path.parent).lower()
+    if "temp" in parent or "cache" in parent or "appdata" in parent:
+        wav_path = ogg_path.with_suffix(".wav")
+    else:
+        wav_path = Path(tempfile.gettempdir()) / (ogg_path.stem + ".wav")
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-y", "-i", str(ogg_path), "-ar", "48000",
+             "-ac", "2", "-sample_fmt", "s16", str(wav_path)],
+            capture_output=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode == 0 and wav_path.exists() and wav_path.stat().st_size > 44:
+            return wav_path
+    except Exception:
+        pass
+    return None
 
 
 # OGG CRC32 lookup table (polynomial 0x04C11DB7)
@@ -844,8 +906,8 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
         file_size = 0
     cache_key = f"{nus3audio_path.stem}_{file_size}"
 
-    # Check for any cached format
-    for ext in ('.ogg', '.wav'):
+    # Check for any cached format (prefer WAV over OGG since pygame handles WAV better)
+    for ext in ('.wav', '.ogg'):
         cached = cache_dir / f"{cache_key}{ext}"
         if cached.exists():
             return True, f"Playing: {nus3audio_path.name}", cached
@@ -913,9 +975,14 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         if lopus_magic & 0x80000000:
             try:
                 ogg_data = _lopus_to_ogg(audio_data)
-                out = cache_dir / f"{cache_key}.ogg"
-                out.write_bytes(ogg_data)
-                return True, f"Playing: {display_name}", out
+                ogg_path = cache_dir / f"{cache_key}.ogg"
+                ogg_path.write_bytes(ogg_data)
+                # pygame/stb_vorbis can't play OGG Opus — convert to WAV via ffmpeg
+                wav_path = _convert_ogg_opus_to_wav(ogg_path)
+                if wav_path:
+                    return True, f"Playing: {display_name}", wav_path
+                # ffmpeg not available — return OGG anyway (may work with newer SDL)
+                return True, f"Playing: {display_name}", ogg_path
             except Exception as e:
                 from src.utils.logger import logger
                 logger.warn("NUS3AUDIO", f"LOPUS conversion failed: {e}")
@@ -946,9 +1013,13 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
     if audio_data[:4] == b'OPUS':
         try:
             ogg_data = _opus_container_to_ogg(audio_data)
-            out = cache_dir / f"{cache_key}.ogg"
-            out.write_bytes(ogg_data)
-            return True, f"Playing: {display_name}", out
+            ogg_path = cache_dir / f"{cache_key}.ogg"
+            ogg_path.write_bytes(ogg_data)
+            # pygame/stb_vorbis can't play OGG Opus — convert to WAV via ffmpeg
+            wav_path = _convert_ogg_opus_to_wav(ogg_path)
+            if wav_path:
+                return True, f"Playing: {display_name}", wav_path
+            return True, f"Playing: {display_name}", ogg_path
         except Exception as e:
             from src.utils.logger import logger
             logger.warn("NUS3AUDIO", f"OPUS container conversion failed: {e}")

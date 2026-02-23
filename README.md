@@ -28,7 +28,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 
 ### Music Management
 - **3-Column Layout** — Stages on the left, playlist in the middle, available tracks on the right
-- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app
+- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Automatically converts OGG Opus to WAV via ffmpeg when needed
 - **Volume Control** — Adjustable volume slider for playback
 - **Stage Playlists** — Assign tracks to specific stages with drag-to-reorder
 - **Main Menu Music** — Change the main menu background music by assigning a track to the "Main Menu" stage entry
@@ -43,9 +43,10 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Automatic Scanning** — Detects when multiple mods modify the same game file
 - **Type-Based Grouping** — Conflicts grouped by file type (XMSBT, MSBT, PRC, STPRM, STDAT) with explanations
 - **Auto-Merge** — XMSBT text conflicts are merged using a union strategy (all labels from all mods combined); overlapping labels use last-mod-wins
-- **MSBT-to-XMSBT Overlay Generation** — Automatically extracts custom entries from binary MSBT files and generates XMSBT overlays, ensuring custom text (music names, character names, etc.) displays correctly on emulators. Original binary MSBTs are disabled to prevent conflicts with the generated overlay
-- **Original File Management** — After merging, original XMSBT files are moved to `_MergedResources/.originals/` to prevent ARCropolis from double-loading both the originals and merged file
-- **Restore Originals** — One-click undo of all merges: restores original files to their mod folders and cleans up `_MergedResources`
+- **MSBT-to-XMSBT Overlay Generation** — Automatically extracts custom entries from binary MSBT files and generates supplemental XMSBT overlays in `_MergedResources`, ensuring custom text (music names, character names, etc.) displays correctly in-game. Original mod files are never moved or modified
+- **ARCropolis Config** — Automatically creates `config.json` in `_MergedResources` so ARCropolis recognizes it as a valid mod
+- **Restore Originals** — One-click undo of all merges: restores any previously moved files to their mod folders and cleans up `_MergedResources`
+- **Startup Auto-Restore** — On launch, automatically restores any files that were moved by previous versions, ensuring mod integrity
 - **Backup Before Merge** — Configurable automatic backup creation before any merge or resolution operation
 - **Manual Resolution** — Choose which mod's version to keep for non-mergeable conflicts
 
@@ -111,6 +112,12 @@ The application features a modern dark theme with sidebar navigation:
 | [pylibms](https://pypi.org/project/pylibms/) | Reading/writing `.msbt` message files |
 | [Pillow](https://pypi.org/project/Pillow/) | Image processing for icons |
 | [pygame](https://pypi.org/project/pygame/) | Audio playback for music preview |
+
+### Optional Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| [ffmpeg](https://ffmpeg.org/) | Required for previewing OGG Opus audio (NUS3AUDIO LOPUS tracks). Install from [ffmpeg.org](https://ffmpeg.org/download.html) or via `choco install ffmpeg` / `winget install ffmpeg` |
 
 ### Additional Files
 
@@ -244,7 +251,7 @@ ssbu-mod-manager/
 - **PRC (`ui_chara_db.prc`)** — The character database. Each entry defines a CSS slot with fields like `ui_chara_id`, `fighter_kind`, `name_id`, `disp_order`, costume indices, and announcer voice labels.
 - **MSBT (`msg_name.msbt`)** — The display name text file. Labels like `nam_chr1_00_{name_id}` map to character names shown on screen.
 - **XMSBT (`.xmsbt`)** — Text override files used by mods. When multiple mods have XMSBT files for the same path, they can be merged automatically.
-- **MSBT-to-XMSBT Conversion** — Some mods ship binary `.msbt` files (full replacements) which don't work on emulators. The tool auto-detects these and generates `.xmsbt` overlays containing only the custom entries, which ARCropolis can apply correctly.
+- **MSBT-to-XMSBT Conversion** — Some mods ship binary `.msbt` files (full replacements). The tool auto-detects these and generates supplemental `.xmsbt` overlays in `_MergedResources` containing the custom entries, providing a safety net without altering the original mod files.
 - **Mod Detection** — The tool reads `config.json`, portrait filenames, `.xmsbt` text files, and narration sound files from each mod folder to auto-detect properties.
 - **Conflict Detection** — Scans all enabled mods for files at the same relative path. Groups conflicts by type and offers resolution strategies.
 

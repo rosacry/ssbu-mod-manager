@@ -129,9 +129,38 @@ class AudioPlayer:
             self._paused = False
             return True, f"Playing: {file_path.name}"
         except Exception as e:
+            error_str = str(e)
+            # OGG Opus files fail with stb_vorbis — try ffmpeg conversion to WAV
+            if "VORBIS" in error_str.upper() and file_path.suffix.lower() == ".ogg":
+                wav_result = self._try_ffmpeg_fallback(file_path)
+                if wav_result:
+                    return wav_result
             from src.utils.logger import logger as _logger
             _logger.error("AudioPlayer", f"Playback failed for {file_path}: {e}")
+            if "VORBIS" in error_str.upper():
+                return False, (
+                    f"Playback failed: {e}\n"
+                    "This track uses Opus audio. Install ffmpeg and add it to PATH for playback."
+                )
             return False, f"Playback failed: {e}"
+
+    def _try_ffmpeg_fallback(self, ogg_path: Path) -> Optional[tuple[bool, str]]:
+        """Attempt to convert an OGG Opus file to WAV via ffmpeg and play that."""
+        try:
+            from src.utils.nus3audio import _convert_ogg_opus_to_wav
+            wav_path = _convert_ogg_opus_to_wav(ogg_path)
+            if wav_path and wav_path.exists():
+                self.stop()
+                pygame.mixer.music.load(str(wav_path))
+                pygame.mixer.music.set_volume(self._volume)
+                pygame.mixer.music.play()
+                self._current_file = wav_path
+                self._playing = True
+                self._paused = False
+                return True, f"Playing: {ogg_path.name}"
+        except Exception:
+            pass
+        return None
 
     def stop(self):
         """Stop playback."""

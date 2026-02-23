@@ -113,16 +113,23 @@ class MainWindow(ctk.CTkFrame):
                 page.on_show()
 
     def _update_undo_redo(self):
-        """Update undo/redo button states."""
-        if action_history.can_undo():
-            self.undo_btn.configure(state="normal")
-        else:
-            self.undo_btn.configure(state="disabled")
+        """Update undo/redo button states (thread-safe)."""
+        self._safe_after(0, self._update_undo_redo_impl)
 
-        if action_history.can_redo():
-            self.redo_btn.configure(state="normal")
-        else:
-            self.redo_btn.configure(state="disabled")
+    def _update_undo_redo_impl(self):
+        """Actually update undo/redo button states on the main thread."""
+        try:
+            if action_history.can_undo():
+                self.undo_btn.configure(state="normal")
+            else:
+                self.undo_btn.configure(state="disabled")
+
+            if action_history.can_redo():
+                self.redo_btn.configure(state="normal")
+            else:
+                self.redo_btn.configure(state="disabled")
+        except Exception:
+            pass
 
     def register_page(self, page_id: str, page):
         """Register a page for navigation."""

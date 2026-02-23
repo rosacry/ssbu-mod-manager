@@ -518,6 +518,7 @@ class MusicPage(BasePage):
         self._render_playlist()
         self._populate_stages()
         self._update_summary()
+        self.app.mark_unsaved()
 
     def _remove_from_stage(self, track):
         if self._selected_stage:
@@ -545,11 +546,13 @@ class MusicPage(BasePage):
         if self._selected_stage:
             self.app.music_manager.move_track_up(self._selected_stage, track.track_id)
             self._render_playlist()
+            self.app.mark_unsaved()
 
     def _move_down(self, track):
         if self._selected_stage:
             self.app.music_manager.move_track_down(self._selected_stage, track.track_id)
             self._render_playlist()
+            self.app.mark_unsaved()
 
     def _clear_stage(self):
         if self._selected_stage:
@@ -568,6 +571,7 @@ class MusicPage(BasePage):
         self._render_playlist()
         self._populate_stages()
         self._update_summary()
+        self.app.mark_unsaved()
 
     def _clear_all_stages(self):
         if messagebox.askyesno("Clear All", "Remove ALL assignments from ALL stages?"):
@@ -588,6 +592,7 @@ class MusicPage(BasePage):
     def _on_exclude_change(self):
         self.app.music_manager.set_exclude_vanilla(self.exclude_var.get())
         self._update_summary()
+        self.app.mark_unsaved()
 
     # Audio playback methods
     def _toggle_playback(self):
