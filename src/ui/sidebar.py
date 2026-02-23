@@ -129,8 +129,11 @@ class Sidebar(ctk.CTkFrame):
         self.buttons[page_id] = btn
 
     def _on_click(self, page_id):
-        self._highlight(page_id)
         self.on_navigate(page_id)
+
+    def set_active(self, page_id):
+        """Public API: highlight a specific page (used by programmatic navigation)."""
+        self._highlight(page_id)
 
     def _highlight(self, page_id):
         self.active_page = page_id
@@ -148,5 +151,4 @@ class Sidebar(ctk.CTkFrame):
                 if indicator:
                     indicator.configure(fg_color="transparent")
 
-    def set_active(self, page_id):
-        self._highlight(page_id)
+

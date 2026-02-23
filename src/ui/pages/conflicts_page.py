@@ -52,6 +52,7 @@ class ConflictsPage(BasePage):
         self._scanned = False
         self._scanning = False
         self._needs_render = False
+        self._scan_generation = 0
         self._build_ui()
 
     def _build_ui(self):
@@ -161,7 +162,7 @@ class ConflictsPage(BasePage):
                 merged_files = set()
                 if merged_dir.exists():
                     for f in merged_dir.rglob("*"):
-                        if f.is_file():
+                        if f.is_file() and ".originals" not in f.parts:
                             merged_files.add(str(f.relative_to(merged_dir)).replace("\\", "/"))
 
                 for c in conflicts:

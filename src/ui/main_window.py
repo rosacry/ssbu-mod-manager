@@ -13,7 +13,7 @@ class MainWindow(ctk.CTkFrame):
         self.current_page = None
 
         # Layout: sidebar | separator | content
-        self.sidebar = Sidebar(self, on_navigate=self.navigate)
+        self.sidebar = Sidebar(self, on_navigate=app.navigate)
         self.sidebar.pack(side="left", fill="y")
 
         # Subtle vertical separator between sidebar and content

@@ -447,6 +447,8 @@ class ModsPage(BasePage):
         except Exception as e:
             logger.error("Mods", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle mod: {e}")
+            self._loaded = False
+            self._refresh()
 
     def _enable_all(self):
         """Enable all disabled mods."""

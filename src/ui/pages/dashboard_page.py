@@ -244,14 +244,16 @@ class DashboardPage(BasePage):
                     try:
                         self.after(0, lambda: self._on_scan_done(count))
                     except Exception:
-                        pass
+                        self._loading = False
             except Exception as e:
                 logger.error("Dashboard", f"Scan failed: {e}")
                 if not self.app.shutting_down:
                     try:
                         self.after(0, lambda: self._on_scan_done(0))
                     except Exception:
-                        pass
+                        self._loading = False
+                else:
+                    self._loading = False
 
         threading.Thread(target=scan, daemon=True).start()
 
@@ -340,18 +342,32 @@ class DashboardPage(BasePage):
         settings = self.app.config_manager.settings
         resolver = self.app.conflict_resolver
 
-        resolved = resolver.resolve_all_auto(mergeable, create_backup=settings.backup_before_merge)
-        actually_resolved = sum(1 for c in mergeable if c.resolved)
-        failed = len(mergeable) - actually_resolved
-        logger.info("Dashboard", f"Resolved {actually_resolved}/{len(mergeable)} conflicts")
+        self.loading_label.configure(text="Resolving conflicts...")
 
-        # Also generate XMSBT overlays from binary MSBT files
-        # (handles mods that use .msbt instead of .xmsbt, which
-        # don't work on some emulators)
-        msbt_overlays = resolver.generate_msbt_overlays()
-        if msbt_overlays > 0:
-            logger.info("Dashboard",
-                        f"Generated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s)")
+        def do_resolve():
+            try:
+                resolver.resolve_all_auto(mergeable, create_backup=settings.backup_before_merge)
+                actually_resolved = sum(1 for c in mergeable if c.resolved)
+                failed = len(mergeable) - actually_resolved
+                logger.info("Dashboard", f"Resolved {actually_resolved}/{len(mergeable)} conflicts")
+
+                msbt_overlays = resolver.generate_msbt_overlays()
+                if msbt_overlays > 0:
+                    logger.info("Dashboard",
+                                f"Generated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s)")
+
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._on_resolve_done(
+                        actually_resolved, failed, msbt_overlays, len(mergeable)))
+            except Exception as e:
+                logger.error("Dashboard", f"Resolution failed: {e}")
+                if not self.app.shutting_down:
+                    self.after(0, lambda: self._fix_error(str(e)))
+
+        threading.Thread(target=do_resolve, daemon=True).start()
+
+    def _on_resolve_done(self, actually_resolved, failed, msbt_overlays, total):
+        self.loading_label.configure(text="")
 
         self._conflict_cache = failed
         self.stat_cards["conflicts"].configure(text=str(failed))

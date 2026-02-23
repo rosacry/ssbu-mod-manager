@@ -16,6 +16,7 @@ from src.core.emulator_migrator import (
     export_ssbu_data, import_ssbu_data, get_emulator_sdmc_path,
     direct_export_emulator_data, direct_import_emulator_data,
     scan_emulator_extended_data,
+    scan_upgrade_data, execute_upgrade,
 )
 from src.utils.logger import logger
 
@@ -247,7 +248,108 @@ class MigrationPage(BasePage):
 
         ctk.CTkFrame(export_section, height=8, fg_color="transparent").pack()
 
-        # === Section 3: Detected Emulators Info ===
+        # === Section 3: Emulator Version Upgrade ===
+        upgrade_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        upgrade_section.pack(fill="x", pady=(0, 15))
+
+        ctk.CTkLabel(upgrade_section, text="Emulator Version Upgrade",
+                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     ).pack(fill="x", padx=15, pady=(15, 5))
+        ctk.CTkLabel(upgrade_section,
+                     text="Upgrade to a new version of the same emulator while preserving all your data — "
+                          "mods, plugins, saves, encryption keys, shader cache, and settings.",
+                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
+                     wraplength=800, justify="left"
+                     ).pack(fill="x", padx=15, pady=(0, 10))
+
+        # Emulator selection
+        up_sel = ctk.CTkFrame(upgrade_section, fg_color="transparent")
+        up_sel.pack(fill="x", padx=15, pady=5)
+
+        ctk.CTkLabel(up_sel, text="Emulator:", font=ctk.CTkFont(size=13),
+                     anchor="w", width=100).pack(side="left")
+        self.upgrade_emu_var = ctk.StringVar(value=emulator_names[0] if emulator_names else "")
+        ctk.CTkOptionMenu(
+            up_sel, variable=self.upgrade_emu_var, values=emulator_names,
+            width=180, height=34,
+        ).pack(side="left", padx=10)
+
+        # Old path
+        old_path_frame = ctk.CTkFrame(upgrade_section, fg_color="transparent")
+        old_path_frame.pack(fill="x", padx=15, pady=5)
+        ctk.CTkLabel(old_path_frame, text="Old Data Root:",
+                     font=ctk.CTkFont(size=13), anchor="w", width=100).pack(side="left")
+        self.upgrade_old_var = ctk.StringVar()
+        ctk.CTkEntry(old_path_frame, textvariable=self.upgrade_old_var,
+                     width=400, height=32,
+                     placeholder_text="Path to old emulator data folder..."
+                     ).pack(side="left", padx=10)
+        ctk.CTkButton(old_path_frame, text="Browse", width=80, height=32,
+                      fg_color="#555555", hover_color="#444444",
+                      command=self._browse_upgrade_old).pack(side="left")
+        ctk.CTkButton(old_path_frame, text="Auto-Detect", width=100, height=32,
+                      fg_color="#3a5a8a", hover_color="#2a4a7a",
+                      command=self._auto_detect_upgrade_old).pack(side="left", padx=(5, 0))
+
+        # New path
+        new_path_frame = ctk.CTkFrame(upgrade_section, fg_color="transparent")
+        new_path_frame.pack(fill="x", padx=15, pady=5)
+        ctk.CTkLabel(new_path_frame, text="New Data Root:",
+                     font=ctk.CTkFont(size=13), anchor="w", width=100).pack(side="left")
+        self.upgrade_new_var = ctk.StringVar()
+        ctk.CTkEntry(new_path_frame, textvariable=self.upgrade_new_var,
+                     width=400, height=32,
+                     placeholder_text="Path to new emulator data folder..."
+                     ).pack(side="left", padx=10)
+        ctk.CTkButton(new_path_frame, text="Browse", width=80, height=32,
+                      fg_color="#555555", hover_color="#444444",
+                      command=self._browse_upgrade_new).pack(side="left")
+
+        # Overwrite option
+        up_opts = ctk.CTkFrame(upgrade_section, fg_color="transparent")
+        up_opts.pack(fill="x", padx=15, pady=5)
+        self.upgrade_overwrite_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(up_opts, text="Overwrite existing files",
+                        variable=self.upgrade_overwrite_var,
+                        font=ctk.CTkFont(size=12)).pack(side="left")
+
+        # Scan / Execute buttons
+        up_btns = ctk.CTkFrame(upgrade_section, fg_color="transparent")
+        up_btns.pack(fill="x", padx=15, pady=(5, 5))
+
+        self.upgrade_scan_btn = ctk.CTkButton(
+            up_btns, text="Scan Data", width=120, height=34,
+            fg_color="#3a5a8a", hover_color="#2a4a7a",
+            command=self._scan_upgrade)
+        self.upgrade_scan_btn.pack(side="left", padx=(0, 10))
+
+        self.upgrade_exec_btn = ctk.CTkButton(
+            up_btns, text="Upgrade", width=120, height=34,
+            fg_color="#2fa572", hover_color="#106a43",
+            state="disabled", command=self._execute_upgrade)
+        self.upgrade_exec_btn.pack(side="left")
+
+        self.upgrade_status = ctk.CTkLabel(up_btns, text="",
+                                           font=ctk.CTkFont(size=11),
+                                           text_color="#888888", anchor="w")
+        self.upgrade_status.pack(side="left", padx=15)
+
+        # Upgrade scan results
+        self._upgrade_results_frame = ctk.CTkFrame(upgrade_section, fg_color="transparent")
+        self._upgrade_results_frame.pack(fill="x", padx=15, pady=(0, 10))
+
+        # Upgrade progress bar
+        self._upgrade_progress = ctk.CTkProgressBar(upgrade_section, width=600,
+                                                      progress_color="#2fa572")
+        # Not shown until upgrade starts
+
+        ctk.CTkFrame(upgrade_section, height=8, fg_color="transparent").pack()
+
+        # Store upgrade plan and checkbox vars
+        self._upgrade_plan = None
+        self._upgrade_check_vars: dict[str, ctk.BooleanVar] = {}
+
+        # === Section 4: Detected Emulators Info ===
         info_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
         info_section.pack(fill="x", pady=(0, 15))
 
@@ -775,3 +877,211 @@ class MigrationPage(BasePage):
             self.app._update_managers()
         else:
             messagebox.showerror("Import Failed", "\n".join(result.errors[:10]))
+
+    # ─── Emulator Version Upgrade ─────────────────────────────────────
+
+    def _browse_upgrade_old(self):
+        path = filedialog.askdirectory(title="Select OLD Emulator Data Folder")
+        if path:
+            self.upgrade_old_var.set(path)
+
+    def _browse_upgrade_new(self):
+        path = filedialog.askdirectory(title="Select NEW Emulator Data Folder")
+        if path:
+            self.upgrade_new_var.set(path)
+
+    def _auto_detect_upgrade_old(self):
+        """Auto-detect the current data root for the selected emulator."""
+        from src.core.emulator_migrator import get_emulator_data_root
+        emu = self.upgrade_emu_var.get()
+        if not emu:
+            return
+        root = get_emulator_data_root(emu)
+        if root:
+            self.upgrade_old_var.set(str(root))
+            self.upgrade_status.configure(
+                text=f"Detected {emu} at: {root}", text_color="#2fa572")
+        else:
+            self.upgrade_status.configure(
+                text=f"Could not auto-detect {emu} data directory.", text_color="#e94560")
+
+    def _scan_upgrade(self):
+        """Scan old data root and show what can be migrated."""
+        from src.core.emulator_migrator import scan_upgrade_data
+
+        emu = self.upgrade_emu_var.get()
+        old_path = self.upgrade_old_var.get().strip()
+        new_path = self.upgrade_new_var.get().strip()
+
+        if not emu:
+            messagebox.showwarning("Warning", "Select an emulator first.")
+            return
+        if not old_path:
+            messagebox.showwarning("Warning", "Select the old emulator data folder.")
+            return
+        if not new_path:
+            messagebox.showwarning("Warning", "Select the new emulator data folder.")
+            return
+
+        old = Path(old_path)
+        new = Path(new_path)
+
+        if not old.exists():
+            messagebox.showerror("Error", f"Old path does not exist:\n{old}")
+            return
+
+        if str(old) == str(new):
+            messagebox.showwarning("Warning",
+                "Old and new paths are the same. Select a different destination.")
+            return
+
+        plan = scan_upgrade_data(emu, old, new)
+        self._upgrade_plan = plan
+
+        # Clear previous results
+        for w in self._upgrade_results_frame.winfo_children():
+            w.destroy()
+        self._upgrade_check_vars.clear()
+
+        if not plan.items:
+            ctk.CTkLabel(self._upgrade_results_frame,
+                         text="No data found in the old emulator directory.",
+                         font=ctk.CTkFont(size=12), text_color="#e94560"
+                         ).pack(anchor="w", pady=5)
+            self.upgrade_exec_btn.configure(state="disabled")
+            return
+
+        # Summary
+        ctk.CTkLabel(self._upgrade_results_frame,
+            text=f"Found {len(plan.items)} data categories, "
+                 f"{plan.total_files} files ({plan.total_size_mb:.1f} MB)",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#2fa572",
+            anchor="w"
+        ).pack(fill="x", pady=(8, 5))
+
+        # Checkboxes for each category
+        for item in plan.items:
+            var = ctk.BooleanVar(value=True)
+            self._upgrade_check_vars[item.label] = var
+
+            row = ctk.CTkFrame(self._upgrade_results_frame, fg_color="#1e1e38",
+                               corner_radius=6)
+            row.pack(fill="x", pady=2)
+
+            cb = ctk.CTkCheckBox(row, text=item.label, variable=var,
+                                 font=ctk.CTkFont(size=12))
+            cb.pack(side="left", padx=(12, 8), pady=6)
+
+            size_mb = item.total_size / (1024 * 1024)
+            detail = f"{item.file_count} files, {size_mb:.1f} MB"
+            ctk.CTkLabel(row, text=detail, font=ctk.CTkFont(size=11),
+                         text_color="#888888", anchor="w").pack(side="left", padx=5)
+
+            ctk.CTkLabel(row, text=item.description, font=ctk.CTkFont(size=10),
+                         text_color="#666666", anchor="w").pack(side="left", padx=10)
+
+        self.upgrade_exec_btn.configure(state="normal")
+        self.upgrade_status.configure(
+            text="Review categories and click 'Upgrade' to proceed.",
+            text_color="#6688bb")
+
+    def _execute_upgrade(self):
+        """Execute the emulator version upgrade."""
+        from src.core.emulator_migrator import execute_upgrade
+
+        if self._migrating or not self._upgrade_plan:
+            return
+
+        plan = self._upgrade_plan
+        selected = {label for label, var in self._upgrade_check_vars.items() if var.get()}
+
+        if not selected:
+            messagebox.showwarning("Warning", "Select at least one data category to upgrade.")
+            return
+
+        total_files = sum(
+            i.file_count for i in plan.items if i.label in selected
+        )
+        size_mb = sum(
+            i.total_size for i in plan.items if i.label in selected
+        ) / (1024 * 1024)
+
+        if not messagebox.askyesno("Confirm Upgrade",
+            f"Upgrade {plan.emulator_name} data:\n\n"
+            f"From: {plan.old_root}\n"
+            f"To: {plan.new_root}\n\n"
+            f"Categories: {len(selected)}\n"
+            f"Files: {total_files}\n"
+            f"Size: {size_mb:.1f} MB\n\n"
+            f"Overwrite: {'Yes' if self.upgrade_overwrite_var.get() else 'No'}\n\n"
+            f"Your original data will NOT be deleted."):
+            return
+
+        self._migrating = True
+        self.upgrade_exec_btn.configure(state="disabled", text="Upgrading...")
+        self.upgrade_scan_btn.configure(state="disabled")
+        self._upgrade_progress.pack(fill="x", padx=15, pady=(0, 10))
+        self._upgrade_progress.set(0)
+
+        def progress_cb(msg, frac):
+            try:
+                self.after(0, lambda: self.upgrade_status.configure(
+                    text=msg, text_color="#6688bb"))
+                self.after(0, lambda: self._upgrade_progress.set(frac))
+            except Exception:
+                pass
+
+        def run():
+            result = execute_upgrade(
+                plan=plan,
+                selected_labels=selected,
+                overwrite=self.upgrade_overwrite_var.get(),
+                progress_callback=progress_cb,
+            )
+            self.after(0, lambda: self._upgrade_done(result))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _upgrade_done(self, result):
+        self._migrating = False
+        self.upgrade_exec_btn.configure(state="normal", text="Upgrade")
+        self.upgrade_scan_btn.configure(state="normal")
+        self._upgrade_progress.set(1.0)
+
+        if result.success:
+            size_mb = result.bytes_copied / (1024 * 1024)
+            self.upgrade_status.configure(
+                text=f"Upgrade complete! {result.files_copied} files "
+                     f"({size_mb:.1f} MB) in {result.duration_seconds:.1f}s",
+                text_color="#2fa572")
+            messagebox.showinfo("Upgrade Complete",
+                f"Successfully upgraded {self._upgrade_plan.emulator_name}!\n\n"
+                f"Files copied: {result.files_copied}\n"
+                f"Size: {size_mb:.1f} MB\n"
+                f"Duration: {result.duration_seconds:.1f}s\n\n"
+                f"Your original data was preserved at:\n"
+                f"{self._upgrade_plan.old_root}")
+
+            # Offer to switch active emulator path to new location
+            plan = self._upgrade_plan
+            new_sdmc = plan.new_root / "sdmc"
+            if not new_sdmc.exists():
+                new_sdmc = plan.new_root
+            if new_sdmc.exists() and messagebox.askyesno(
+                "Switch Active Path?",
+                f"Would you like to switch your active emulator path to the new location?\n\n"
+                f"New SDMC: {new_sdmc}"
+            ):
+                self.app.config_manager.settings.eden_sdmc_path = new_sdmc
+                from src.paths import derive_mods_path, derive_plugins_path
+                self.app.config_manager.settings.mods_path = derive_mods_path(new_sdmc)
+                self.app.config_manager.settings.plugins_path = derive_plugins_path(new_sdmc)
+                self.app.config_manager.save()
+                self.app._update_managers()
+        else:
+            self.upgrade_status.configure(
+                text=f"Upgrade failed with {len(result.errors)} error(s)",
+                text_color="#e94560")
+            messagebox.showerror("Upgrade Failed",
+                f"Errors during upgrade:\n\n" +
+                "\n".join(result.errors[:10]))

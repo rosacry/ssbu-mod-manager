@@ -129,6 +129,33 @@ KNOWN_SAFE_PLUGINS = frozenset({
     "libskyline_web.nro",
 })
 
+# Known OPTIONAL plugins — improve experience but do NOT cause desyncs.
+# These only affect the local user's client (performance, visuals, QoL).
+# Having them on one side but not the other is perfectly fine for online play.
+KNOWN_OPTIONAL_PLUGINS = frozenset({
+    # Performance / lag reduction
+    "libless_lag.nro",
+    "libssbu_less_lag.nro",
+    "liblag_fix.nro",
+    "libperformance.nro",
+    "libfps.nro",
+    # Visual / cosmetic enhancements
+    "libcss_manager.nro",
+    "libcss_changer.nro",
+    "libui_manager.nro",
+    "libskin_changer.nro",
+    "libvisual_effects.nro",
+    # Input display / training overlays (client-side only)
+    "libinput_display.nro",
+    "libinput_viewer.nro",
+    # Replay / recording tools
+    "libreplay.nro",
+    "librecording.nro",
+    # Music / audio management
+    "libmusic_manager.nro",
+    "libbgm_manager.nro",
+})
+
 # ExeFS files that indicate framework-level hooks (gameplay-affecting)
 _EXEFS_GAMEPLAY_FILES = frozenset({
     "subsdk9", "subsdk0", "main.npdm",
@@ -148,6 +175,8 @@ class CompatFingerprint:
     gameplay_hashes: dict[str, str] = field(default_factory=dict)
     # Plugin hashes: plugin_filename → sha256 hex
     plugin_hashes: dict[str, str] = field(default_factory=dict)
+    # Optional plugin names (informational, not used for compatibility)
+    optional_plugins: list[str] = field(default_factory=list)
     # ExeFS hashes: filename → sha256 hex
     exefs_hashes: dict[str, str] = field(default_factory=dict)
     # Mod names for display (not used for comparison)
@@ -186,6 +215,9 @@ class CompatResult:
     missing_plugins: list[str] = field(default_factory=list)
     extra_plugins: list[str] = field(default_factory=list)
     mismatched_plugins: list[str] = field(default_factory=list)
+    # Optional plugin differences (informational only, NOT incompatible)
+    optional_only_local: list[str] = field(default_factory=list)
+    optional_only_remote: list[str] = field(default_factory=list)
     # ExeFS differences
     mismatched_exefs: list[str] = field(default_factory=list)
     # Warnings (non-blocking)
@@ -281,11 +313,19 @@ def _is_in_fighter_model_dir(parts: list[str]) -> bool:
     return False
 
 
+def _is_plugin_optional(plugin_filename: str) -> bool:
+    """Check if a plugin is optional (doesn't need to match between players)."""
+    fname = plugin_filename.lower().replace(".disabled", "")
+    return fname in KNOWN_OPTIONAL_PLUGINS
+
+
 def _is_plugin_gameplay_affecting(plugin_filename: str) -> bool:
     """Determine if a plugin is known to affect gameplay."""
     fname = plugin_filename.lower().replace(".disabled", "")
     if fname in KNOWN_SAFE_PLUGINS:
         return False
+    if fname in KNOWN_OPTIONAL_PLUGINS:
+        return False  # Optional plugins are NOT gameplay-affecting
     if fname in KNOWN_GAMEPLAY_PLUGINS:
         return True
     # Unknown plugins — conservative: treat as gameplay-affecting
@@ -391,7 +431,9 @@ def generate_fingerprint(
                     continue
                 if not fpath.name.endswith(".nro"):
                     continue
-                if _is_plugin_gameplay_affecting(fpath.name):
+                if _is_plugin_optional(fpath.name):
+                    fp.optional_plugins.append(fpath.name)
+                elif _is_plugin_gameplay_affecting(fpath.name):
                     fp.plugin_hashes[fpath.name] = _hash_file(fpath)
         except (PermissionError, OSError):
             pass
@@ -440,6 +482,7 @@ def encode_fingerprint(fp: CompatFingerprint) -> str:
         "em": fp.emulator,
         "gh": fp.gameplay_hashes,
         "ph": fp.plugin_hashes,
+        "op": fp.optional_plugins,
         "eh": fp.exefs_hashes,
         "gm": fp.gameplay_mod_names,
         "d": fp.digest,
@@ -480,6 +523,7 @@ def decode_fingerprint(code: str) -> Optional[CompatFingerprint]:
         emulator=data.get("em", ""),
         gameplay_hashes=data.get("gh", {}),
         plugin_hashes=data.get("ph", {}),
+        optional_plugins=data.get("op", []),
         exefs_hashes=data.get("eh", {}),
         gameplay_mod_names=data.get("gm", []),
         digest=data.get("d", ""),
@@ -544,6 +588,12 @@ def compare_fingerprints(
         if reference.plugin_hashes[p] != local.plugin_hashes[p]:
             result.mismatched_plugins.append(p)
 
+    # ── Compare optional plugins (informational only) ──
+    local_opt = set(local.optional_plugins)
+    ref_opt = set(reference.optional_plugins)
+    result.optional_only_local = sorted(local_opt - ref_opt)
+    result.optional_only_remote = sorted(ref_opt - local_opt)
+
     # ── Compare ExeFS ──
     ref_exefs = set(reference.exefs_hashes.keys())
     local_exefs = set(local.exefs_hashes.keys())
@@ -570,8 +620,26 @@ def compare_fingerprints(
     result.compatible = result.issue_count == 0
 
     # ── Build summary ──
+    opt_info_parts = []
+    if result.optional_only_local:
+        opt_info_parts.append(
+            f"You have {len(result.optional_only_local)} optional plugin(s) "
+            f"the host doesn't: {', '.join(result.optional_only_local)}. "
+            f"These won't cause desyncs."
+        )
+    if result.optional_only_remote:
+        opt_info_parts.append(
+            f"The host has {len(result.optional_only_remote)} optional plugin(s) "
+            f"you don't: {', '.join(result.optional_only_remote)}. "
+            f"These won't cause desyncs."
+        )
+
     if result.compatible:
         result.summary = "Fully compatible! Your gameplay setup matches exactly."
+        if opt_info_parts:
+            result.summary += "\n\nSetup differences (non-blocking):"
+            for p in opt_info_parts:
+                result.summary += f"\n  ℹ  {p}"
         if result.warnings:
             result.summary += f"\n\n{len(result.warnings)} warning(s):"
             for w in result.warnings:
@@ -597,6 +665,10 @@ def compare_fingerprints(
             f"INCOMPATIBLE — {result.issue_count} issue(s) detected:\n"
             + "\n".join(f"  - {p}" for p in parts)
         )
+        if opt_info_parts:
+            result.summary += "\n\nSetup differences (non-blocking):"
+            for p in opt_info_parts:
+                result.summary += f"\n  ℹ  {p}"
         if result.warnings:
             result.summary += f"\n\n{len(result.warnings)} warning(s):"
             for w in result.warnings:

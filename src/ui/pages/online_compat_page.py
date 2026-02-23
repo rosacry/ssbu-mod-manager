@@ -495,9 +495,12 @@ class OnlineCompatPage(BasePage):
         """Display the generated compatibility code."""
         from src.core.compat_checker import CompatFingerprint
 
+        opt_text = ""
+        if fp.optional_plugins:
+            opt_text = f", {len(fp.optional_plugins)} optional"
         self._gen_status.configure(
             text=f"Done! {len(fp.gameplay_hashes)} gameplay files, "
-                 f"{len(fp.plugin_hashes)} plugins fingerprinted. "
+                 f"{len(fp.plugin_hashes)} plugins{opt_text} fingerprinted. "
                  f"Digest: {fp.digest[:16]}...",
             text_color="#2fa572")
         self._gen_progress.set(1.0)
@@ -755,6 +758,52 @@ class OnlineCompatPage(BasePage):
                              ).pack(fill="x", padx=12, pady=1)
 
             ctk.CTkFrame(warn_frame, height=8, fg_color="transparent").pack()
+
+        # Optional plugin differences (informational, shown for both outcomes)
+        has_opt_diff = (result.optional_only_local or result.optional_only_remote)
+        if has_opt_diff:
+            opt_frame = ctk.CTkFrame(self._check_results, fg_color="#1a2a2e",
+                                     corner_radius=8, border_width=1,
+                                     border_color="#4488aa")
+            opt_frame.pack(fill="x", pady=5)
+
+            total_opt = len(result.optional_only_local) + len(result.optional_only_remote)
+            ctk.CTkLabel(opt_frame,
+                text=f"\u2139  Setup Differences ({total_opt} optional plugin(s))",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#4488aa", anchor="w"
+            ).pack(fill="x", padx=12, pady=(10, 3))
+
+            ctk.CTkLabel(opt_frame,
+                text="These plugins don't affect gameplay sync and won't cause desyncs. "
+                     "They only enhance the local experience for whoever has them installed.",
+                font=ctk.CTkFont(size=11), text_color="#6699aa", anchor="w",
+                wraplength=680, justify="left"
+            ).pack(fill="x", padx=12, pady=(0, 6))
+
+            if result.optional_only_local:
+                ctk.CTkLabel(opt_frame,
+                    text="You have (host doesn't):",
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    text_color="#5599bb", anchor="w"
+                ).pack(fill="x", padx=14, pady=(2, 1))
+                for p in result.optional_only_local:
+                    ctk.CTkLabel(opt_frame, text=f"    \u2022  {p}",
+                                 font=ctk.CTkFont(size=11), text_color="#88bbcc",
+                                 anchor="w").pack(fill="x", padx=12, pady=0)
+
+            if result.optional_only_remote:
+                ctk.CTkLabel(opt_frame,
+                    text="Host has (you don't):",
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    text_color="#5599bb", anchor="w"
+                ).pack(fill="x", padx=14, pady=(4, 1))
+                for p in result.optional_only_remote:
+                    ctk.CTkLabel(opt_frame, text=f"    \u2022  {p}",
+                                 font=ctk.CTkFont(size=11), text_color="#88bbcc",
+                                 anchor="w").pack(fill="x", padx=12, pady=0)
+
+            ctk.CTkFrame(opt_frame, height=8, fg_color="transparent").pack()
 
     def _build_issue_group(self, parent, title: str, description: str,
                            items: list[str], color: str):

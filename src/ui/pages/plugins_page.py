@@ -175,6 +175,8 @@ class PluginsPage(BasePage):
                         "Are you sure?",
                     )
                     if not confirm:
+                        self._loaded = False
+                        self._refresh()
                         return
                 self.app.plugin_manager.disable_plugin(plugin)
                 logger.info("Plugins", f"Disabled: {plugin.display_name}")
@@ -186,6 +188,8 @@ class PluginsPage(BasePage):
         except Exception as e:
             logger.error("Plugins", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle plugin: {e}")
+            self._loaded = False
+            self._refresh()
 
     def _enable_all(self):
         """Enable all disabled plugins."""

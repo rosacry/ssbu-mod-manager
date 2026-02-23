@@ -36,12 +36,16 @@ from src.ui.pages.online_compat_page import OnlineCompatPage
 
 
 class ModManagerApp(ctk.CTk):
+    # Base dimensions (at 100% scale)
+    _BASE_WIDTH = 1400
+    _BASE_HEIGHT = 900
+    _MIN_WIDTH = 1050
+    _MIN_HEIGHT = 650
+
     def __init__(self):
         super().__init__()
 
         self.title("SSBU Mod Manager")
-        self.geometry("1400x900")
-        self.minsize(1050, 650)
 
         # Shutdown flag for background threads
         self._shutting_down = False
@@ -142,28 +146,63 @@ class ModManagerApp(ctk.CTk):
         # Zoom / scaling keybindings (Ctrl+Plus, Ctrl+Minus, Ctrl+0)
         self._current_scale = settings.ui_scale
         self._apply_scale(self._current_scale, save=False)
+        self._apply_scaled_geometry(self._current_scale)
         # Bind multiple key combinations for zoom to ensure cross-platform reliability
-        self.bind("<Control-plus>", lambda e: self._zoom_in())
-        self.bind("<Control-equal>", lambda e: self._zoom_in())     # Ctrl+= (unshifted +)
-        self.bind("<Control-minus>", lambda e: self._zoom_out())
-        self.bind("<Control-0>", lambda e: self._zoom_reset())
+        # Return "break" to prevent propagation to bind_all fallback
+        self.bind("<Control-plus>", lambda e: (self._zoom_in(), "break")[-1])
+        self.bind("<Control-equal>", lambda e: (self._zoom_in(), "break")[-1])     # Ctrl+= (unshifted +)
+        self.bind("<Control-minus>", lambda e: (self._zoom_out(), "break")[-1])
+        self.bind("<Control-0>", lambda e: (self._zoom_reset(), "break")[-1])
         # Windows-specific: also bind KeyPress with keysym check for reliability
-        self.bind("<Control-Key-=>", lambda e: self._zoom_in())
-        self.bind("<Control-Key-minus>", lambda e: self._zoom_out())
-        self.bind("<Control-Key-0>", lambda e: self._zoom_reset())
+        self.bind("<Control-Key-=>", lambda e: (self._zoom_in(), "break")[-1])
+        self.bind("<Control-Key-minus>", lambda e: (self._zoom_out(), "break")[-1])
+        self.bind("<Control-Key-0>", lambda e: (self._zoom_reset(), "break")[-1])
         # Numpad keys
-        self.bind("<Control-KP_Add>", lambda e: self._zoom_in())
-        self.bind("<Control-KP_Subtract>", lambda e: self._zoom_out())
-        self.bind("<Control-KP_0>", lambda e: self._zoom_reset())
+        self.bind("<Control-KP_Add>", lambda e: (self._zoom_in(), "break")[-1])
+        self.bind("<Control-KP_Subtract>", lambda e: (self._zoom_out(), "break")[-1])
+        self.bind("<Control-KP_0>", lambda e: (self._zoom_reset(), "break")[-1])
         # Fallback: low-level key handler for Windows where keysyms may mismatch
         self.bind_all("<KeyPress>", self._on_keypress_zoom)
 
         logger.info("App", "Application startup complete")
 
+    def _apply_scaled_geometry(self, scale: float):
+        """Set window geometry and minsize proportional to scale factor."""
+        # Get screen dimensions to cap window size
+        try:
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+        except Exception:
+            screen_w, screen_h = 1920, 1080
+
+        # Scale the base dimensions
+        scaled_w = int(self._BASE_WIDTH * scale)
+        scaled_h = int(self._BASE_HEIGHT * scale)
+        min_w = int(self._MIN_WIDTH * scale)
+        min_h = int(self._MIN_HEIGHT * scale)
+
+        # Cap to screen size (leave margin for taskbar)
+        scaled_w = min(scaled_w, screen_w - 40)
+        scaled_h = min(scaled_h, screen_h - 80)
+        min_w = min(min_w, screen_w - 40)
+        min_h = min(min_h, screen_h - 80)
+
+        self.geometry(f"{scaled_w}x{scaled_h}")
+        self.minsize(min_w, min_h)
+
     def _apply_scale(self, scale: float, save: bool = True):
         """Apply UI scaling factor and optionally persist it."""
         self._current_scale = scale
         ctk.set_widget_scaling(scale)
+        # Update minimum window size for new scale
+        try:
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+        except Exception:
+            screen_w, screen_h = 1920, 1080
+        min_w = min(int(self._MIN_WIDTH * scale), screen_w - 40)
+        min_h = min(int(self._MIN_HEIGHT * scale), screen_h - 80)
+        self.minsize(min_w, min_h)
         if save:
             settings = self.config_manager.settings
             settings.ui_scale = scale

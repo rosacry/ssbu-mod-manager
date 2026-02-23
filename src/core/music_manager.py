@@ -1,6 +1,7 @@
 """Music track discovery, stage assignment, playlist management, and PRC save."""
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,185 @@ from src.utils.xmsbt_parser import parse_xmsbt, extract_entries_from_msbt
 from src.utils.file_utils import backup_file
 from src.config import CONFIG_DIR
 from src.utils.logger import logger
+
+
+# ── Series / franchise mapping for BGM track-name beautification ────────────
+# Keys are lowercase prefixes found in SSBU internal BGM filenames.
+# Values are the pretty-printed franchise / game name.
+_SERIES_MAP: dict[str, str] = {
+    # Nintendo
+    "mario":            "Mario",
+    "mario64":          "Mario 64",
+    "mariokart":        "Mario Kart",
+    "mariopaint":       "Mario Paint",
+    "mariotennis":      "Mario Tennis",
+    "smb":              "Super Mario Bros.",
+    "nsmb":             "New Super Mario Bros.",
+    "3dworld":          "Super Mario 3D World",
+    "galaxy":           "Super Mario Galaxy",
+    "odyssey":          "Super Mario Odyssey",
+    "sunshine":         "Super Mario Sunshine",
+    "papermario":       "Paper Mario",
+    "luigi":            "Luigi's Mansion",
+    "dk":               "Donkey Kong",
+    "donkey_kong":      "Donkey Kong",
+    "zelda":            "Zelda",
+    "zelda_ocarina":    "Ocarina of Time",
+    "zelda_majora":     "Majora's Mask",
+    "zelda_wind":       "Wind Waker",
+    "zelda_tp":         "Twilight Princess",
+    "zelda_ss":         "Skyward Sword",
+    "zelda_botw":       "Breath of the Wild",
+    "zelda_totk":       "Tears of the Kingdom",
+    "metroid":          "Metroid",
+    "kirby":            "Kirby",
+    "starfox":          "Star Fox",
+    "star_fox":         "Star Fox",
+    "fzero":            "F-Zero",
+    "f_zero":           "F-Zero",
+    "pokemon":          "Pokémon",
+    "poke":             "Pokémon",
+    "pikmin":           "Pikmin",
+    "animal_crossing":  "Animal Crossing",
+    "splatoon":         "Splatoon",
+    "xenoblade":        "Xenoblade Chronicles",
+    "fire_emblem":      "Fire Emblem",
+    "fe":               "Fire Emblem",
+    "kid_icarus":       "Kid Icarus",
+    "palutena":         "Kid Icarus",
+    "wii_fit":          "Wii Fit",
+    "wii_sports":       "Wii Sports",
+    "punch_out":        "Punch-Out!!",
+    "arms":             "ARMS",
+    "mother":           "Mother / EarthBound",
+    "earthbound":       "EarthBound",
+    "wario":            "WarioWare",
+    "ice_climber":      "Ice Climber",
+    "game_watch":       "Game & Watch",
+    "balloon_fight":    "Balloon Fight",
+    "duck_hunt":        "Duck Hunt",
+    "mii":              "Mii",
+    "tomodachi":        "Tomodachi Life",
+    "ring_fit":         "Ring Fit Adventure",
+    "nintendogs":       "Nintendogs",
+    "brain_age":        "Brain Age",
+    "pilotwings":       "Pilotwings",
+    "custom_robo":      "Custom Robo",
+    "famicom":          "Famicom",
+    "smash":            "Super Smash Bros.",
+    "menu":             "Super Smash Bros.",
+    # Third-party
+    "sonic":            "Sonic",
+    "sonic_adventure":  "Sonic Adventure",
+    "sonic_heroes":     "Sonic Heroes",
+    "sonic_cd":         "Sonic CD",
+    "sonic_mania":      "Sonic Mania",
+    "pacman":           "Pac-Man",
+    "pac_man":          "Pac-Man",
+    "megaman":          "Mega Man",
+    "mega_man":         "Mega Man",
+    "castlevania":      "Castlevania",
+    "persona":          "Persona",
+    "bayonetta":        "Bayonetta",
+    "street_fighter":   "Street Fighter",
+    "sf":               "Street Fighter",
+    "tekken":           "Tekken",
+    "fatal_fury":       "Fatal Fury / KOF",
+    "kof":              "King of Fighters",
+    "snk":              "SNK",
+    "dragon_quest":     "Dragon Quest",
+    "dq":               "Dragon Quest",
+    "final_fantasy":    "Final Fantasy",
+    "ff":               "Final Fantasy",
+    "kingdom_hearts":   "Kingdom Hearts",
+    "minecraft":        "Minecraft",
+    "banjo":            "Banjo-Kazooie",
+    "metal_gear":       "Metal Gear",
+    "mgs":              "Metal Gear Solid",
+    "devil_may_cry":    "Devil May Cry",
+    "dmc":              "Devil May Cry",
+    "shovel_knight":    "Shovel Knight",
+    "shantae":          "Shantae",
+    "undertale":        "Undertale",
+    "cuphead":          "Cuphead",
+    "hollow_knight":    "Hollow Knight",
+    "touhou":           "Touhou",
+}
+
+# Sort by key length descending so longer prefixes match first
+# (e.g. "sonic_adventure" before "sonic")
+_SERIES_KEYS_SORTED = sorted(_SERIES_MAP.keys(), key=len, reverse=True)
+
+# Words that should stay lowercase in title-case output
+_LOWERCASE_WORDS = {"a", "an", "and", "at", "by", "for", "from", "in",
+                    "of", "on", "or", "the", "to", "vs", "with"}
+
+
+def beautify_track_name(track_id: str) -> str:
+    """Convert a raw SSBU BGM filename into a human-friendly display name.
+
+    Example transforms:
+      bgm_sonic_adventure__mechanical_resonance  →  Mechanical Resonance [Sonic Adventure]
+      bgm_zelda_overworld                        →  Overworld [Zelda]
+      bgm_T09_battle_kirby01                     →  Battle Kirby 01 [Stage T09]
+      bgm_menu_select                            →  Menu Select
+    """
+    name = track_id
+
+    # 1. Strip common prefixes
+    if name.lower().startswith("bgm_"):
+        name = name[4:]
+
+    # 2. Check for double-underscore separator  (series__song)
+    series_label: str | None = None
+    song_part: str = name
+
+    if "__" in name:
+        parts = name.split("__", 1)
+        raw_series = parts[0]
+        song_part = parts[1]
+        series_label = _SERIES_MAP.get(raw_series.lower(),
+                                       raw_series.replace("_", " ").strip().title())
+    else:
+        # 3. Try to match a known series prefix
+        lower = name.lower()
+        for key in _SERIES_KEYS_SORTED:
+            if lower.startswith(key + "_") and len(name) > len(key) + 1:
+                series_label = _SERIES_MAP[key]
+                song_part = name[len(key) + 1:]
+                break
+
+    # 4. Handle stage-code prefix like T01_, T09_, ...
+    stage_match = re.match(r"^([A-Z]\d{2})_(.+)$", song_part, re.IGNORECASE)
+    if stage_match and not series_label:
+        series_label = f"Stage {stage_match.group(1).upper()}"
+        song_part = stage_match.group(2)
+
+    # 5. Clean up song part
+    #    - Replace remaining underscores with spaces
+    #    - Collapse whitespace
+    song_name = song_part.replace("_", " ").strip()
+    song_name = re.sub(r"\s+", " ", song_name)
+
+    # 6. Smart title-case (keep small words lowercase unless first/last)
+    words = song_name.split()
+    titled: list[str] = []
+    for i, w in enumerate(words):
+        if i == 0 or i == len(words) - 1 or w.lower() not in _LOWERCASE_WORDS:
+            titled.append(w.capitalize())
+        else:
+            titled.append(w.lower())
+    song_name = " ".join(titled) if titled else song_name
+
+    # 7. Separate trailing digits  (e.g. "01" at the end stays as-is)
+
+    if not song_name:
+        song_name = track_id  # ultimate fallback
+
+    # 8. Compose final display string
+    if series_label:
+        return f"{song_name}  [{series_label}]"
+    return song_name
 
 
 class MusicManager:
@@ -56,6 +236,11 @@ class MusicManager:
 
         # Auto-generate MSBT overlays so custom track names show in-game
         self._auto_generate_msbt_overlays(mods_root)
+
+        # Beautify display names for tracks that don't have XMSBT/MSBT names
+        for track in self.tracks:
+            if not track.display_name:
+                track.display_name = beautify_track_name(track.track_id)
 
         # Load saved assignments if they exist
         self._load_saved_assignments()

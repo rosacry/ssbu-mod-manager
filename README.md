@@ -35,6 +35,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Competitive Stages Filter** — Filter stage list to show only tournament-legal stages (Battlefield, Small Battlefield, Final Destination, Smashville, Town and City, Pokemon Stadium 2, Kalos Pokemon League, Hollow Bastion, Northern Cave, Yoshi's Story)
 - **Bulk Operations** — Assign all tracks to all stages, clear all assignments
 - **Auto Track Name Detection** — Automatically extracts track names from both XMSBT and binary MSBT files, including extended tracklist mods
+- **Beautified Track Names** — Raw BGM filenames like `bgm_sonic_adventure__mechanical_resonance` are automatically transformed into readable names like "Mechanical Resonance [Sonic Adventure]" using 100+ franchise mappings
 - **Auto MSBT Overlay Generation** — Generates XMSBT overlays during music scan so custom track names display correctly in-game
 - **Save & Apply** — Generates PRC configuration for in-game music
 
@@ -56,9 +57,11 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Extended Data Support** — Exports emulator-specific data beyond SDMC: encryption keys, registered content, user profiles, game load mods, NAND system files
 - **Legacy Import** — Supports importing from both the new direct export format and legacy emulator-exported folders
 - **LDN Network Awareness** — Reminds users that different emulators run separate online multiplayer networks and rooms are NOT cross-compatible
+- **Version Upgrade Tool** — Upgrade to a new version of the same emulator while preserving all settings, config, keys, shader cache, save data, and mods. Supports auto-detection of existing installs and per-category selective migration with preview
 
 ### Online Compatibility
 - **Compatibility Code Checker** — Tournament-ready system: host generates a compact compatibility code, players paste it to instantly verify their gameplay mods match. Intelligently distinguishes between desync-causing files (PRC params, stage collision, gameplay plugins, ExeFS patches) and safe cosmetic differences (textures, models, audio, UI skins, effects)
+- **Optional Plugin Awareness** — Recognizes ~18 known optional plugins (less-lag, input display, CSS managers, replay, etc.) that don't affect gameplay sync. Shows setup differences as informational rather than incompatible
 - **Tournament Workflow** — TO generates code → shares in Discord/lobby → players check before starting matches
 - **Detailed Mismatch Report** — When incompatible, shows exactly which gameplay files differ, grouped by category (missing mods, extra mods, mismatched files, plugin differences)
 - **Mod Sync Guide** — In-app reference explaining which mods both players need for online play vs. which are client-side only
@@ -74,6 +77,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Auto-Detection** — Automatically finds your emulator's SDMC path on startup
 - **Developer Mode** — Built-in debug logging with search, auto-scroll, and clipboard support
 - **Zoom / Scaling** — Ctrl+Plus and Ctrl+Minus to zoom the entire UI in/out (60%–200%), Ctrl+0 to reset; persisted across sessions
+- **Scaling-Aware Window** — Window geometry and minimum size scale proportionally with UI zoom and display scaling, ensuring nothing is cut off at higher DPI settings
 - **Resizable Panels** — Drag the splitter handles between columns on the Music and CSS Editor pages to resize panes
 - **Smooth UI** — Resize debouncing, proper cleanup, and consistent dark theme
 - **Lazy Page Loading** — Pages are created on first navigation for fast startup

@@ -697,3 +697,315 @@ def direct_import_emulator_data(
         f"{result.duration_seconds:.1f}s")
 
     return result
+
+
+# ─── Emulator Version Upgrade ────────────────────────────────────────
+
+# Emulator-specific config / settings directories and files.
+# Paths are relative to the emulator's *data root* (parent of sdmc).
+EMULATOR_CONFIG_PATHS: dict[str, list[MigrationItem]] = {
+    "Eden": [
+        MigrationItem(label="Config / Settings",
+                      src_rel="config",
+                      description="Emulator configuration, controller mappings, GUI settings"),
+        MigrationItem(label="Shader Cache",
+                      src_rel="shader",
+                      description="Pre-compiled shader cache (speeds up game startup)"),
+        MigrationItem(label="Pipeline Cache",
+                      src_rel="pipeline",
+                      description="GPU pipeline cache"),
+        MigrationItem(label="Registered Content",
+                      src_rel="nand/system/Contents/registered",
+                      description="Installed firmware NCA files"),
+        MigrationItem(label="Encryption Keys",
+                      src_rel="keys",
+                      description="prod.keys, title.keys for game decryption"),
+    ],
+    "Ryujinx": [
+        MigrationItem(label="Config (Config.json)",
+                      src_rel=".",
+                      description="Emulator configuration (Config.json, profiles.json)"),
+        MigrationItem(label="System Data",
+                      src_rel="system",
+                      description="Encryption keys (prod.keys, title.keys)"),
+        MigrationItem(label="Shader Cache",
+                      src_rel="games",
+                      description="Per-game shader and pipeline cache"),
+        MigrationItem(label="Registered Content",
+                      src_rel="bis/system/Contents/registered",
+                      description="Firmware NCA files"),
+        MigrationItem(label="User Profiles",
+                      src_rel="bis/system/save/8000000000000010",
+                      description="Emulated Switch user profiles"),
+    ],
+    "Yuzu": [
+        MigrationItem(label="Config / Settings",
+                      src_rel="config",
+                      description="qt-config.ini, custom.ini — emulator and per-game settings"),
+        MigrationItem(label="Encryption Keys",
+                      src_rel="keys",
+                      description="prod.keys, title.keys for game decryption"),
+        MigrationItem(label="Shader Cache",
+                      src_rel="shader",
+                      description="Pre-compiled shader cache"),
+        MigrationItem(label="Pipeline Cache",
+                      src_rel="pipeline",
+                      description="GPU pipeline cache"),
+        MigrationItem(label="Registered Content",
+                      src_rel="nand/system/Contents/registered",
+                      description="Firmware NCA files"),
+        MigrationItem(label="Game Load Mods",
+                      src_rel=f"load/{SSBU_TITLE_ID}",
+                      description="Alternative mod path used by Yuzu's load directory"),
+    ],
+}
+# Forks share structure with Yuzu
+for _fork in ("Suyu", "Sudachi", "Citron"):
+    EMULATOR_CONFIG_PATHS[_fork] = EMULATOR_CONFIG_PATHS["Yuzu"]
+
+
+@dataclass
+class UpgradeItem:
+    """A single data category for version upgrade."""
+    label: str
+    src_path: Path
+    dst_path: Path
+    description: str
+    file_count: int = 0
+    total_size: int = 0
+    exists: bool = False
+    selected: bool = True   # default-on for upgrade
+
+
+@dataclass
+class UpgradePlan:
+    """Plan for upgrading an emulator to a new version/path."""
+    emulator_name: str
+    old_root: Path          # Old emulator data root
+    new_root: Path          # New emulator data root
+    items: list[UpgradeItem] = field(default_factory=list)
+    total_files: int = 0
+    total_size: int = 0
+
+    @property
+    def total_size_mb(self) -> float:
+        return self.total_size / (1024 * 1024)
+
+
+def scan_upgrade_data(
+    emulator_name: str,
+    old_root: Path,
+    new_root: Path,
+) -> UpgradePlan:
+    """Scan old emulator data root and build an upgrade plan.
+
+    Covers SDMC data (mods, plugins, saves), extended data (keys, firmware),
+    AND emulator-specific config files (settings, shader cache, profiles).
+    """
+    plan = UpgradePlan(
+        emulator_name=emulator_name,
+        old_root=old_root,
+        new_root=new_root,
+    )
+
+    old_sdmc = old_root / "sdmc"
+    new_sdmc = new_root / "sdmc"
+    if not old_sdmc.exists():
+        # Maybe the root IS the sdmc (user pointed directly at it)
+        if (old_root / "ultimate").exists() or (old_root / "atmosphere").exists():
+            old_sdmc = old_root
+            new_sdmc = new_root
+
+    # 1. SDMC data dirs (mods, plugins, saves, etc.)
+    seen_paths: set[str] = set()
+    for template in SSBU_DATA_DIRS:
+        src = old_sdmc / template.src_rel
+        src_str = str(src)
+        if src_str in seen_paths:
+            continue
+        if src.exists():
+            seen_paths.add(src_str)
+            item = UpgradeItem(
+                label=template.label,
+                src_path=src,
+                dst_path=new_sdmc / template.src_rel,
+                description=template.description,
+                exists=True,
+            )
+            item.file_count, item.total_size = _count_dir(src)
+            plan.items.append(item)
+            plan.total_files += item.file_count
+            plan.total_size += item.total_size
+
+    # 2. Extended data (keys, firmware, profiles — outside sdmc)
+    extra_templates = EMULATOR_EXTRA_DIRS.get(emulator_name, [])
+    for template in extra_templates:
+        src = old_root / template.src_rel
+        src_str = str(src)
+        if src_str in seen_paths:
+            continue
+        if src.exists():
+            seen_paths.add(src_str)
+            item = UpgradeItem(
+                label=template.label,
+                src_path=src,
+                dst_path=new_root / template.src_rel,
+                description=template.description,
+                exists=True,
+            )
+            item.file_count, item.total_size = _count_dir(src)
+            plan.items.append(item)
+            plan.total_files += item.file_count
+            plan.total_size += item.total_size
+
+    # 3. Emulator config/settings
+    config_templates = EMULATOR_CONFIG_PATHS.get(emulator_name, [])
+    for template in config_templates:
+        src = old_root / template.src_rel
+        src_str = str(src)
+        if src_str in seen_paths:
+            continue
+        if src.exists():
+            seen_paths.add(src_str)
+            item = UpgradeItem(
+                label=template.label,
+                src_path=src,
+                dst_path=new_root / template.src_rel,
+                description=template.description,
+                exists=True,
+            )
+            if src.is_dir():
+                item.file_count, item.total_size = _count_dir(src)
+            elif src.is_file():
+                item.file_count = 1
+                try:
+                    item.total_size = src.stat().st_size
+                except OSError:
+                    pass
+            plan.items.append(item)
+            plan.total_files += item.file_count
+            plan.total_size += item.total_size
+
+    # Also look for standalone config files at root level
+    for config_file in ("Config.json", "profiles.json", "qt-config.ini"):
+        cfg = old_root / config_file
+        cfg_str = str(cfg)
+        if cfg.is_file() and cfg_str not in seen_paths:
+            seen_paths.add(cfg_str)
+            try:
+                fsize = cfg.stat().st_size
+            except OSError:
+                fsize = 0
+            item = UpgradeItem(
+                label=f"Config: {config_file}",
+                src_path=cfg,
+                dst_path=new_root / config_file,
+                description=f"Emulator configuration file ({config_file})",
+                file_count=1,
+                total_size=fsize,
+                exists=True,
+            )
+            plan.items.append(item)
+            plan.total_files += 1
+            plan.total_size += fsize
+
+    logger.info("Migrator",
+        f"Upgrade scan for {emulator_name}: "
+        f"{len(plan.items)} categories, {plan.total_files} files, "
+        f"{plan.total_size_mb:.1f} MB")
+
+    return plan
+
+
+def execute_upgrade(
+    plan: UpgradePlan,
+    selected_labels: set[str] | None = None,
+    overwrite: bool = False,
+    progress_callback: Optional[Callable[[str, float], None]] = None,
+) -> MigrationResult:
+    """Execute an emulator version upgrade.
+
+    Copies data from old emulator location to new location.
+    Source data is NEVER deleted — always a safe copy.
+
+    Args:
+        plan: The upgrade plan from scan_upgrade_data()
+        selected_labels: Set of item labels to migrate (None = all)
+        overwrite: If True, overwrite existing files in destination
+        progress_callback: Optional (message, fraction) callback
+    """
+    result = MigrationResult(success=True)
+    start = time.time()
+
+    items_to_copy = [i for i in plan.items if i.exists]
+    if selected_labels is not None:
+        items_to_copy = [i for i in items_to_copy if i.label in selected_labels]
+
+    if not items_to_copy:
+        result.errors.append("No data categories selected for upgrade.")
+        result.success = False
+        return result
+
+    total_files = sum(i.file_count for i in items_to_copy) or 1
+    copied = 0
+
+    for item in items_to_copy:
+        if progress_callback:
+            progress_callback(
+                f"Copying {item.label}...",
+                copied / total_files,
+            )
+
+        try:
+            if item.src_path.is_file():
+                # Single file copy
+                item.dst_path.parent.mkdir(parents=True, exist_ok=True)
+                if overwrite or not item.dst_path.exists():
+                    shutil.copy2(str(item.src_path), str(item.dst_path))
+                    result.files_copied += 1
+                    result.bytes_copied += item.total_size
+                copied += 1
+            else:
+                # Directory tree copy
+                for root, dirs, files in os.walk(item.src_path):
+                    rel = os.path.relpath(root, item.src_path)
+                    target_dir = item.dst_path / rel
+                    target_dir.mkdir(parents=True, exist_ok=True)
+
+                    for fname in files:
+                        src_file = Path(root) / fname
+                        dst_file = target_dir / fname
+
+                        try:
+                            if overwrite or not dst_file.exists():
+                                shutil.copy2(str(src_file), str(dst_file))
+                                result.files_copied += 1
+                                try:
+                                    result.bytes_copied += src_file.stat().st_size
+                                except OSError:
+                                    pass
+                        except (PermissionError, OSError) as e:
+                            result.errors.append(f"Failed to copy {src_file}: {e}")
+
+                        copied += 1
+                        if progress_callback and copied % 50 == 0:
+                            progress_callback(
+                                f"Copying {item.label}... ({copied}/{total_files})",
+                                copied / total_files,
+                            )
+        except Exception as e:
+            result.errors.append(f"Error copying {item.label}: {e}")
+
+    result.duration_seconds = time.time() - start
+    result.success = len(result.errors) < 5
+
+    if progress_callback:
+        progress_callback("Upgrade complete!", 1.0)
+
+    logger.info("Migrator",
+        f"Upgrade {plan.emulator_name}: {result.files_copied} files, "
+        f"{result.bytes_copied / (1024*1024):.1f} MB, "
+        f"{result.duration_seconds:.1f}s, "
+        f"{len(result.errors)} errors")
+
+    return result
