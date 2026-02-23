@@ -51,6 +51,28 @@ def patch_listbox_scroll_speed(listbox: tk.Listbox, speed: int = SCROLL_SPEED):
     listbox.bind("<MouseWheel>", _fast_scroll)
 
 
+def _patch_canvas_scroll_speed(canvas: tk.Canvas, speed: int = SCROLL_SPEED):
+    """Patch a tk.Canvas to scroll faster."""
+    def _fast_scroll(event):
+        try:
+            canvas.yview_scroll(int(-speed * (event.delta / 120)), "units")
+        except tk.TclError:
+            pass
+        return "break"
+    canvas.bind("<MouseWheel>", _fast_scroll)
+
+
+def _patch_text_scroll_speed(text_widget: tk.Text, speed: int = SCROLL_SPEED):
+    """Patch a tk.Text to scroll faster."""
+    def _fast_scroll(event):
+        try:
+            text_widget.yview_scroll(int(-speed * (event.delta / 120)), "units")
+        except tk.TclError:
+            pass
+        return "break"
+    text_widget.bind("<MouseWheel>", _fast_scroll)
+
+
 class BasePage(ctk.CTkFrame):
     """Base class for all pages in the application."""
 
@@ -61,15 +83,38 @@ class BasePage(ctk.CTkFrame):
         self.after(50, self._patch_all_scroll_speeds)
 
     def _patch_all_scroll_speeds(self):
-        """Find and patch all CTkScrollableFrame and Listbox widgets for faster scrolling."""
+        """Find and patch all scrollable widgets for faster scrolling."""
         self._recursive_patch_scroll(self)
 
     def _recursive_patch_scroll(self, widget):
-        """Recursively patch scroll speed on all scrollable widgets."""
+        """Recursively patch scroll speed on all scrollable widgets.
+
+        Handles CTkScrollableFrame, tk.Listbox, tk.Canvas, tk.Text,
+        and PanedWindow children (which winfo_children() does not
+        normally traverse).
+        """
         if isinstance(widget, ctk.CTkScrollableFrame):
             _patch_scrollable_frame_speed(widget)
         elif isinstance(widget, tk.Listbox):
             patch_listbox_scroll_speed(widget)
+        elif isinstance(widget, tk.Text):
+            _patch_text_scroll_speed(widget)
+        elif isinstance(widget, tk.Canvas):
+            _patch_canvas_scroll_speed(widget)
+
+        # PanedWindow.winfo_children() may not include panes added
+        # via .add(); explicitly iterate panes as well.
+        if isinstance(widget, tk.PanedWindow):
+            try:
+                for pane_id in widget.panes():
+                    try:
+                        pane_widget = widget.nametowidget(pane_id)
+                        self._recursive_patch_scroll(pane_widget)
+                    except (KeyError, tk.TclError):
+                        pass
+            except (AttributeError, tk.TclError):
+                pass
+
         try:
             for child in widget.winfo_children():
                 self._recursive_patch_scroll(child)

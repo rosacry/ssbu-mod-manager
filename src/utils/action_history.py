@@ -23,6 +23,8 @@ class ActionHistory:
     def execute(self, action: Action):
         """Execute an action and push it onto the undo stack."""
         action.do()
+        # Only clear redo and push to undo AFTER do() succeeds; if
+        # do() raises, the stacks remain untouched.
         self._undo_stack.append(action)
         self._redo_stack.clear()
         if len(self._undo_stack) > self._max:

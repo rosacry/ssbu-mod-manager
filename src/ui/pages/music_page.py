@@ -65,8 +65,8 @@ class MusicPage(BasePage):
         content.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
         # === LEFT COLUMN: Stage list ===
-        left = ctk.CTkFrame(content, width=320, fg_color="#242438", corner_radius=10)
-        content.add(left, minsize=200, stretch="never")
+        left = ctk.CTkFrame(content, width=420, fg_color="#242438", corner_radius=10)
+        content.add(left, minsize=280, stretch="never")
 
         ctk.CTkLabel(left, text="Stages",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -158,8 +158,8 @@ class MusicPage(BasePage):
                       ).pack(side="right", padx=5)
 
         # === RIGHT COLUMN: Available tracks ===
-        right = ctk.CTkFrame(content, width=420, fg_color="#242438", corner_radius=10)
-        content.add(right, minsize=250, stretch="never")
+        right = ctk.CTkFrame(content, width=550, fg_color="#242438", corner_radius=10)
+        content.add(right, minsize=350, stretch="never")
 
         avail_header = ctk.CTkFrame(right, fg_color="transparent")
         avail_header.pack(fill="x", padx=10, pady=(10, 5))
@@ -495,6 +495,9 @@ class MusicPage(BasePage):
                           fg_color="#b02a2a", hover_color="#8a1f1f",
                           font=ctk.CTkFont(size=10),
                           command=lambda t=track: self._remove_from_stage(t)).pack(side="left", padx=1)
+
+        # Re-patch scroll speeds for the newly created playlist widgets
+        self.after(50, self._patch_all_scroll_speeds)
 
     def _render_available_tracks(self):
         """Populate the listbox with available tracks."""

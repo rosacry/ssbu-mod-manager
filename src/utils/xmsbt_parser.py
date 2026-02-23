@@ -62,10 +62,12 @@ def filter_custom_entries(entries: dict[str, str], inclusive: bool = False) -> d
     whose numeric suffix exceeds 1605 (the vanilla BGM ceiling in SSBU
     v13.0.1).
 
-    If ``inclusive`` is True, keep all entries that look like BGM titles
-    (bgm_title_*, bgm_author_*) regardless of suffix, plus all entries
-    that pass the normal filter.  This is useful for BGM-related MSBTs
-    where mods may intentionally replace vanilla track names.
+    If ``inclusive`` is True, keep **all** entries unconditionally.
+    This is essential for BGM-related MSBTs where mods replace the
+    entire MSBT with custom and vanilla entries mixed together.
+    When another mod's binary MSBT wins the file-replacement race,
+    the XMSBT overlay generated from this function needs to supply
+    every single label so none are missing in-game.
     """
     custom = {}
     for label, text in entries.items():
@@ -74,12 +76,13 @@ def filter_custom_entries(entries: dict[str, str], inclusive: bool = False) -> d
             continue
         suffix = parts[-1]
 
-        # In inclusive mode, keep all BGM title/author entries
+        # In inclusive mode, keep ALL entries unconditionally.
+        # BGM/title MSBTs need every label in the overlay so that
+        # even if a different mod's binary MSBT is loaded as the
+        # base, the XMSBT overlay restores ALL labels.
         if inclusive:
-            prefix = parts[0].lower()
-            if any(bgm_key in prefix for bgm_key in ('bgm_title', 'bgm_author', 'bgm_menu')):
-                custom[label] = text
-                continue
+            custom[label] = text
+            continue
 
         # Keep entries with any alphabetic character in the suffix
         if re.search(r'[A-Za-z]', suffix):
@@ -106,10 +109,13 @@ def parse_xmsbt(file_path: Path) -> dict[str, str]:
                 content = f.read()
 
         # Parse <entry label="..."><text>...</text></entry> blocks
+        # Text may contain minimal entity encoding from our writer.
         pattern = r'<entry\s+label="([^"]+)">\s*<text>(.*?)</text>\s*</entry>'
         for match in re.finditer(pattern, content, re.DOTALL):
             label = match.group(1)
-            text = match.group(2).strip()
+            raw_text = match.group(2).strip()
+            # Unescape entities our writer may have produced
+            text = raw_text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
             entries[label] = text
     except Exception as e:
         logger.warn("XMSBT", f"Failed to parse {file_path.name}: {e}")
@@ -118,17 +124,21 @@ def parse_xmsbt(file_path: Path) -> dict[str, str]:
 def write_xmsbt(file_path: Path, entries: dict[str, str]) -> None:
     """Write entries to an XMSBT file.
 
-    Text values are written as-is (not XML-escaped) to preserve any
-    inline formatting tags the game may use. Only label attributes
-    are escaped to keep the XML structure valid.
+    Text values are written mostly as-is to preserve game-specific
+    inline tags.  Only sequences that would break XML parsing
+    (``</text>``, ``</entry>``) are entity-encoded so the file
+    remains well-formed.  Label attributes are always XML-escaped.
     """
     lines = ['<?xml version="1.0" encoding="utf-16"?>', '<xmsbt>']
     for label, text in sorted(entries.items()):
         safe_label = xml_escape(label, {'"': '&quot;'})
-        # Do NOT escape text content - XMSBT text values can contain
-        # game-specific inline tags and entities that must be preserved
+        # Minimally escape text so it cannot break the surrounding
+        # XML structure while still preserving game-specific tags.
+        safe_text = text.replace("&", "&amp;")
+        safe_text = safe_text.replace("</text>", "&lt;/text&gt;")
+        safe_text = safe_text.replace("</entry>", "&lt;/entry&gt;")
         lines.append(f'  <entry label="{safe_label}">')
-        lines.append(f'    <text>{text}</text>')
+        lines.append(f'    <text>{safe_text}</text>')
         lines.append('  </entry>')
     lines.append('</xmsbt>')
 

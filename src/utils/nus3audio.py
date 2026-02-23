@@ -51,14 +51,11 @@ def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
     ffmpeg = _find_ffmpeg()
     if not ffmpeg:
         return None
-    # Write WAV next to the OGG if it's already in a temp/cache dir,
-    # otherwise write to the system temp directory to avoid polluting
-    # mod folders.
-    parent = str(ogg_path.parent).lower()
-    if "temp" in parent or "cache" in parent or "appdata" in parent:
-        wav_path = ogg_path.with_suffix(".wav")
-    else:
-        wav_path = Path(tempfile.gettempdir()) / (ogg_path.stem + ".wav")
+    # Write WAV to the audio cache directory so cleanup_cache()
+    # removes it.  Previous versions wrote to the system temp dir
+    # which leaked files on crash.
+    cache_dir = _get_cache_dir()
+    wav_path = cache_dir / (ogg_path.stem + ".wav")
     try:
         result = subprocess.run(
             [ffmpeg, "-y", "-i", str(ogg_path), "-ar", "48000",
@@ -227,7 +224,7 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
     if header_size == 0 or header_size > len(lopus_data):
         header_size = 0x28
 
-    # Extract Opus frames from data section
+    # Extract Opus frames from data section (try LE first, then BE)
     opus_frames = []
     pos = header_size
     while pos + 4 <= len(lopus_data):
@@ -240,6 +237,22 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
         frame_data = lopus_data[pos + 4:pos + 4 + actual_size]
         opus_frames.append(frame_data)
         pos += frame_size  # advance by fixed frame slot size
+
+    # If LE extraction yielded too few frames or frames look invalid,
+    # try BE frame sizes instead.
+    if len(opus_frames) < 10 or not _validate_opus_frames(opus_frames):
+        be_frames = []
+        pos = header_size
+        while pos + 4 <= len(lopus_data):
+            actual_size = struct.unpack_from('>I', lopus_data, pos)[0]
+            if actual_size == 0 or actual_size > frame_size:
+                break
+            if pos + 4 + actual_size > len(lopus_data):
+                break
+            be_frames.append(lopus_data[pos + 4:pos + 4 + actual_size])
+            pos += frame_size
+        if len(be_frames) > len(opus_frames) and _validate_opus_frames(be_frames):
+            opus_frames = be_frames
 
     if not opus_frames:
         raise ValueError("No Opus frames extracted from LOPUS data")
@@ -636,24 +649,31 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
         0x08: u32 total_samples (BE)
         0x0C: u32 channels (BE)
         0x10: u32 sample_rate (BE)
-        0x20: u32 data_offset (BE) — typically 0x40
+        0x20: u32 data_offset (BE) — typically 0x30–0x40
         0x24: u32 data_size (BE)
       At data_offset: LOPUS sub-header (LE) with frame data using
-        big-endian u32 frame sizes in fixed-size slots.
+        either big-endian or little-endian u32 frame sizes in fixed
+        slots.
 
     Other variants:
       1. OPUS magic + LOPUS sub-header (0x80000001..0x80000004)
       2. OPUS magic + raw length-prefixed opus frames
-      3. OPUS magic + custom header + opus frame data with fixed slot sizes
+      3. OPUS magic + custom header + opus frame data with fixed slots
 
-    We try the SSBU format first, then fall back to generic strategies.
+    We try the SSBU format first (BE *and* LE frame sizes), then fall
+    back to generic strategies using header values when available.
     """
     if len(audio_data) < 8:
         raise ValueError("OPUS container too short")
 
+    # Values parsed from the OPUS header (used by fallback strategies)
+    parsed_channels: int = 2
+    parsed_sample_rate: int = 48000
+    parsed_data_offset: int = 4          # default: skip "OPUS" magic only
+    parsed_pre_skip: int = 312
+    header_parsed: bool = False
+
     # --- Strategy 0: SSBU OPUS container with big-endian header ---
-    # The SSBU OPUS format has a BE header with data_offset, channels,
-    # sample_rate fields, pointing to LOPUS sub-data with BE frame sizes.
     if len(audio_data) >= 0x28:
         try:
             container_data_offset = struct.unpack_from('>I', audio_data, 0x20)[0]
@@ -661,63 +681,82 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
             container_channels = struct.unpack_from('>I', audio_data, 0x0C)[0]
             container_sample_rate = struct.unpack_from('>I', audio_data, 0x10)[0]
 
-            # Validate: data_offset should be reasonable, channels 1-8,
-            # sample_rate 8000-192000, and data should fit
             if (0x10 <= container_data_offset <= 0x100
                     and 1 <= container_channels <= 8
                     and 8000 <= container_sample_rate <= 192000
                     and container_data_offset + container_data_size <= len(audio_data) + 64):
+                # Header looks valid — save for fallback strategies
+                parsed_channels = container_channels
+                parsed_sample_rate = container_sample_rate
+                parsed_data_offset = container_data_offset
+                header_parsed = True
+
                 inner = audio_data[container_data_offset:]
 
                 # Check for LOPUS sub-header inside the inner data
                 if len(inner) >= 0x28:
                     sub_magic = struct.unpack_from('<I', inner, 0)[0]
                     if sub_magic & 0x80000000:
-                        # Parse LOPUS header for frame_slot_size
                         lopus_type = sub_magic & 0xFF
                         if lopus_type in (1, 2, 3, 4):
                             slot_size = struct.unpack_from('<H', inner, 0x0A)[0]
                             if slot_size == 0:
                                 slot_size = struct.unpack_from('<I', inner, 0x14)[0]
                             if 8 <= slot_size <= 0x2000:
-                                # Try extracting frames with BE u32 sizes
-                                # Frame data starts after the extended LOPUS header
-                                # (typically at 0x28, sometimes at header_size)
+                                # Read pre_skip from LOPUS sub-header
+                                ps = 312
+                                if len(inner) > 0x1C:
+                                    ps = struct.unpack_from('<H', inner, 0x1A)[0]
+                                    if ps == 0:
+                                        ps = struct.unpack_from('<I', inner, 0x1C)[0]
+                                    if not (0 < ps < 10000):
+                                        ps = 312
+                                parsed_pre_skip = ps
+
+                                # Try BE frame sizes first (original SSBU format)
                                 for frame_start in [0x28, 0x20, 0x30, 0x18]:
                                     frames = _extract_opus_be_slots(
                                         inner, frame_start, slot_size)
-                                    if len(frames) >= 10:
-                                        pre_skip = 312
-                                        if len(inner) > 0x1C:
-                                            ps = struct.unpack_from(
-                                                '<H', inner, 0x1A)[0]
-                                            if ps == 0:
-                                                ps = struct.unpack_from(
-                                                    '<I', inner, 0x1C)[0]
-                                            if 0 < ps < 10000:
-                                                pre_skip = ps
+                                    if len(frames) >= 10 and _validate_opus_frames(frames):
                                         return _build_ogg_opus_from_frames(
                                             frames,
                                             channels=container_channels,
                                             sample_rate=container_sample_rate,
-                                            pre_skip=pre_skip,
+                                            pre_skip=parsed_pre_skip,
                                         )
+
+                                # Try LE frame sizes (common in mod-created tracks)
+                                for frame_start in [0x28, 0x20, 0x30, 0x18]:
+                                    frames = _extract_opus_le_slots(
+                                        inner, frame_start, slot_size)
+                                    if len(frames) >= 10 and _validate_opus_frames(frames):
+                                        return _build_ogg_opus_from_frames(
+                                            frames,
+                                            channels=container_channels,
+                                            sample_rate=container_sample_rate,
+                                            pre_skip=parsed_pre_skip,
+                                        )
+
+                        # LOPUS sub-header detected but slot extraction failed;
+                        # try the full LOPUS parser on the inner data directly.
+                        try:
+                            return _lopus_to_ogg(inner)
+                        except Exception:
+                            pass
         except Exception:
             pass  # Fall through to other strategies
 
-    # Skip the "OPUS" magic (4 bytes)
-    inner_data = audio_data[4:]
+    # Determine the data that follows the OPUS header.
+    # If we parsed a valid header, skip to data_offset; otherwise just
+    # skip the 4-byte "OPUS" magic.
+    inner_data = audio_data[parsed_data_offset:]
 
     # Check if the remaining data has a LOPUS sub-header
     if len(inner_data) >= 4:
         sub_magic = struct.unpack_from('<I', inner_data, 0)[0]
         if sub_magic & 0x80000000:
-            # Has LOPUS-style header, convert that
             return _lopus_to_ogg(inner_data)
 
-    # Try multiple header offset strategies
-    # Some OPUS containers have: u32 data_size, then frame data
-    # Others have: u32 sample_count, u32 header_size, etc.
     errors = []
 
     # Strategy 1: Skip 4 bytes (data_size field), treat rest as frames
@@ -726,21 +765,25 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
         if 0 < declared_size <= len(inner_data) - 4:
             opus_data = inner_data[4:4 + declared_size]
             try:
-                return _raw_opus_frames_to_ogg(opus_data)
+                return _raw_opus_frames_to_ogg(
+                    opus_data, channels=parsed_channels,
+                    sample_rate=parsed_sample_rate)
             except Exception as e:
                 errors.append(f"Strategy 1 (skip size): {e}")
 
     # Strategy 2: Try entire inner data as raw frames
     try:
-        return _raw_opus_frames_to_ogg(inner_data)
+        return _raw_opus_frames_to_ogg(
+            inner_data, channels=parsed_channels,
+            sample_rate=parsed_sample_rate)
     except Exception as e:
         errors.append(f"Strategy 2 (raw frames): {e}")
 
     # Strategy 3: Scan for Opus frames by looking for valid TOC bytes
-    # Opus TOC byte format: config(5 bits) + s(1 bit) + c(2 bits)
-    # Valid frame sizes at 48kHz: 2.5ms, 5ms, 10ms, 20ms, 40ms, 60ms
     try:
-        return _scan_opus_frames(inner_data)
+        return _scan_opus_frames(
+            inner_data, channels=parsed_channels,
+            sample_rate=parsed_sample_rate)
     except Exception as e:
         errors.append(f"Strategy 3 (TOC scan): {e}")
 
@@ -749,22 +792,30 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
         if header_offset >= len(inner_data):
             continue
         try:
-            return _raw_opus_frames_to_ogg(inner_data[header_offset:])
+            return _raw_opus_frames_to_ogg(
+                inner_data[header_offset:],
+                channels=parsed_channels,
+                sample_rate=parsed_sample_rate)
         except Exception:
             pass
 
     # Strategy 5: Try with various fixed slot sizes directly
     for slot_size in [0x280, 0x500, 0x200, 0x400, 0x100, 0x300, 0x600, 0x800]:
         try:
-            return _extract_opus_fixed_slots(inner_data, slot_size)
+            return _extract_opus_fixed_slots(
+                inner_data, slot_size,
+                channels=parsed_channels,
+                sample_rate=parsed_sample_rate)
         except Exception:
             pass
-        # Also try after skipping potential header bytes
         for skip in [4, 8, 12, 16, 0x28, 0x30]:
             if skip >= len(inner_data):
                 continue
             try:
-                return _extract_opus_fixed_slots(inner_data[skip:], slot_size)
+                return _extract_opus_fixed_slots(
+                    inner_data[skip:], slot_size,
+                    channels=parsed_channels,
+                    sample_rate=parsed_sample_rate)
             except Exception:
                 pass
 
@@ -806,7 +857,56 @@ def _extract_opus_be_slots(data: bytes, start_offset: int,
     return frames
 
 
-def _scan_opus_frames(data: bytes) -> bytes:
+def _extract_opus_le_slots(data: bytes, start_offset: int,
+                           slot_size: int) -> list[bytes]:
+    """Extract Opus frames using **little-endian** u32 sizes in fixed slots.
+
+    Many mod-created NUS3AUDIO tracks store frame sizes in LE even
+    inside an OPUS container whose outer header is BE.
+    """
+    frames: list[bytes] = []
+    pos = start_offset
+    while pos + 4 <= len(data):
+        frame_size = struct.unpack_from('<I', data, pos)[0]
+        if frame_size == 0 or frame_size > slot_size:
+            break
+        if pos + 4 + frame_size > len(data):
+            break
+        frames.append(data[pos + 4:pos + 4 + frame_size])
+        pos += slot_size
+    return frames
+
+
+def _validate_opus_frames(frames: list[bytes], min_consistent: int = 5) -> bool:
+    """Quick sanity-check that extracted data looks like real Opus frames.
+
+    Checks:
+    * The majority of frames start with a byte whose top-5-bit config
+      field is consistent (same Opus mode throughout the track).
+    * Frame sizes are in a reasonable range (2–2000 bytes).
+    """
+    if not frames:
+        return False
+
+    # Collect TOC config values (top 5 bits) from the first N frames
+    sample_count = min(len(frames), 30)
+    configs: dict[int, int] = {}
+    for f in frames[:sample_count]:
+        if len(f) < 2:
+            return False
+        cfg = (f[0] >> 3) & 0x1F
+        configs[cfg] = configs.get(cfg, 0) + 1
+
+    if not configs:
+        return False
+
+    # The most common config should appear in at least min_consistent frames
+    most_common_count = max(configs.values())
+    return most_common_count >= min(min_consistent, sample_count)
+
+
+def _scan_opus_frames(data: bytes, channels: int = 2,
+                      sample_rate: int = 48000) -> bytes:
     """Scan for valid Opus frames by detecting TOC bytes and frame boundaries.
 
     Opus packets start with a TOC byte. We can validate frames by checking:
@@ -845,7 +945,8 @@ def _scan_opus_frames(data: bytes) -> bytes:
 
                 if consecutive_valid >= 10:
                     return _build_ogg_opus_from_frames(
-                        frames, channels=2, sample_rate=48000, pre_skip=312)
+                        frames, channels=channels,
+                        sample_rate=sample_rate, pre_skip=312)
 
                 # If variable-length didn't work, try as fixed slots
                 if frame_size > 0:
@@ -855,14 +956,19 @@ def _scan_opus_frames(data: bytes) -> bytes:
                         if slot < 8 or slot > 0x1000:
                             continue
                         try:
-                            return _extract_opus_fixed_slots(data[start_offset:], slot)
+                            return _extract_opus_fixed_slots(
+                                data[start_offset:], slot,
+                                channels=channels,
+                                sample_rate=sample_rate)
                         except Exception:
                             pass
 
     raise ValueError("No valid Opus frames found via scanning")
 
 
-def _extract_opus_fixed_slots(data: bytes, slot_size: int) -> bytes:
+def _extract_opus_fixed_slots(data: bytes, slot_size: int,
+                              channels: int = 2,
+                              sample_rate: int = 48000) -> bytes:
     """Extract Opus frames from data using fixed-size slots.
 
     Each slot: u32 actual_frame_size + frame_data + padding to slot_size.
@@ -888,10 +994,12 @@ def _extract_opus_fixed_slots(data: bytes, slot_size: int) -> bytes:
     if len(frames) < 10:
         raise ValueError(f"Too few frames ({len(frames)}) with slot size {slot_size}")
 
-    return _build_ogg_opus_from_frames(frames, channels=2, sample_rate=48000, pre_skip=312)
+    return _build_ogg_opus_from_frames(frames, channels=channels,
+                                       sample_rate=sample_rate, pre_skip=312)
 
 
-def _raw_opus_frames_to_ogg(data: bytes) -> bytes:
+def _raw_opus_frames_to_ogg(data: bytes, channels: int = 2,
+                            sample_rate: int = 48000) -> bytes:
     """Convert a sequence of length-prefixed raw Opus frames to OGG Opus.
 
     Each frame: u32 frame_size + frame_data (frame_size bytes).
@@ -947,7 +1055,8 @@ def _raw_opus_frames_to_ogg(data: bytes) -> bytes:
     if not frames:
         raise ValueError("No Opus frames extracted from raw OPUS data")
 
-    return _build_ogg_opus_from_frames(frames, channels=2, sample_rate=48000, pre_skip=312)
+    return _build_ogg_opus_from_frames(frames, channels=channels,
+                                       sample_rate=sample_rate, pre_skip=312)
 
 
 def _raw_opus_to_ogg_fallback(data: bytes) -> bytes:
@@ -1186,7 +1295,36 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         except Exception as e:
             from src.utils.logger import logger
             logger.warn("NUS3AUDIO", f"OPUS container conversion failed: {e}")
-            pass  # Fall through
+            # Fall through to ffmpeg raw fallback
+
+    # --- ffmpeg raw fallback ---
+    # If all custom parsers failed, write the raw audio data to a temp
+    # file and let ffmpeg try to detect the format and decode it.
+    ffmpeg = _find_ffmpeg()
+    if ffmpeg:
+        try:
+            raw_path = cache_dir / f"{cache_key}.raw_opus"
+            raw_path.write_bytes(audio_data)
+            wav_out = cache_dir / f"{cache_key}.wav"
+            result = subprocess.run(
+                [ffmpeg, "-y", "-i", str(raw_path), "-ar", "48000",
+                 "-ac", "2", "-sample_fmt", "s16", str(wav_out)],
+                capture_output=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode == 0 and wav_out.exists() and wav_out.stat().st_size > 1000:
+                try:
+                    raw_path.unlink()
+                except OSError:
+                    pass
+                return True, f"Playing: {display_name}", wav_out
+            # Clean up failed attempt
+            try:
+                raw_path.unlink()
+            except OSError:
+                pass
+        except Exception:
+            pass
 
     # MP3
     if audio_data[:3] == b'ID3' or (len(audio_data) >= 2 and audio_data[0] == 0xFF and (audio_data[1] & 0xE0) == 0xE0):

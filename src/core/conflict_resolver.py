@@ -250,6 +250,11 @@ class ConflictResolver:
         # Value: list of (mod_name, full_path) tuples
         msbt_providers: dict[str, list[tuple[str, Path]]] = {}
 
+        # Also collect all XMSBT files across active mods so we
+        # can merge their entries into the overlay. This prevents
+        # other mods' XMSBTs from overriding entries.
+        xmsbt_providers: dict[str, list[tuple[str, Path]]] = {}
+
         for folder in self.mods_root.iterdir():
             if not folder.is_dir():
                 continue
@@ -261,37 +266,75 @@ class ConflictResolver:
                 if rel not in msbt_providers:
                     msbt_providers[rel] = []
                 msbt_providers[rel].append((mod_name, fpath))
+            for fpath in folder.rglob("*.xmsbt"):
+                rel = str(fpath.relative_to(folder)).replace("\\", "/")
+                if rel not in xmsbt_providers:
+                    xmsbt_providers[rel] = []
+                xmsbt_providers[rel].append((mod_name, fpath))
 
         # Always clean up stale binary MSBT copies from older versions
         self._cleanup_stale_msbt_copies(msbt_providers)
 
-        if not msbt_providers:
+        if not msbt_providers and not xmsbt_providers:
             return 0
 
         generated = 0
 
+        # Build a unified set of message stems (e.g. "ui/message/msg_bgm+us_en")
+        # combining both MSBT and XMSBT sources.
+        all_stems: dict[str, dict] = {}  # stem -> {"msbt": [...], "xmsbt": [...]}
         for rel_path, providers in msbt_providers.items():
-            # Determine the XMSBT output path (same stem, .xmsbt ext)
-            xmsbt_rel = rel_path.rsplit(".", 1)[0] + ".xmsbt"
+            stem = rel_path.rsplit(".", 1)[0]
+            if stem not in all_stems:
+                all_stems[stem] = {"msbt": [], "xmsbt": []}
+            all_stems[stem]["msbt"] = providers
+
+        for rel_path, providers in xmsbt_providers.items():
+            stem = rel_path.rsplit(".", 1)[0]
+            if stem not in all_stems:
+                all_stems[stem] = {"msbt": [], "xmsbt": []}
+            all_stems[stem]["xmsbt"] = providers
+
+        for stem, sources in all_stems.items():
+            msbt_list = sources["msbt"]
+            xmsbt_list = sources["xmsbt"]
+
+            if not msbt_list and not xmsbt_list:
+                continue
+
+            xmsbt_rel = stem + ".xmsbt"
             output_path = self.merged_output_dir / xmsbt_rel
 
             # Determine if this is a BGM-related MSBT
-            fname_lower = Path(rel_path).name.lower()
+            fname_lower = Path(stem).name.lower()
             is_bgm = fname_lower.startswith("msg_bgm") or fname_lower.startswith("msg_title")
 
-            # Extract custom entries from ALL providers and merge
+            # Extract entries from ALL binary MSBT providers and merge
             all_custom_entries: dict[str, str] = {}
-            for mod_name, fpath in providers:
+            for mod_name, fpath in msbt_list:
                 entries = extract_entries_from_msbt(fpath)
                 if not entries:
                     continue
-                # Filter to custom entries only
+                # Filter to custom entries only (inclusive for BGM keeps ALL)
                 custom = filter_custom_entries(entries, inclusive=is_bgm)
                 if custom:
                     logger.debug("ConflictResolver",
                                  f"Extracted {len(custom)} custom entries "
-                                 f"from {mod_name}/{Path(rel_path).name}")
+                                 f"from {mod_name}/{Path(stem).name}.msbt")
                     all_custom_entries.update(custom)
+
+            # Also merge entries from XMSBT files across mods
+            for mod_name, fpath in xmsbt_list:
+                try:
+                    xmsbt_entries = parse_xmsbt(fpath)
+                    if xmsbt_entries:
+                        logger.debug("ConflictResolver",
+                                     f"Merged {len(xmsbt_entries)} entries "
+                                     f"from {mod_name}/{Path(stem).name}.xmsbt")
+                        all_custom_entries.update(xmsbt_entries)
+                except Exception as e:
+                    logger.warn("ConflictResolver",
+                                f"Failed to parse XMSBT {fpath}: {e}")
 
             if not all_custom_entries:
                 continue
@@ -302,27 +345,67 @@ class ConflictResolver:
             if output_path.exists():
                 try:
                     existing = parse_xmsbt(output_path)
-                    # Binary MSBT entries fill in gaps; existing XMSBT
-                    # entries (from explicit conflict resolution) win
                     merged = dict(all_custom_entries)
                     merged.update(existing)
                     all_custom_entries = merged
                 except Exception:
                     pass
 
-            # Write the XMSBT overlay
+            # Write the merged XMSBT overlay into _MergedResources
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 write_xmsbt(output_path, all_custom_entries)
                 generated += 1
-                mod_list = ", ".join(m for m, _ in providers)
+                all_mods = list(set(
+                    [m for m, _ in msbt_list] + [m for m, _ in xmsbt_list]
+                ))
+                mod_list = ", ".join(all_mods)
                 logger.info("ConflictResolver",
                             f"Generated XMSBT overlay: {xmsbt_rel} "
                             f"({len(all_custom_entries)} entries from "
-                            f"{len(providers)} mod(s): {mod_list})")
+                            f"{len(all_mods)} mod(s): {mod_list})")
             except Exception as e:
                 logger.warn("ConflictResolver",
                             f"Failed to write XMSBT overlay {xmsbt_rel}: {e}")
+
+            # Also place a copy of the XMSBT inside each mod that has
+            # a binary MSBT for this message. This guarantees ARCropolis
+            # picks up the overlay regardless of which mod is active or
+            # what load-order it uses. Mods that already ship their own
+            # XMSBT are skipped (their entries are already merged above).
+            mods_with_own_xmsbt = set(m for m, _ in xmsbt_list)
+            for mod_name, fpath in msbt_list:
+                if mod_name in mods_with_own_xmsbt:
+                    continue
+                in_mod_xmsbt = fpath.parent / (fpath.stem + ".xmsbt")
+                if in_mod_xmsbt.exists():
+                    continue
+                try:
+                    write_xmsbt(in_mod_xmsbt, all_custom_entries)
+                    logger.info("ConflictResolver",
+                                f"Placed XMSBT overlay in {mod_name}/"
+                                f"{in_mod_xmsbt.name}")
+                except Exception as e:
+                    logger.warn("ConflictResolver",
+                                f"Failed to write XMSBT to mod folder: {e}")
+
+            # If multiple mods have XMSBT files for the same message,
+            # disable the per-mod XMSBTs (rename to .xmsbt.managed)
+            # so only _MergedResources overlay is active.
+            # This prevents ARCropolis load-order issues.
+            if len(xmsbt_list) > 1:
+                for mod_name, fpath in xmsbt_list:
+                    managed = fpath.parent / (fpath.name + ".managed")
+                    if not managed.exists():
+                        try:
+                            fpath.rename(managed)
+                            logger.info("ConflictResolver",
+                                        f"Disabled conflicting XMSBT: "
+                                        f"{mod_name}/{fpath.name} → "
+                                        f"{managed.name}")
+                        except OSError as e:
+                            logger.warn("ConflictResolver",
+                                        f"Could not disable {fpath.name}: {e}")
 
         if generated > 0:
             self._ensure_merged_config()
@@ -361,17 +444,32 @@ class ConflictResolver:
 
 
     def _ensure_merged_config(self) -> None:
-        """Create a minimal config.json in _MergedResources for ARCropolis.
+        """Create / update config.json in _MergedResources for ARCropolis.
 
-        Without config.json, some ARCropolis versions may not recognise
-        this folder as a mod and skip its XMSBT overlays.
+        ARCropolis needs ``new-dir-infos`` entries so it scans the
+        folder for XMSBT overlays.  We register every directory that
+        contains a generated XMSBT so ARCropolis recognises them as
+        part of the mod and applies the overlays at load time.
         """
-        config_path = self.merged_output_dir / "config.json"
-        if config_path.exists():
-            return
         self.merged_output_dir.mkdir(parents=True, exist_ok=True)
+        config_path = self.merged_output_dir / "config.json"
+
+        # Collect every directory (relative to merged root) that
+        # contains an XMSBT file we generated.
+        dir_infos: list[dict] = []
+        seen_dirs: set[str] = set()
+        for xmsbt_file in self.merged_output_dir.rglob("*.xmsbt"):
+            rel_dir = str(
+                xmsbt_file.parent.relative_to(self.merged_output_dir)
+            ).replace("\\", "/")
+            if rel_dir == ".":
+                continue
+            if rel_dir not in seen_dirs:
+                seen_dirs.add(rel_dir)
+                dir_infos.append({"path": rel_dir})
+
         config = {
-            "new-dir-infos": [],
+            "new-dir-infos": dir_infos,
             "new-dir-infos-base": "",
             "description": "Auto-generated merged resources from SSBU Mod Manager",
         }

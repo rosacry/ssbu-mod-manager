@@ -252,9 +252,40 @@ class MusicManager:
 
         This ensures custom track names (e.g. from Sonic Extended Tracklist)
         are visible in-game even on emulators that require XMSBT overlays.
+
+        To avoid expensive I/O on every ``discover_tracks()`` call, we
+        only regenerate when the set of binary MSBT files has changed
+        since the last generation (tracked via a simple hash).
         """
         try:
             from src.core.conflict_resolver import ConflictResolver
+
+            # Quick fingerprint of all binary MSBT files in mods to see
+            # whether we actually need to regenerate overlays.
+            msbt_fingerprint = set()
+            for mod_folder in sorted(mods_root.iterdir()):
+                if not mod_folder.is_dir():
+                    continue
+                if mod_folder.name.startswith(".") or mod_folder.name.startswith("_"):
+                    continue
+                for fpath in mod_folder.rglob("*.msbt"):
+                    try:
+                        stat = fpath.stat()
+                        msbt_fingerprint.add((str(fpath), stat.st_size, stat.st_mtime_ns))
+                    except OSError:
+                        pass
+                for fpath in mod_folder.rglob("*.xmsbt"):
+                    try:
+                        stat = fpath.stat()
+                        msbt_fingerprint.add((str(fpath), stat.st_size, stat.st_mtime_ns))
+                    except OSError:
+                        pass
+
+            fp = frozenset(msbt_fingerprint)
+            if hasattr(self, '_last_msbt_fingerprint') and self._last_msbt_fingerprint == fp:
+                return  # Nothing changed — skip regeneration
+            self._last_msbt_fingerprint = fp
+
             resolver = ConflictResolver(mods_root)
             count = resolver.generate_msbt_overlays()
             if count > 0:
@@ -491,7 +522,9 @@ class MusicManager:
     def _find_music_source_mod(self, mods_root: Path) -> Optional[Path]:
         """Find a mod folder that contains ui_bgm_db.prc (the BGM database)."""
         for mod_folder in sorted(mods_root.iterdir()):
-            if not mod_folder.is_dir() or mod_folder.name.startswith("."):
+            if not mod_folder.is_dir():
+                continue
+            if mod_folder.name.startswith(".") or mod_folder.name.startswith("_"):
                 continue
             bgm_db = mod_folder / "ui" / "param" / "database" / "ui_bgm_db.prc"
             if bgm_db.exists():
@@ -641,8 +674,11 @@ class MusicManager:
                 ]
 
         config_file = config_mod / "music_config.json"
-        with open(config_file, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2)
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except OSError as e:
+            logger.error("MusicManager", f"Failed to write music config: {e}")
 
         return config_mod
 
