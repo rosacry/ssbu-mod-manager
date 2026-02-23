@@ -442,11 +442,14 @@ class ModsPage(BasePage):
             action_history.execute(action)
 
             logger.info("Mods", f"Toggled: {mod_name} -> {'disabled' if was_enabled else 'enabled'}")
-            # Reload the mod list data but keep the same scroll position
-            # and visual order to avoid jarring re-sorts.
+            # Reload mod list and re-render cards, preserving scroll
+            # position so the view doesn't jump.
+            scroll_pos = self._canvas.yview()[0]
             self.app.mod_manager.invalidate_cache()
             self._all_mods = self.app.mod_manager.list_mods()
             self._loaded = True
+            self._render_mods()
+            self.after(20, lambda: self._canvas.yview_moveto(scroll_pos))
         except Exception as e:
             logger.error("Mods", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle mod: {e}")

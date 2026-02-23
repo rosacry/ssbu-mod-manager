@@ -48,6 +48,8 @@ class AudioPlayer:
         self._playing = False
         self._paused = False
         self._volume = 0.7
+        self._seek_offset = 0.0       # track position (seconds) at last seek/play
+        self._raw_pos_at_anchor = 0.0  # get_pos() value (seconds) at last seek/play
 
     @property
     def available(self) -> bool:
@@ -144,6 +146,8 @@ class AudioPlayer:
             self._current_file = file_path
             self._playing = True
             self._paused = False
+            self._seek_offset = 0.0
+            self._raw_pos_at_anchor = 0.0
             return True, f"Playing: {file_path.name}"
         except Exception as e:
             error_str = str(e)
@@ -174,6 +178,8 @@ class AudioPlayer:
                 self._current_file = wav_path
                 self._playing = True
                 self._paused = False
+                self._seek_offset = 0.0
+                self._raw_pos_at_anchor = 0.0
                 return True, f"Playing: {ogg_path.name}"
         except Exception:
             pass
@@ -191,6 +197,8 @@ class AudioPlayer:
         self._playing = False
         self._paused = False
         self._current_file = None
+        self._seek_offset = 0.0
+        self._raw_pos_at_anchor = 0.0
 
     def pause(self):
         """Pause playback."""
@@ -233,11 +241,14 @@ class AudioPlayer:
         return self._volume
 
     def get_position(self) -> float:
-        """Get current playback position in seconds."""
+        """Get current playback position in seconds (seek-aware)."""
         if not _pygame_initialized or not _pygame_available:
             return 0.0
         try:
-            return pygame.mixer.music.get_pos() / 1000.0
+            raw = pygame.mixer.music.get_pos() / 1000.0
+            if raw < 0:
+                return 0.0
+            return max(0.0, self._seek_offset + (raw - self._raw_pos_at_anchor))
         except Exception:
             return 0.0
 
@@ -264,12 +275,20 @@ class AudioPlayer:
         """Seek to a position in seconds."""
         if not _pygame_initialized or not _pygame_available or not self._playing:
             return
+        self._seek_offset = position
         try:
             pygame.mixer.music.set_pos(position)
+            # Record raw get_pos() right after seek so get_position()
+            # can compute elapsed time relative to this anchor.
+            try:
+                self._raw_pos_at_anchor = pygame.mixer.music.get_pos() / 1000.0
+            except Exception:
+                self._raw_pos_at_anchor = 0.0
         except Exception:
-            # Some formats may not support seeking; restart and skip
+            # Some formats may not support set_pos; restart from offset
             try:
                 pygame.mixer.music.play(start=position)
+                self._raw_pos_at_anchor = 0.0
             except Exception:
                 pass
 
