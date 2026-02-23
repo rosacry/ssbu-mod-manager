@@ -56,6 +56,10 @@ class ModManagerApp(ctk.CTk):
         super().__init__()
         _dbg("super().__init__() OK")
 
+        # Hide the window completely during initialization to prevent
+        # the ugly flash of a partially-built window.
+        self.withdraw()
+
         self.title("SSBU Mod Manager")
 
         # Apply geometry immediately so the window starts at the correct
@@ -227,8 +231,10 @@ class ModManagerApp(ctk.CTk):
         _dbg("binding scroll...")
         # Global fast-scroll: intercept ALL MouseWheel events application-wide
         # and scroll the nearest scrollable ancestor 5× faster.
-        # Use add="+" to coexist with CTkScrollableFrame's own handlers.
-        self.bind_all("<MouseWheel>", self._global_fast_scroll, add="+")
+        # Do NOT use add="+" — we must be the sole bind_all handler so that
+        # CTkScrollableFrame's Enter/Leave re-bind_all calls cannot silently
+        # replace us with a no-op.
+        self.bind_all("<MouseWheel>", self._global_fast_scroll)
 
         # Prevent CTkScrollableFrame from overriding our global scroll
         # handler.  CTkScrollableFrame's <Enter>/<Leave> handlers call
@@ -239,6 +245,12 @@ class ModManagerApp(ctk.CTk):
             self._neutralize_ctk_scroll_management()
         except Exception as e:
             logger.warn("App", f"Failed to neutralize CTk scroll management: {e}")
+
+        # All UI is built and scaled — show the window now.
+        # update_idletasks() forces Tk to process pending geometry
+        # changes so the user never sees a half-built frame.
+        self.update_idletasks()
+        self.deiconify()
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
@@ -367,21 +379,27 @@ class ModManagerApp(ctk.CTk):
 
         CTkScrollableFrame binds <Enter>/<Leave> on its canvas to call
         bind_all/unbind_all for <MouseWheel>, which replaces any existing
-        global handler (including ours).  We monkey-patch the class method
-        ``_mouse_wheel_all`` to be a no-op so only our global handler runs.
+        global handler (including ours).  We monkey-patch ALL relevant
+        class methods to be no-ops so only our global handler runs.
         Also unbind any existing <Enter>/<Leave> scroll bindings on all
         existing CTkScrollableFrame instances.
         """
-        import types
 
-        # Patch the class so new instances don't interfere
-        def _noop_mouse_wheel(self_csf, event):
-            pass  # Our global handler handles all scrolling
+        # Patch the class so new instances don't interfere.
+        # _mouse_wheel_all: the handler CTk registers via bind_all
+        # _mouse_wheel_bind: called on <Enter>, calls bind_all which
+        #     REPLACES our global handler with the (no-op) _mouse_wheel_all
+        # _mouse_wheel_unbind: called on <Leave>, calls unbind_all which
+        #     REMOVES our global handler entirely
+        def _noop(self_csf, *args, **kwargs):
+            pass
 
-        ctk.CTkScrollableFrame._mouse_wheel_all = _noop_mouse_wheel
+        ctk.CTkScrollableFrame._mouse_wheel_all = _noop
+        ctk.CTkScrollableFrame._mouse_wheel_bind = _noop
+        ctk.CTkScrollableFrame._mouse_wheel_unbind = _noop
 
         # Also neutralize existing instances by unbinding their canvas
-        # Enter/Leave handlers that call bind_all/unbind_all
+        # Enter/Leave handlers that were set before our class-level patch
         def _neutralize_existing(widget):
             if isinstance(widget, ctk.CTkScrollableFrame):
                 try:
@@ -400,6 +418,13 @@ class ModManagerApp(ctk.CTk):
 
         try:
             _neutralize_existing(self)
+        except Exception:
+            pass
+
+        # Re-register our global handler in case a previous Enter/Leave
+        # event already clobbered it.
+        try:
+            self.bind_all("<MouseWheel>", self._global_fast_scroll)
         except Exception:
             pass
 
@@ -609,6 +634,7 @@ class ModManagerApp(ctk.CTk):
         settings = self.config_manager.settings
         self.mod_manager = ModManager(
             settings.mods_path or Path("."),
+            settings.mod_disable_method,
         )
         self.plugin_manager = PluginManager(settings.plugins_path or Path("."))
         self.conflict_resolver = ConflictResolver(settings.mods_path or Path("."))

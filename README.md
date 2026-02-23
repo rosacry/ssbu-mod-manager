@@ -272,3 +272,16 @@ ssbu-mod-manager/
 ## License
 
 MIT
+
+## Changelog
+
+### v3.0.0
+- **Fix: Dashboard text conflict detection** — Dashboard now properly detects locale MSBT files (e.g. `msg_bgm+us_en.msbt`) from mods like Sonic Extended Tracklist. Previously only the Conflicts page detected these; the dashboard would report "0 Text Conflicts" even when locale MSBTs existed. The "Fix Text Conflicts" quick action now handles both XMSBT merge conflicts and locale MSBT renames in one click
+- **Fix: NUS3AUDIO playback distortion** — Rewrote LOPUS frame extraction with auto-detection of slot sizes instead of relying on header fields that differ between LOPUS versions (v1-v4). Tries multiple slot size candidates (LE/BE/CBR) and picks the one producing the most valid Opus frames. Added WAV quality validation for ffmpeg direct decode to reject distorted output and fall through to manual extraction
+- **Fix: Double window flash on startup** — App window is now hidden (`withdraw`) during initialization and only shown (`deiconify`) after all UI is built and scaled, preventing the ugly flash of a half-built window
+- **Fix: Scroll speed on Online Guide and Migration** — Patched all three CTkScrollableFrame class methods (`_mouse_wheel_all`, `_mouse_wheel_bind`, `_mouse_wheel_unbind`) to prevent customtkinter from clobbering the global fast-scroll handler. Previously, Enter/Leave events on scrollable frames would silently replace or remove the 5x scroll handler via `bind_all`/`unbind_all`
+- **Fix: Online Guide focus** — Pages now receive focus automatically after sidebar navigation, eliminating the need to click the page content before interacting
+- **Fix: Developer page duplicate log entries** — Log listener is now managed in `on_show()`/`on_hide()` instead of `__init__()`/`destroy()`, preventing race conditions between `after(0)` callbacks and bulk log loading
+- **Fix: Sidebar same-page reload** — Clicking the already-active sidebar button no longer triggers an unnecessary `on_hide()`/`on_show()` cycle
+- **Fix: Audio cleanup reset** — `cleanup()` now resets pygame initialization flags so the mixer can be re-initialized if needed
+- **Fix: Settings not preserved after manager update** — `_update_managers()` now passes `mod_disable_method` when recreating `ModManager`, preventing silent revert to defaults after a settings change

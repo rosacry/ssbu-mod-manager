@@ -129,6 +129,8 @@ class Sidebar(ctk.CTkFrame):
         self.buttons[page_id] = btn
 
     def _on_click(self, page_id):
+        if page_id == self.active_page:
+            return  # Already on this page
         self.on_navigate(page_id)
 
     def set_active(self, page_id):

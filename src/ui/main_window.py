@@ -241,6 +241,9 @@ class MainWindow(ctk.CTkFrame):
         page = self.pages[page_id]
         page.lift()
         page.on_show()
+        # Set focus on the page so the user doesn't have to click it
+        # after selecting a sidebar item.
+        page.focus_set()
         # Re-patch scroll speeds after page content may have changed
         if hasattr(page, '_patch_all_scroll_speeds'):
             page.after(150, page._patch_all_scroll_speeds)

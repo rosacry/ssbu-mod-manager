@@ -294,12 +294,15 @@ class AudioPlayer:
 
     def cleanup(self):
         """Clean up audio resources."""
+        global _pygame_initialized, _pygame_available
         self.stop()
         if _pygame_initialized and _pygame_available:
             try:
                 pygame.mixer.quit()
             except Exception:
                 pass
+        _pygame_initialized = False
+        _pygame_available = False
         # Clean up cached files
         try:
             from src.utils.nus3audio import cleanup_cache

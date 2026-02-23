@@ -8,12 +8,14 @@ from src.utils.logger import logger
 class DeveloperPage(BasePage):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
+        self._listener_active = False
         self._build_ui()
-        logger.add_listener(self._on_log)
 
     def destroy(self):
         """Clean up listener before destruction to avoid TclError."""
-        logger.remove_listener(self._on_log)
+        if self._listener_active:
+            logger.remove_listener(self._on_log)
+            self._listener_active = False
         super().destroy()
 
     def _build_ui(self):
@@ -123,6 +125,17 @@ class DeveloperPage(BasePage):
         self.debug_var.set(logger.enabled)
         self._update_toggle_status()
         self._load_existing_logs()
+        # Start listening AFTER bulk-loading existing logs to avoid
+        # duplicates from after(0) callbacks racing with _load_existing_logs.
+        if not self._listener_active:
+            logger.add_listener(self._on_log)
+            self._listener_active = True
+
+    def on_hide(self):
+        """Stop listening when the page is hidden to avoid wasted work."""
+        if self._listener_active:
+            logger.remove_listener(self._on_log)
+            self._listener_active = False
 
     def _toggle_debug(self):
         enabled = self.debug_var.get()

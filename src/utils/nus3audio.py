@@ -85,6 +85,50 @@ def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
 _OGG_CRC_TABLE: Optional[list[int]] = None
 
 
+def _validate_wav_quality(wav_path: Path) -> bool:
+    """Basic quality check for a WAV file produced by ffmpeg.
+
+    Reads a sample of PCM data and checks that:
+    1. Not all silence (zeros)
+    2. Not pure noise (nearly all samples at extreme values)
+    3. Has reasonable amplitude distribution
+
+    Returns True if the WAV looks like valid audio.
+    """
+    try:
+        with open(wav_path, 'rb') as f:
+            header = f.read(44)
+            if len(header) < 44 or header[:4] != b'RIFF':
+                return False
+            # Read ~0.5s of 16-bit stereo 48kHz data = 96000 bytes
+            pcm = f.read(96000)
+        if len(pcm) < 4000:
+            return False
+
+        # Parse as 16-bit signed samples
+        import array
+        samples = array.array('h')
+        # Truncate to even length
+        samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
+        if len(samples) < 100:
+            return False
+
+        # Check 1: not all zeros
+        non_zero = sum(1 for s in samples[:2000] if s != 0)
+        if non_zero < 10:
+            return False  # Silence
+
+        # Check 2: not nearly all clipping (would indicate noise/garbage)
+        clipping = sum(1 for s in samples[:2000]
+                       if abs(s) > 32000)
+        if clipping > len(samples[:2000]) * 0.8:
+            return False  # Extreme values — likely noise
+
+        return True
+    except Exception:
+        return False
+
+
 def _build_crc_table():
     global _OGG_CRC_TABLE
     _OGG_CRC_TABLE = []
@@ -167,6 +211,85 @@ def _make_opus_tags() -> bytes:
     return struct.pack('<8sI', b'OpusTags', len(vendor)) + vendor + struct.pack('<I', 0)
 
 
+def _extract_frames_with_slot(data: bytes, start: int, slot_size: int,
+                              endian: str = '<') -> list[bytes]:
+    """Extract Opus frames from *data* using fixed-size slots.
+
+    Each slot is *slot_size* bytes.  The first 4 bytes of each slot hold
+    the actual Opus frame length (in *endian* byte order), followed by the
+    frame data and zero-padding.
+
+    Args:
+        data: Raw LOPUS data (with header).
+        start: Byte offset where frame slots begin (typically header_size).
+        slot_size: Total bytes per slot (including the 4-byte size prefix).
+        endian: '<' for little-endian, '>' for big-endian frame sizes.
+
+    Returns:
+        List of raw Opus frame bytes (may be empty).
+    """
+    fmt = f'{endian}I'
+    frames: list[bytes] = []
+    pos = start
+    while pos + 4 <= len(data):
+        actual_size = struct.unpack_from(fmt, data, pos)[0]
+        if actual_size == 0 or actual_size >= slot_size:
+            break
+        if pos + 4 + actual_size > len(data):
+            break
+        frames.append(data[pos + 4:pos + 4 + actual_size])
+        pos += slot_size
+    return frames
+
+
+def _auto_detect_slot_frames(data: bytes, start: int) -> Optional[list[bytes]]:
+    """Auto-detect slot size by scanning the data for valid Opus frame patterns.
+
+    Reads the first frame size at *start*, then scans ahead to find where
+    the next valid frame size occurs.  The distance between them is the
+    slot size.
+
+    Returns:
+        List of validated Opus frames, or None if detection fails.
+    """
+    if start + 8 > len(data):
+        return None
+
+    # Try both endiannesses for the first frame size
+    for endian in ('<', '>'):
+        fmt = f'{endian}I'
+        first_size = struct.unpack_from(fmt, data, start)[0]
+        if first_size == 0 or first_size > 0x2000 or start + 4 + first_size > len(data):
+            continue
+
+        # The first frame data starts at start+4.  Check its TOC byte.
+        first_toc = data[start + 4]
+        first_cfg = (first_toc >> 3) & 0x1F
+
+        # Scan from start + first_size + 4 onwards to find the next
+        # frame size prefix that points to data with the same TOC config.
+        for probe in range(start + first_size + 4, min(start + 0x2000, len(data) - 8)):
+            next_size = struct.unpack_from(fmt, data, probe)[0]
+            if next_size == 0 or next_size > 0x2000 or probe + 4 + next_size > len(data):
+                continue
+            next_toc = data[probe + 4]
+            next_cfg = (next_toc >> 3) & 0x1F
+            if next_cfg != first_cfg:
+                continue
+
+            # Potential slot size
+            slot_size = probe - start
+            if slot_size < 8 or slot_size > 0x2000:
+                continue
+
+            # Validate: extract frames with this slot size and check
+            frames = _extract_frames_with_slot(data, start, slot_size, endian)
+            if len(frames) >= 10 and _validate_opus_frames(frames):
+                return frames
+
+    return None
+
+
 def _lopus_to_ogg(lopus_data: bytes) -> bytes:
     """Convert Nintendo LOPUS data to standard OGG Opus."""
     if len(lopus_data) < 30:
@@ -174,96 +297,141 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
 
     magic = struct.unpack_from('<I', lopus_data, 0)[0]
 
-    # Parse header based on version
-    if magic == 0x80000004:
-        header_size = struct.unpack_from('<I', lopus_data, 4)[0]
-        sample_rate = struct.unpack_from('<I', lopus_data, 0x0C)[0]
-        channel_count = struct.unpack_from('<I', lopus_data, 0x10)[0]
-        frame_size = struct.unpack_from('<I', lopus_data, 0x14)[0]
-        total_samples = struct.unpack_from('<I', lopus_data, 0x18)[0]
-        pre_skip = struct.unpack_from('<H', lopus_data, 0x1C)[0]
-    elif magic == 0x80000003:
-        header_size = struct.unpack_from('<I', lopus_data, 4)[0]
-        sample_rate = struct.unpack_from('<I', lopus_data, 0x0C)[0]
-        channel_count = struct.unpack_from('<I', lopus_data, 0x10)[0]
-        frame_size = struct.unpack_from('<I', lopus_data, 0x14)[0]
-        total_samples = struct.unpack_from('<I', lopus_data, 0x18)[0]
-        pre_skip = struct.unpack_from('<H', lopus_data, 0x1C)[0]
-    elif magic == 0x80000002:
-        header_size = struct.unpack_from('<I', lopus_data, 4)[0]
-        channel_count = lopus_data[0x09] if len(lopus_data) > 0x09 else 2
-        frame_size = struct.unpack_from('<H', lopus_data, 0x0A)[0] if len(lopus_data) > 0x0B else 640
-        sample_rate = struct.unpack_from('<I', lopus_data, 0x0C)[0]
-        total_samples = struct.unpack_from('<I', lopus_data, 0x10)[0]
-        pre_skip = struct.unpack_from('<H', lopus_data, 0x1A)[0] if len(lopus_data) > 0x1B else 312
-    elif magic == 0x80000001:
-        header_size = struct.unpack_from('<I', lopus_data, 4)[0]
-        channel_count = lopus_data[0x09] if len(lopus_data) > 0x09 else 2
-        frame_size = struct.unpack_from('<H', lopus_data, 0x0A)[0] if len(lopus_data) > 0x0B else 640
-        sample_rate = struct.unpack_from('<I', lopus_data, 0x0C)[0]
-        total_samples = struct.unpack_from('<I', lopus_data, 0x10)[0]
-        pre_skip = struct.unpack_from('<H', lopus_data, 0x1A)[0] if len(lopus_data) > 0x1B else 312
+    # --- Parse header ---
+    # header_size is always at offset 0x04 for all versions.
+    header_size = struct.unpack_from('<I', lopus_data, 4)[0] if len(lopus_data) >= 8 else 0x28
+    # sample_rate is always at 0x0C for all known versions.
+    sample_rate = struct.unpack_from('<I', lopus_data, 0x0C)[0] if len(lopus_data) > 0x0F else 48000
+
+    # channel_count and frame_size (slot size) differ between versions.
+    # Collect candidates for each field and try them all.
+    channel_candidates: list[int] = []
+    frame_size_candidates: list[int] = []
+    pre_skip = 312
+
+    if magic in (0x80000004, 0x80000003):
+        # v3/v4: well-documented layout
+        channel_candidates.append(struct.unpack_from('<I', lopus_data, 0x10)[0])
+        frame_size_candidates.append(struct.unpack_from('<I', lopus_data, 0x14)[0])
+        if len(lopus_data) > 0x1D:
+            pre_skip = struct.unpack_from('<H', lopus_data, 0x1C)[0]
+    elif magic in (0x80000002, 0x80000001):
+        # v1/v2: header layout varies between tools.
+        # Strategy: try BOTH known layouts and pick the one that works.
+        # Layout A (some references): channel_count=u8@0x09, frame_size=u16@0x0A
+        if len(lopus_data) > 0x0B:
+            ch_a = lopus_data[0x09]
+            fs_a = struct.unpack_from('<H', lopus_data, 0x0A)[0]
+            if ch_a > 0:
+                channel_candidates.append(ch_a)
+            if fs_a > 0:
+                frame_size_candidates.append(fs_a)
+        # Layout B (same as v3/v4): channel_count=u32@0x10, frame_size=u32@0x14
+        if len(lopus_data) > 0x17:
+            ch_b = struct.unpack_from('<I', lopus_data, 0x10)[0]
+            fs_b = struct.unpack_from('<I', lopus_data, 0x14)[0]
+            if 1 <= ch_b <= 8:
+                channel_candidates.append(ch_b)
+            if 8 <= fs_b <= 0x2000:
+                frame_size_candidates.append(fs_b)
+        # pre_skip: try multiple offsets
+        for ps_off in (0x1C, 0x1A, 0x14):
+            if len(lopus_data) > ps_off + 1:
+                ps = struct.unpack_from('<H', lopus_data, ps_off)[0]
+                if 0 < ps < 10000:
+                    pre_skip = ps
+                    break
     else:
-        # Unknown version — try a generic parse
-        header_size = struct.unpack_from('<I', lopus_data, 4)[0] if len(lopus_data) >= 8 else 0x28
-        sample_rate = 48000
-        channel_count = 2
-        frame_size = 640
-        total_samples = 0
-        pre_skip = 312
+        # Unknown version — try v3/v4 layout first
+        if len(lopus_data) > 0x17:
+            ch = struct.unpack_from('<I', lopus_data, 0x10)[0]
+            fs = struct.unpack_from('<I', lopus_data, 0x14)[0]
+            if 1 <= ch <= 8:
+                channel_candidates.append(ch)
+            if 8 <= fs <= 0x2000:
+                frame_size_candidates.append(fs)
+
+    # Add common defaults as fallbacks
+    if not channel_candidates:
+        channel_candidates = [2]
+    if not frame_size_candidates:
+        frame_size_candidates = [640]
+
+    # Add common frame sizes as extra fallbacks
+    for fs in [640, 1280, 512, 1024, 0x500, 0x300, 0x800]:
+        if fs not in frame_size_candidates:
+            frame_size_candidates.append(fs)
+
+    # De-duplicate channel candidates and ensure valid values
+    channel_candidates = [c for c in dict.fromkeys(channel_candidates) if 1 <= c <= 8]
+    if not channel_candidates:
+        channel_candidates = [2]
+    # De-duplicate frame sizes, ensure valid range
+    frame_size_candidates = [
+        f for f in dict.fromkeys(frame_size_candidates) if 8 <= f <= 0x2000
+    ]
 
     # Sanitize
-    if channel_count == 0 or channel_count > 8:
-        channel_count = 2
-    if sample_rate == 0:
+    if sample_rate == 0 or sample_rate > 200000:
         sample_rate = 48000
-    if frame_size == 0:
-        frame_size = 640
     if pre_skip == 0:
         pre_skip = 312
     if header_size == 0 or header_size > len(lopus_data):
         header_size = 0x28
 
-    # Extract Opus frames from data section (try LE first, then BE)
-    opus_frames = []
-    pos = header_size
-    while pos + 4 <= len(lopus_data):
-        actual_size = struct.unpack_from('<I', lopus_data, pos)[0]
-        if actual_size == 0 or actual_size > frame_size:
-            break
-        if pos + 4 + actual_size > len(lopus_data):
-            break
+    # --- Extract Opus frames ---
+    # Try each frame_size candidate. For each, try LE sizes, BE sizes,
+    # and CBR.  Pick the combination that yields the most validated frames.
+    best_frames: list[bytes] = []
+    best_channel_count = channel_candidates[0]
 
-        frame_data = lopus_data[pos + 4:pos + 4 + actual_size]
-        opus_frames.append(frame_data)
-        pos += frame_size  # advance by fixed frame slot size
+    for frame_size in frame_size_candidates:
+        # Also try frame_size + 4 in case the header value excludes the
+        # 4-byte size prefix from the slot size.
+        for slot_size in [frame_size, frame_size + 4]:
+            if slot_size < 8 or slot_size > 0x2000:
+                continue
 
-    # If LE extraction yielded too few frames or frames look invalid,
-    # try BE frame sizes instead.
-    if len(opus_frames) < 10 or not _validate_opus_frames(opus_frames):
-        be_frames = []
-        pos = header_size
-        while pos + 4 <= len(lopus_data):
-            actual_size = struct.unpack_from('>I', lopus_data, pos)[0]
-            if actual_size == 0 or actual_size > frame_size:
-                break
-            if pos + 4 + actual_size > len(lopus_data):
-                break
-            be_frames.append(lopus_data[pos + 4:pos + 4 + actual_size])
-            pos += frame_size
-        if len(be_frames) > len(opus_frames) and _validate_opus_frames(be_frames):
-            opus_frames = be_frames
+            # LE size-prefixed frames
+            frames = _extract_frames_with_slot(
+                lopus_data, header_size, slot_size, '<')
+            if len(frames) >= 10 and _validate_opus_frames(frames):
+                if len(frames) > len(best_frames):
+                    best_frames = frames
+                    break  # Slot size confirmed, no need to try +4
 
-    # If size-prefixed extraction failed, try CBR (fixed-size) frames
-    # where each slot is an entire Opus packet with no size prefix.
-    if len(opus_frames) < 10 or not _validate_opus_frames(opus_frames):
-        cbr_frames = _extract_opus_cbr_frames(
-            lopus_data, frame_size, search_start=header_size)
-        if len(cbr_frames) >= 10 and _validate_opus_frames(cbr_frames):
-            opus_frames = cbr_frames
+            # BE size-prefixed frames
+            frames = _extract_frames_with_slot(
+                lopus_data, header_size, slot_size, '>')
+            if len(frames) >= 10 and _validate_opus_frames(frames):
+                if len(frames) > len(best_frames):
+                    best_frames = frames
+                    break
 
-    if not opus_frames:
+        if len(best_frames) >= 10:
+            break  # Good enough, stop trying other frame sizes
+
+    # If size-prefixed extraction failed with all candidates,
+    # try CBR (fixed-size) frames with each candidate.
+    if len(best_frames) < 10 or not _validate_opus_frames(best_frames):
+        for frame_size in frame_size_candidates:
+            cbr_frames = _extract_opus_cbr_frames(
+                lopus_data, frame_size, search_start=header_size)
+            if len(cbr_frames) >= 10 and _validate_opus_frames(cbr_frames):
+                if len(cbr_frames) > len(best_frames):
+                    best_frames = cbr_frames
+                    break
+
+    # Last resort: auto-detect slot size by scanning the data
+    if len(best_frames) < 10 or not _validate_opus_frames(best_frames):
+        detected = _auto_detect_slot_frames(lopus_data, header_size)
+        if detected and len(detected) > len(best_frames):
+            best_frames = detected
+
+    if not best_frames:
         raise ValueError("No Opus frames extracted from LOPUS data")
+
+    channel_count = best_channel_count
 
     # Build OGG Opus file
     serial = 0x53534255  # "SSBU"
@@ -282,19 +450,19 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
     # Data pages — pack multiple frames per page
     # Determine samples_per_frame from first frame's TOC byte
     samples_per_frame = 960  # default 20 ms at 48 kHz
-    if opus_frames and len(opus_frames[0]) >= 1:
-        samples_per_frame = _opus_toc_samples(opus_frames[0][0])
+    if best_frames and len(best_frames[0]) >= 1:
+        samples_per_frame = _opus_toc_samples(best_frames[0][0])
     granule = pre_skip
     page_seq = 2
     i = 0
 
-    while i < len(opus_frames):
+    while i < len(best_frames):
         page_data_parts = []
         page_segments = []
         segs_used = 0
 
-        while i < len(opus_frames) and segs_used < 240:
-            frame = opus_frames[i]
+        while i < len(best_frames) and segs_used < 240:
+            frame = best_frames[i]
             frame_segs = _segment_table_for_packet(len(frame))
             if segs_used + len(frame_segs) > 255:
                 break
@@ -304,7 +472,7 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
             granule += samples_per_frame
             i += 1
 
-        flags = 0x04 if i >= len(opus_frames) else 0x00  # EOS on last
+        flags = 0x04 if i >= len(best_frames) else 0x00  # EOS on last
         page_data = b''.join(page_data_parts)
         pages.append(_make_ogg_page(page_data, serial, page_seq, granule, flags, page_segments))
         page_seq += 1
@@ -1340,9 +1508,11 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
         return False, "Not a valid NUS3AUDIO file", None
 
     # ── Priority 1: let ffmpeg decode the whole NUS3AUDIO file ──
-    # Modern ffmpeg (5.0+) has native NUS3AUDIO support and produces
-    # clean PCM output, bypassing our manual LOPUS→OGG construction
-    # which can introduce distortion.
+    # Modern ffmpeg (5.0+) may have native NUS3AUDIO demuxer support,
+    # producing clean PCM output.  However, many ffmpeg builds do NOT
+    # demux NUS3AUDIO correctly (they may produce silence, noise, or
+    # distorted audio that still passes a basic size check).  We
+    # validate the WAV output before trusting it.
     ffmpeg = _find_ffmpeg()
     if ffmpeg:
         try:
@@ -1356,14 +1526,15 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
             )
             if result.returncode == 0 and wav_out.exists():
                 sz = wav_out.stat().st_size
-                # Validate: WAV header (44 bytes) + at least 0.1s of audio
-                # at 48kHz stereo 16-bit  = 44 + 19200 ≈ 19244 bytes
-                if sz > 19000:
+                # Validate: WAV header (44 bytes) + at least 0.5s of audio
+                # at 48kHz stereo 16-bit = 44 + 96000 ≈ 96044 bytes.
+                # Also check PCM content for basic audio quality.
+                if sz > 96000 and _validate_wav_quality(wav_out):
                     from src.utils.logger import logger
                     logger.info("NUS3AUDIO",
                                 f"ffmpeg decoded NUS3AUDIO directly ({sz} bytes)")
                     return True, f"Playing: {nus3audio_path.name}", wav_out
-                # Tiny output — ffmpeg couldn't properly decode; clean up
+                # Bad output — ffmpeg couldn't properly decode; clean up
                 try:
                     wav_out.unlink()
                 except OSError:

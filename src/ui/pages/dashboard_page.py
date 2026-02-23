@@ -14,6 +14,7 @@ class DashboardPage(BasePage):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
         self._conflict_cache = None
+        self._locale_msbt_cache = None
         self._loading = False
         self._spinner_active = False
         self._spinner_index = 0
@@ -230,9 +231,10 @@ class DashboardPage(BasePage):
                 self.stat_cards["plugins"].configure(text=str(active))
                 logger.debug("Dashboard", f"Plugins: {active} active")
 
-            # Use cached conflict count
+            # Use cached conflict count (including locale MSBTs)
             if self._conflict_cache is not None:
-                self.stat_cards["conflicts"].configure(text=str(self._conflict_cache))
+                total = self._conflict_cache + (self._locale_msbt_cache or 0)
+                self.stat_cards["conflicts"].configure(text=str(total))
         except Exception as e:
             logger.error("Dashboard", f"Stats refresh error: {e}")
 
@@ -251,6 +253,7 @@ class DashboardPage(BasePage):
             try:
                 settings = self.app.config_manager.settings
                 count = 0
+                locale_count = 0
                 if settings.mods_path and settings.mods_path.exists():
                     # Check for already-merged files
                     merged_dir = settings.mods_path / "_MergedResources"
@@ -263,11 +266,15 @@ class DashboardPage(BasePage):
                     conflicts = self.app.conflict_detector.detect_conflicts(settings.mods_path)
                     count = sum(1 for c in conflicts
                                if c.is_mergeable and c.relative_path not in merged_files)
-                    logger.info("Dashboard", f"Conflict scan: {count} unresolved conflicts found")
+
+                    # Also detect locale-specific MSBT files
+                    locale_msbts = self.app.conflict_resolver.detect_locale_msbts()
+                    locale_count = len(locale_msbts)
+                    logger.info("Dashboard", f"Conflict scan: {count} unresolved conflicts, {locale_count} locale MSBT(s) found")
 
                 if not self.app.shutting_down:
                     try:
-                        self.after(0, lambda: self._on_scan_done(count))
+                        self.after(0, lambda: self._on_scan_done(count, locale_count))
                     except Exception:
                         self._loading = False
                 else:
@@ -276,7 +283,7 @@ class DashboardPage(BasePage):
                 logger.error("Dashboard", f"Scan failed: {e}")
                 if not self.app.shutting_down:
                     try:
-                        self.after(0, lambda: self._on_scan_done(0))
+                        self.after(0, lambda: self._on_scan_done(0, 0))
                     except Exception:
                         self._loading = False
                 else:
@@ -284,17 +291,24 @@ class DashboardPage(BasePage):
 
         threading.Thread(target=scan, daemon=True).start()
 
-    def _on_scan_done(self, conflict_count):
+    def _on_scan_done(self, conflict_count, locale_count=0):
         self._loading = False
         self._conflict_cache = conflict_count
+        self._locale_msbt_cache = locale_count
         self._stop_spinner()
-        self.stat_cards["conflicts"].configure(text=str(conflict_count))
+        total_issues = conflict_count + locale_count
+        self.stat_cards["conflicts"].configure(text=str(total_issues))
 
-        if conflict_count > 0:
+        if total_issues > 0:
             self.info_frame.configure(fg_color="#2a1820")
+            parts = []
+            if conflict_count > 0:
+                parts.append(f"{conflict_count} text file conflict(s)")
+            if locale_count > 0:
+                parts.append(f"{locale_count} locale-specific MSBT file(s) to fix")
+            issue_text = " and ".join(parts)
             self.xmsbt_info.configure(
-                text=f"\u26a0  Found {conflict_count} text file conflict(s). These can cause missing "
-                     f"text in-game. Click 'Fix Text Conflicts' to auto-resolve.",
+                text=f"\u26a0  Found {issue_text}. Click 'Fix Text Conflicts' to auto-resolve.",
                 text_color="#e94560")
         else:
             self.info_frame.configure(fg_color="#142820")
@@ -331,10 +345,13 @@ class DashboardPage(BasePage):
                 mergeable = [c for c in conflicts
                             if c.is_mergeable and c.relative_path not in merged_files]
 
-                logger.info("Dashboard", f"Found {len(mergeable)} mergeable conflicts")
+                # Also detect locale-specific MSBT files
+                locale_msbts = self.app.conflict_resolver.detect_locale_msbts()
+
+                logger.info("Dashboard", f"Found {len(mergeable)} mergeable conflicts, {len(locale_msbts)} locale MSBTs")
                 if not self.app.shutting_down:
                     try:
-                        self.after(0, lambda: self._show_fix_dialog(mergeable))
+                        self.after(0, lambda: self._show_fix_dialog(mergeable, locale_msbts))
                     except Exception:
                         self._loading = False
             except Exception as e:
@@ -349,30 +366,53 @@ class DashboardPage(BasePage):
 
         threading.Thread(target=do_fix, daemon=True).start()
 
-    def _show_fix_dialog(self, mergeable):
+    def _show_fix_dialog(self, mergeable, locale_msbts=None):
         self._stop_spinner()
         self._loading = False
 
-        if not mergeable:
+        locale_msbts = locale_msbts or []
+
+        if not mergeable and not locale_msbts:
             messagebox.showinfo("No Conflicts",
                 "No unresolved XMSBT text conflicts found.")
             self._conflict_cache = 0
+            self._locale_msbt_cache = 0
             self.stat_cards["conflicts"].configure(text="0")
             self.info_frame.configure(fg_color="#1e2e20")
             self.xmsbt_info.configure(text="No text file conflicts detected.", text_color="#2fa572")
             return
 
-        files_list = "\n".join(
-            f"  \u2022 {c.relative_path}\n     Mods: {', '.join(c.mods_involved)}"
-            for c in mergeable[:10])
-        if len(mergeable) > 10:
-            files_list += f"\n  ... and {len(mergeable) - 10} more"
+        # Build description of what will be fixed
+        desc_parts = []
+        if mergeable:
+            files_list = "\n".join(
+                f"  \u2022 {c.relative_path}\n     Mods: {', '.join(c.mods_involved)}"
+                for c in mergeable[:10])
+            if len(mergeable) > 10:
+                files_list += f"\n  ... and {len(mergeable) - 10} more"
+            desc_parts.append(f"{len(mergeable)} XMSBT text conflict(s):\n\n{files_list}")
+
+        if locale_msbts:
+            locale_list = "\n".join(
+                f"  \u2022 {fn} in {mod}" for mod, fn, _ in locale_msbts[:5])
+            if len(locale_msbts) > 5:
+                locale_list += f"\n  ... and {len(locale_msbts) - 5} more"
+            desc_parts.append(
+                f"{len(locale_msbts)} locale-specific MSBT file(s) to rename:\n\n{locale_list}")
+
+        full_desc = "\n\n".join(desc_parts)
+
+        actions = []
+        if mergeable:
+            actions.append("merge conflicting text files into _MergedResources")
+        if locale_msbts:
+            actions.append("rename locale-specific MSBT files to locale-independent names")
+        action_text = " and ".join(actions)
 
         confirm = messagebox.askyesno(
             "Fix Text Conflicts",
-            f"Found {len(mergeable)} XMSBT text conflict(s):\n\n"
-            f"{files_list}\n\n"
-            "This will merge conflicting text files into _MergedResources.\n\nContinue?")
+            f"Found {full_desc}\n\n"
+            f"This will {action_text}.\n\nContinue?")
         if not confirm:
             return
 
@@ -384,10 +424,19 @@ class DashboardPage(BasePage):
 
         def do_resolve():
             try:
-                resolver.resolve_all_auto(mergeable, create_backup=settings.backup_before_merge)
-                actually_resolved = sum(1 for c in mergeable if c.resolved)
-                failed = len(mergeable) - actually_resolved
-                logger.info("Dashboard", f"Resolved {actually_resolved}/{len(mergeable)} conflicts")
+                actually_resolved = 0
+                failed = 0
+                locale_renamed = 0
+
+                if mergeable:
+                    resolver.resolve_all_auto(mergeable, create_backup=settings.backup_before_merge)
+                    actually_resolved = sum(1 for c in mergeable if c.resolved)
+                    failed = len(mergeable) - actually_resolved
+                    logger.info("Dashboard", f"Resolved {actually_resolved}/{len(mergeable)} conflicts")
+
+                if locale_msbts:
+                    locale_renamed = resolver.rename_locale_msbt_files()
+                    logger.info("Dashboard", f"Renamed {locale_renamed} locale MSBT file(s)")
 
                 msbt_overlays = resolver.generate_msbt_overlays()
                 if msbt_overlays > 0:
@@ -397,7 +446,8 @@ class DashboardPage(BasePage):
                 if not self.app.shutting_down:
                     try:
                         self.after(0, lambda: self._on_resolve_done(
-                            actually_resolved, failed, msbt_overlays, len(mergeable)))
+                            actually_resolved, failed, msbt_overlays, len(mergeable),
+                            locale_renamed))
                     except Exception:
                         self._loading = False
                 else:
@@ -414,11 +464,13 @@ class DashboardPage(BasePage):
 
         threading.Thread(target=do_resolve, daemon=True).start()
 
-    def _on_resolve_done(self, actually_resolved, failed, msbt_overlays, total):
+    def _on_resolve_done(self, actually_resolved, failed, msbt_overlays, total,
+                          locale_renamed=0):
         self._stop_spinner()
         self._loading = False
 
         self._conflict_cache = failed
+        self._locale_msbt_cache = 0  # All locale MSBTs were handled
         self.stat_cards["conflicts"].configure(text=str(failed))
 
         if failed == 0:
@@ -430,12 +482,17 @@ class DashboardPage(BasePage):
                 text=f"{failed} conflict(s) could not be auto-merged (overlapping labels).",
                 text_color="#e94560")
 
-        msg = f"Merged {actually_resolved} text file(s) into _MergedResources."
+        msg_parts = []
+        if actually_resolved > 0:
+            msg_parts.append(f"Merged {actually_resolved} text file(s) into _MergedResources.")
+        if locale_renamed > 0:
+            msg_parts.append(f"Renamed {locale_renamed} locale-specific MSBT file(s).")
         if msbt_overlays > 0:
-            msg += f"\nGenerated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s)."
+            msg_parts.append(f"Generated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s).")
         if failed > 0:
-            msg += f"\n\n{failed} conflict(s) could not be auto-merged."
-        msg += "\n\nText should now display correctly in-game."
+            msg_parts.append(f"\n{failed} conflict(s) could not be auto-merged.")
+        msg_parts.append("\nText should now display correctly in-game.")
+        msg = "\n".join(msg_parts)
         messagebox.showinfo("Fixed", msg)
 
     def _fix_error(self, error_msg):
