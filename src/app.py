@@ -48,8 +48,13 @@ class ModManagerApp(ctk.CTk):
 
         # Hide window during initialization to prevent the "flash" where
         # a tiny default-sized window appears briefly before the real
-        # geometry is applied.
-        self.withdraw()
+        # geometry is applied.  Use alpha=0 (transparent) instead of
+        # withdraw() because deiconify() can glitch on some Windows
+        # configurations with customtkinter.
+        try:
+            self.attributes('-alpha', 0)
+        except Exception:
+            pass
 
         self.title("SSBU Mod Manager")
 
@@ -216,7 +221,10 @@ class ModManagerApp(ctk.CTk):
         logger.info("App", "Application startup complete")
 
         # Show the window now that geometry and all UI elements are ready.
-        self.deiconify()
+        try:
+            self.attributes('-alpha', 1)
+        except Exception:
+            pass
 
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
