@@ -44,16 +44,24 @@ class ModManagerApp(ctk.CTk):
     _MIN_HEIGHT = 650
 
     def __init__(self):
-        super().__init__()
+        import sys as _sys
+        def _dbg(msg):
+            try:
+                _sys.stderr.write(f"[INIT] {msg}\n")
+                _sys.stderr.flush()
+            except Exception:
+                pass
 
-        # Hide window during initialization to prevent the "flash" where
-        # a tiny default-sized window appears briefly before the real
-        # geometry is applied.  Use withdraw() to completely hide the
-        # window.  After all geometry and UI setup, deiconify() brings
-        # it back in its final state without any visible flash.
-        self.withdraw()
+        _dbg("super().__init__() ...")
+        super().__init__()
+        _dbg("super().__init__() OK")
 
         self.title("SSBU Mod Manager")
+
+        # Apply geometry immediately so the window starts at the correct
+        # size instead of briefly showing at the Tk default (200x200).
+        self.geometry(f"{self._BASE_WIDTH}x{self._BASE_HEIGHT}")
+        self.minsize(self._MIN_WIDTH, self._MIN_HEIGHT)
 
         # Shutdown flag for background threads
         self._shutting_down = False
@@ -169,17 +177,22 @@ class ModManagerApp(ctk.CTk):
                 pass
 
         logger.info("App", "All managers initialized")
+        _dbg("managers initialized")
 
         # Build UI
+        _dbg("building MainWindow...")
         self.main_window = MainWindow(self, self)
         self.main_window.pack(fill="both", expand=True)
+        _dbg("MainWindow built")
 
         # Lazy page registry - pages are created on first navigation
         self._page_classes = {}
         self._register_page_classes()
 
         # Navigate to dashboard (creates only the dashboard page)
+        _dbg("navigating to dashboard...")
         self.navigate("dashboard")
+        _dbg("dashboard navigated")
 
         # Update status bar in background
         self.after(100, self._update_status)
@@ -211,6 +224,7 @@ class ModManagerApp(ctk.CTk):
         # Fallback: low-level key handler for Windows where keysyms may mismatch
         self.bind_all("<KeyPress>", self._on_keypress_zoom)
 
+        _dbg("binding scroll...")
         # Global fast-scroll: intercept ALL MouseWheel events application-wide
         # and scroll the nearest scrollable ancestor 5× faster.
         # Use add="+" to coexist with CTkScrollableFrame's own handlers.
@@ -227,16 +241,13 @@ class ModManagerApp(ctk.CTk):
             logger.warn("App", f"Failed to neutralize CTk scroll management: {e}")
 
         logger.info("App", "Application startup complete")
+        _dbg("startup complete")
 
         # Install a global Tk error handler so exceptions in after()
         # callbacks, event handlers, etc. are logged instead of silently
         # killing the application.
         self.report_callback_exception = self._on_tk_error
-
-        # Show the window now that geometry and all UI elements are ready.
-        # Force layout to process so the window appears at its final size.
-        self.update_idletasks()
-        self.deiconify()
+        _dbg("__init__ complete")
 
     @staticmethod
     def _on_tk_error(exc_type, exc_value, exc_tb):
