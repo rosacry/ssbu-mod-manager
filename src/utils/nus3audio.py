@@ -280,7 +280,10 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
     pages.append(_make_ogg_page(tags_data, serial, 1, 0, 0x00, tags_segs))
 
     # Data pages — pack multiple frames per page
-    samples_per_frame = 960  # 20ms at 48kHz (standard Opus)
+    # Determine samples_per_frame from first frame's TOC byte
+    samples_per_frame = 960  # default 20 ms at 48 kHz
+    if opus_frames and len(opus_frames[0]) >= 1:
+        samples_per_frame = _opus_toc_samples(opus_frames[0][0])
     granule = pre_skip
     page_seq = 2
     i = 0
@@ -705,66 +708,90 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                 if len(inner) >= 0x28:
                     sub_magic = struct.unpack_from('<I', inner, 0)[0]
                     if sub_magic & 0x80000000:
+                        # _lopus_to_ogg has correct version-specific header
+                        # parsing for all LOPUS variants (v1-v4).  Try it
+                        # FIRST — the manual slot extraction below uses
+                        # hard-coded offsets that are wrong for some versions.
+                        try:
+                            return _lopus_to_ogg(inner)
+                        except Exception:
+                            pass
+
+                        # Manual fallback: read header fields and try
+                        # slot-based extraction with correct offsets.
                         lopus_type = sub_magic & 0xFF
                         if lopus_type in (1, 2, 3, 4):
-                            slot_size = struct.unpack_from('<H', inner, 0x0A)[0]
-                            if slot_size == 0:
+                            lopus_hdr_size = struct.unpack_from('<I', inner, 4)[0]
+
+                            # Determine slot_size based on LOPUS version:
+                            #   v2: u16 at 0x0A
+                            #   v3/v4: u32 at 0x14
+                            #   v1: u32 at 0x14 or default 640
+                            if lopus_type == 2:
+                                slot_size = struct.unpack_from('<H', inner, 0x0A)[0]
+                            else:
                                 slot_size = struct.unpack_from('<I', inner, 0x14)[0]
-                            if 8 <= slot_size <= 0x2000:
-                                # Read pre_skip from LOPUS sub-header
-                                ps = 312
-                                if len(inner) > 0x1C:
-                                    ps = struct.unpack_from('<H', inner, 0x1A)[0]
-                                    if ps == 0:
-                                        ps = struct.unpack_from('<I', inner, 0x1C)[0]
-                                    if not (0 < ps < 10000):
-                                        ps = 312
-                                parsed_pre_skip = ps
+                            if slot_size == 0 or not (8 <= slot_size <= 0x2000):
+                                # Try alt field
+                                alt = struct.unpack_from('<I', inner, 0x14)[0]
+                                if 8 <= alt <= 0x2000:
+                                    slot_size = alt
+                                else:
+                                    slot_size = 640
 
-                                # Try BE frame sizes first (original SSBU format)
-                                for frame_start in [0x28, 0x20, 0x30, 0x18]:
-                                    frames = _extract_opus_be_slots(
-                                        inner, frame_start, slot_size)
-                                    if len(frames) >= 10 and _validate_opus_frames(frames):
-                                        return _build_ogg_opus_from_frames(
-                                            frames,
-                                            channels=container_channels,
-                                            sample_rate=container_sample_rate,
-                                            pre_skip=parsed_pre_skip,
-                                        )
+                            # Read pre_skip
+                            ps = 312
+                            if len(inner) > 0x1C:
+                                ps = struct.unpack_from('<H', inner, 0x1A)[0]
+                                if ps == 0:
+                                    ps = struct.unpack_from('<I', inner, 0x1C)[0]
+                                if not (0 < ps < 10000):
+                                    ps = 312
+                            parsed_pre_skip = ps
 
-                                # Try LE frame sizes (common in mod-created tracks)
-                                for frame_start in [0x28, 0x20, 0x30, 0x18]:
-                                    frames = _extract_opus_le_slots(
-                                        inner, frame_start, slot_size)
-                                    if len(frames) >= 10 and _validate_opus_frames(frames):
-                                        return _build_ogg_opus_from_frames(
-                                            frames,
-                                            channels=container_channels,
-                                            sample_rate=container_sample_rate,
-                                            pre_skip=parsed_pre_skip,
-                                        )
+                            # Use actual header_size as primary frame start
+                            start_offsets = []
+                            if 8 <= lopus_hdr_size <= 0x100:
+                                start_offsets.append(lopus_hdr_size)
+                            for o in [0x28, 0x20, 0x30, 0x38, 0x40, 0x18]:
+                                if o not in start_offsets:
+                                    start_offsets.append(o)
 
-                                # Try CBR (fixed-size) frames — LOPUS type 1
-                                # uses entire slot_size as raw Opus packet
-                                # with no per-frame size prefix.
-                                cbr_start = struct.unpack_from('<I', inner, 4)[0]
-                                cbr_frames = _extract_opus_cbr_frames(
-                                    inner, slot_size, search_start=cbr_start)
-                                if len(cbr_frames) >= 10 and _validate_opus_frames(cbr_frames):
+                            # Try LE frame sizes first (most common in mods)
+                            for frame_start in start_offsets:
+                                frames = _extract_opus_le_slots(
+                                    inner, frame_start, slot_size)
+                                if len(frames) >= 10 and _validate_opus_frames(frames):
                                     return _build_ogg_opus_from_frames(
-                                        cbr_frames,
+                                        frames,
                                         channels=container_channels,
                                         sample_rate=container_sample_rate,
                                         pre_skip=parsed_pre_skip,
                                     )
 
-                        # LOPUS sub-header detected but slot extraction failed;
-                        # try the full LOPUS parser on the inner data directly.
-                        try:
-                            return _lopus_to_ogg(inner)
-                        except Exception:
-                            pass
+                            # Try BE frame sizes (original SSBU format)
+                            for frame_start in start_offsets:
+                                frames = _extract_opus_be_slots(
+                                    inner, frame_start, slot_size)
+                                if len(frames) >= 10 and _validate_opus_frames(frames):
+                                    return _build_ogg_opus_from_frames(
+                                        frames,
+                                        channels=container_channels,
+                                        sample_rate=container_sample_rate,
+                                        pre_skip=parsed_pre_skip,
+                                    )
+
+                            # Try CBR (fixed-size) frames
+                            cbr_start = lopus_hdr_size if 8 <= lopus_hdr_size <= 0x100 else 0x28
+                            cbr_frames = _extract_opus_cbr_frames(
+                                inner, slot_size, search_start=cbr_start)
+                            if len(cbr_frames) >= 10 and _validate_opus_frames(cbr_frames):
+                                return _build_ogg_opus_from_frames(
+                                    cbr_frames,
+                                    channels=container_channels,
+                                    sample_rate=container_sample_rate,
+                                    pre_skip=parsed_pre_skip,
+                                )
         except Exception:
             pass  # Fall through to other strategies
 
@@ -1155,6 +1182,41 @@ def _raw_opus_to_ogg_fallback(data: bytes) -> bytes:
     return _lopus_to_ogg(synthetic)
 
 
+def _opus_toc_samples(toc_byte: int) -> int:
+    """Derive the number of 48 kHz samples per Opus frame from its TOC byte.
+
+    The top 5 bits of the TOC byte encode the configuration which
+    determines the frame duration.  We return the sample count for a
+    *single* coded frame.  For code 1/2/3 (multiple frames per packet)
+    the sample count is per-sub-frame, but in SSBU LOPUS each packet
+    is code-0 so this is fine.
+
+    Reference: RFC 6716 §3.1
+    """
+    config = (toc_byte >> 3) & 0x1F
+    # Frame durations at 48 kHz for each config range
+    if config <= 3:       # SILK NB   10/20/40/60 ms
+        durations = [480, 960, 1920, 2880]
+    elif config <= 7:     # SILK MB   10/20/40/60 ms
+        durations = [480, 960, 1920, 2880]
+    elif config <= 11:    # SILK WB   10/20/40/60 ms
+        durations = [480, 960, 1920, 2880]
+    elif config <= 15:    # Hybrid SWB 10/20 ms
+        durations = [480, 960, 480, 960]
+    elif config <= 19:    # Hybrid FB  10/20 ms
+        durations = [480, 960, 480, 960]
+    elif config <= 23:    # CELT NB   2.5/5/10/20 ms
+        durations = [120, 240, 480, 960]
+    elif config <= 27:    # CELT WB   2.5/5/10/20 ms
+        durations = [120, 240, 480, 960]
+    elif config <= 31:    # CELT FB   2.5/5/10/20 ms
+        durations = [120, 240, 480, 960]
+    else:
+        return 960  # safe default
+
+    return durations[config % 4]
+
+
 def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
                                  sample_rate: int = 48000, pre_skip: int = 312) -> bytes:
     """Build an OGG Opus file from a list of raw Opus frame data."""
@@ -1171,8 +1233,12 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
     tags_segs = _segment_table_for_packet(len(tags_data))
     pages.append(_make_ogg_page(tags_data, serial, 1, 0, 0x00, tags_segs))
 
+    # Determine samples_per_frame from the first valid Opus frame's TOC
+    samples_per_frame = 960  # default 20 ms at 48 kHz
+    if opus_frames and len(opus_frames[0]) >= 1:
+        samples_per_frame = _opus_toc_samples(opus_frames[0][0])
+
     # Data pages
-    samples_per_frame = 960  # 20ms at 48kHz
     granule = pre_skip
     page_seq = 2
     i = 0

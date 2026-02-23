@@ -362,21 +362,36 @@ class ConflictResolver:
             fname_lower = Path(stem).name.lower()
             is_bgm = fname_lower.startswith("msg_bgm") or fname_lower.startswith("msg_title")
 
-            # Extract entries from ALL binary MSBT providers and merge
+            # Only extract entries from binary MSBTs when there are
+            # MULTIPLE binary providers (a real conflict).  When a
+            # single mod provides the only binary MSBT, leave it alone
+            # — the emulator / ARCropolis will load it directly.
+            # Extracting entries into an XMSBT overlay is harmful
+            # because XMSBT overlays can only MODIFY existing labels
+            # in the base MSBT; they cannot ADD new labels.  The binary
+            # MSBT is what adds new labels, and generating an XMSBT
+            # overlay from it can cause ARCropolis to skip loading the
+            # binary replacement entirely.
             all_custom_entries: dict[str, str] = {}
-            for mod_name, fpath in msbt_list:
-                entries = extract_entries_from_msbt(fpath)
-                if not entries:
-                    continue
-                # Filter to custom entries only (inclusive for BGM keeps ALL)
-                custom = filter_custom_entries(entries, inclusive=is_bgm)
-                if custom:
-                    logger.debug("ConflictResolver",
-                                 f"Extracted {len(custom)} custom entries "
-                                 f"from {mod_name}/{Path(stem).name}.msbt")
-                    all_custom_entries.update(custom)
+            if len(msbt_list) >= 2:
+                for mod_name, fpath in msbt_list:
+                    entries = extract_entries_from_msbt(fpath)
+                    if not entries:
+                        continue
+                    # Filter to custom entries only (inclusive for BGM keeps ALL)
+                    custom = filter_custom_entries(entries, inclusive=is_bgm)
+                    if custom:
+                        logger.debug("ConflictResolver",
+                                     f"Extracted {len(custom)} custom entries "
+                                     f"from {mod_name}/{Path(stem).name}.msbt")
+                        all_custom_entries.update(custom)
 
-            # Also merge entries from XMSBT files across mods
+            # Merge XMSBT entries from mods.  When there is only ONE
+            # XMSBT provider AND it belongs to the same mod as the
+            # sole binary MSBT, no overlay is needed — that mod's own
+            # XMSBT will be applied by ARCropolis independently.
+            xmsbt_only_entries: dict[str, str] = {}
+            xmsbt_mod_names: list[str] = []
             for mod_name, fpath in xmsbt_list:
                 try:
                     xmsbt_entries = parse_xmsbt(fpath)
@@ -384,12 +399,45 @@ class ConflictResolver:
                         logger.debug("ConflictResolver",
                                      f"Merged {len(xmsbt_entries)} entries "
                                      f"from {mod_name}/{Path(stem).name}.xmsbt")
-                        all_custom_entries.update(xmsbt_entries)
+                        xmsbt_only_entries.update(xmsbt_entries)
+                        if mod_name not in xmsbt_mod_names:
+                            xmsbt_mod_names.append(mod_name)
                 except Exception as e:
                     logger.warn("ConflictResolver",
                                 f"Failed to parse XMSBT {fpath}: {e}")
 
-            if not all_custom_entries:
+            # Decide whether an overlay is needed:
+            need_overlay = False
+            if len(msbt_list) >= 2:
+                # Multiple binary MSBTs conflict — overlay preserves all
+                need_overlay = True
+                all_custom_entries.update(xmsbt_only_entries)
+            elif len(xmsbt_mod_names) >= 2:
+                # Multiple mods contribute XMSBT entries — overlay merges them
+                need_overlay = True
+                all_custom_entries.update(xmsbt_only_entries)
+            elif len(xmsbt_mod_names) == 1 and len(msbt_list) == 0:
+                # Single XMSBT provider, no binary MSBT — nothing to overlay
+                need_overlay = False
+            elif (len(xmsbt_mod_names) == 1 and len(msbt_list) == 1
+                  and xmsbt_mod_names[0] == msbt_list[0][0]):
+                # Same mod provides both MSBT and XMSBT — ARCropolis
+                # handles this natively, no overlay needed.
+                need_overlay = False
+            elif len(xmsbt_mod_names) == 1 and len(msbt_list) >= 1:
+                # One XMSBT mod, one different MSBT mod — overlay
+                # adds XMSBT entries on top of binary MSBT
+                need_overlay = True
+                all_custom_entries.update(xmsbt_only_entries)
+            # else: no entries, no overlay
+
+            if not need_overlay or not all_custom_entries:
+                # Clean up any previously generated overlay for this stem
+                if output_path.exists():
+                    try:
+                        output_path.unlink()
+                    except OSError:
+                        pass
                 continue
 
             # If there's an existing merged XMSBT from auto_merge_xmsbt(),
