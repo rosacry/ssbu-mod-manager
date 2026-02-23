@@ -254,7 +254,10 @@ class ModManagerApp(ctk.CTk):
         if not (event.state & 0x4):
             return
         # Skip zoom when focus is in a text input widget
-        widget_class = event.widget.winfo_class()
+        try:
+            widget_class = event.widget.winfo_class()
+        except Exception:
+            return
         if widget_class in ("Entry", "Text", "TEntry", "Spinbox", "TSpinbox"):
             return
         # Avoid double-handling if explicit bindings already caught it

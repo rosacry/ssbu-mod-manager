@@ -63,10 +63,10 @@ class MainWindow(ctk.CTkFrame):
         )
         self.action_label.pack(side="left")
 
-        # Save & Discard buttons — right-aligned, bright colours
+        # Save & Discard buttons — right-aligned
         self.discard_btn = ctk.CTkButton(
             toolbar_inner, text="\u2716 Discard", width=90, height=30,
-            fg_color="#c0392b", hover_color="#e74c3c",
+            fg_color="#555570", hover_color="#666688",
             font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6,
             state="disabled", command=self._discard,
             text_color="#ffffff",
@@ -189,15 +189,15 @@ class MainWindow(ctk.CTkFrame):
                                         fg_color="#27ae60",
                                         text_color="#ffffff")
                 self.discard_btn.configure(state="normal",
-                                           fg_color="#c0392b",
+                                           fg_color="#555570",
                                            text_color="#ffffff")
             else:
                 self.save_btn.configure(state="disabled",
-                                        fg_color="#1e3828",
-                                        text_color="#8888aa")
+                                        fg_color="#1a2a1e",
+                                        text_color="#3a5a3a")
                 self.discard_btn.configure(state="disabled",
-                                           fg_color="#381e1e",
-                                           text_color="#8888aa")
+                                           fg_color="#2a2a38",
+                                           text_color="#4a4a5a")
         except Exception:
             pass
 

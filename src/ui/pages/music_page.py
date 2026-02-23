@@ -11,6 +11,8 @@ from src.utils.action_history import action_history, Action
 
 
 class MusicPage(BasePage):
+    _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
         self._selected_stage = None
@@ -19,6 +21,8 @@ class MusicPage(BasePage):
         self._track_id_map = {}
         self._stage_ids = []
         self._is_playing = False
+        self._spinner_index = 0
+        self._spinner_active = False
         self._build_ui()
 
     def _build_ui(self):
@@ -190,6 +194,8 @@ class MusicPage(BasePage):
 
         # Double-click to add
         self.track_listbox.bind("<Double-1>", lambda e: self._add_selected_track())
+        # Single-click to auto-play when already playing
+        self.track_listbox.bind("<<ListboxSelect>>", self._on_track_click)
 
         # Audio player controls: play/stop toggle + volume, right-aligned near track list
         player_frame = ctk.CTkFrame(right, fg_color="#1e1e30", corner_radius=6)
@@ -263,6 +269,27 @@ class MusicPage(BasePage):
                     text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
                 self.player_status.configure(text="")
 
+    def _start_spinner(self, text: str = "Loading"):
+        """Start an animated loading spinner in the loading label."""
+        self._spinner_active = True
+        self._spinner_index = 0
+        self._spinner_text = text
+        self._animate_spinner()
+
+    def _stop_spinner(self):
+        """Stop the loading spinner."""
+        self._spinner_active = False
+        self.loading_label.configure(text="")
+
+    def _animate_spinner(self):
+        """Animate the spinner by cycling through braille frames."""
+        if not self._spinner_active:
+            return
+        frame = self._SPINNER_FRAMES[self._spinner_index % len(self._SPINNER_FRAMES)]
+        self.loading_label.configure(text=f"{frame} {self._spinner_text}...")
+        self._spinner_index += 1
+        self.after(100, self._animate_spinner)
+
     def _force_scan(self):
         self._loaded = False
         self._scan_tracks()
@@ -273,7 +300,7 @@ class MusicPage(BasePage):
             self.track_count_label.configure(text="No mods path configured")
             return
 
-        self.loading_label.configure(text="Scanning tracks...")
+        self._start_spinner("Scanning tracks")
         logger.info("Music", f"Scanning for tracks in: {settings.mods_path}")
 
         mods_path = settings.mods_path
@@ -292,12 +319,19 @@ class MusicPage(BasePage):
     def _on_tracks_loaded(self, tracks):
         self._loaded = True
         self._all_tracks = tracks
-        self.loading_label.configure(text="")
+        self._stop_spinner()
         self.track_count_label.configure(text=f"{len(tracks)} tracks")
         self.exclude_var.set(self.app.music_manager.exclude_vanilla)
         self._update_summary()
         self._render_available_tracks()
         self._populate_stages()
+
+        # Invalidate the dashboard conflict cache because
+        # generate_msbt_overlays() may have changed _MergedResources
+        # (cleaned up stale copies, added/removed files).
+        if "dashboard" in self.app.main_window.pages:
+            dash = self.app.main_window.pages["dashboard"]
+            dash._conflict_cache = None
 
     def _update_summary(self):
         summary = self.app.music_manager.get_assignment_summary()
@@ -589,6 +623,13 @@ class MusicPage(BasePage):
         self.app.mark_unsaved()
 
     # Audio playback methods
+    def _on_track_click(self, event):
+        """When user clicks a track while music is already playing,
+        auto-play the newly selected track."""
+        if self._is_playing:
+            # Short delay so the listbox selection updates first
+            self.after(50, self._play_selected)
+
     def _toggle_playback(self):
         """Toggle between play and stop."""
         if self._is_playing:
@@ -603,6 +644,11 @@ class MusicPage(BasePage):
             self.player_status.configure(text="Select a track first", text_color="#e94560")
             self.after(3000, lambda: self.player_status.configure(text=""))
             return
+
+        # Stop any current playback first to prevent concurrent threads
+        if self._is_playing:
+            audio_player.stop()
+            self._is_playing = False
 
         self.player_status.configure(text="Loading...", text_color="#888888")
         self.update_idletasks()

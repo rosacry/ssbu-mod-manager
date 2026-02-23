@@ -9,10 +9,14 @@ from src.utils.logger import logger
 
 
 class DashboardPage(BasePage):
+    _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
         self._conflict_cache = None
         self._loading = False
+        self._spinner_active = False
+        self._spinner_index = 0
         self._build_ui()
 
     def _build_ui(self):
@@ -159,6 +163,27 @@ class DashboardPage(BasePage):
                          font=ctk.CTkFont(size=12), text_color="#7a7a9a",
                          anchor="w").pack(fill="x", pady=1)
 
+    def _start_spinner(self, text: str = "Loading"):
+        """Start an animated loading spinner in the loading label."""
+        self._spinner_active = True
+        self._spinner_index = 0
+        self._spinner_text = text
+        self._animate_spinner()
+
+    def _stop_spinner(self):
+        """Stop the loading spinner."""
+        self._spinner_active = False
+        self.loading_label.configure(text="")
+
+    def _animate_spinner(self):
+        """Animate the spinner by cycling through braille frames."""
+        if not self._spinner_active:
+            return
+        frame = self._SPINNER_FRAMES[self._spinner_index % len(self._SPINNER_FRAMES)]
+        self.loading_label.configure(text=f"{frame} {self._spinner_text}...")
+        self._spinner_index += 1
+        self.after(100, self._animate_spinner)
+
     def on_show(self):
         logger.debug("Dashboard", "Page shown, refreshing stats")
         self._refresh_stats_fast()
@@ -216,7 +241,7 @@ class DashboardPage(BasePage):
         if self._loading:
             return
         self._loading = True
-        self.loading_label.configure(text="Scanning...")
+        self._start_spinner("Scanning")
         logger.info("Dashboard", "Starting full refresh...")
 
         # Invalidate mod cache
@@ -245,6 +270,8 @@ class DashboardPage(BasePage):
                         self.after(0, lambda: self._on_scan_done(count))
                     except Exception:
                         self._loading = False
+                else:
+                    self._loading = False
             except Exception as e:
                 logger.error("Dashboard", f"Scan failed: {e}")
                 if not self.app.shutting_down:
@@ -260,7 +287,7 @@ class DashboardPage(BasePage):
     def _on_scan_done(self, conflict_count):
         self._loading = False
         self._conflict_cache = conflict_count
-        self.loading_label.configure(text="")
+        self._stop_spinner()
         self.stat_cards["conflicts"].configure(text=str(conflict_count))
 
         if conflict_count > 0:
@@ -278,12 +305,15 @@ class DashboardPage(BasePage):
         self._refresh_stats_fast()
 
     def _fix_xmsbt_conflicts(self):
+        if self._loading:
+            return
         settings = self.app.config_manager.settings
         if not settings.mods_path or not settings.mods_path.exists():
             messagebox.showwarning("Warning", "No mods path configured. Go to Settings first.")
             return
 
-        self.loading_label.configure(text="Scanning conflicts...")
+        self._loading = True
+        self._start_spinner("Scanning conflicts")
         logger.info("Dashboard", "Starting conflict fix...")
 
         def do_fix():
@@ -318,7 +348,8 @@ class DashboardPage(BasePage):
         threading.Thread(target=do_fix, daemon=True).start()
 
     def _show_fix_dialog(self, mergeable):
-        self.loading_label.configure(text="")
+        self._stop_spinner()
+        self._loading = False
 
         if not mergeable:
             messagebox.showinfo("No Conflicts",
@@ -346,7 +377,8 @@ class DashboardPage(BasePage):
         settings = self.app.config_manager.settings
         resolver = self.app.conflict_resolver
 
-        self.loading_label.configure(text="Resolving conflicts...")
+        self._loading = True
+        self._start_spinner("Resolving conflicts")
 
         def do_resolve():
             try:
@@ -371,7 +403,8 @@ class DashboardPage(BasePage):
         threading.Thread(target=do_resolve, daemon=True).start()
 
     def _on_resolve_done(self, actually_resolved, failed, msbt_overlays, total):
-        self.loading_label.configure(text="")
+        self._stop_spinner()
+        self._loading = False
 
         self._conflict_cache = failed
         self.stat_cards["conflicts"].configure(text=str(failed))
@@ -394,7 +427,8 @@ class DashboardPage(BasePage):
         messagebox.showinfo("Fixed", msg)
 
     def _fix_error(self, error_msg):
-        self.loading_label.configure(text="")
+        self._stop_spinner()
+        self._loading = False
         messagebox.showerror("Error", f"Failed to fix conflicts: {error_msg}")
 
     def _go_to_conflicts(self):
