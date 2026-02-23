@@ -1,6 +1,7 @@
 """Main application class - wires all managers and UI together."""
 import customtkinter as ctk
 from pathlib import Path
+from tkinter import messagebox
 
 from src.config import ConfigManager
 from src.paths import auto_detect_sdmc, derive_mods_path, derive_plugins_path
@@ -49,6 +50,7 @@ class ModManagerApp(ctk.CTk):
 
         # Shutdown flag for background threads
         self._shutting_down = False
+        self._has_unsaved_changes = False
         self._resize_after_id = None
         self._last_width = 0
         self._last_height = 0
@@ -294,7 +296,19 @@ class ModManagerApp(ctk.CTk):
             pass
 
     def _on_close(self):
-        """Clean shutdown - stop threads and audio before destroying window."""
+        """Clean shutdown - prompt for unsaved changes, stop threads and audio."""
+        if self._has_unsaved_changes:
+            response = messagebox.askyesnocancel(
+                "Unsaved Changes",
+                "You have unsaved changes.\n\n"
+                "Would you like to close anyway?\n\n"
+                "• Yes — Close without saving\n"
+                "• No / Cancel — Go back to the application"
+            )
+            if response is None or response is False:
+                # User cancelled or said No — don't close
+                return
+
         self._shutting_down = True
         logger.info("App", "Shutting down...")
 
@@ -332,6 +346,14 @@ class ModManagerApp(ctk.CTk):
     @property
     def shutting_down(self) -> bool:
         return self._shutting_down
+
+    def mark_unsaved(self):
+        """Mark that there are unsaved changes."""
+        self._has_unsaved_changes = True
+
+    def mark_saved(self):
+        """Mark that all changes have been saved."""
+        self._has_unsaved_changes = False
 
     def _register_page_classes(self):
         """Register page classes for lazy instantiation."""

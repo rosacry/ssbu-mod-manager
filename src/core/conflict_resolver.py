@@ -360,4 +360,36 @@ class ConflictResolver:
                         f"Generated XMSBT overlay from {chosen_path.name}: "
                         f"{len(final_entries)} entries → {xmsbt_rel}")
 
+            # Disable the original binary MSBT files so ARCropolis uses
+            # the XMSBT overlay instead. On emulators, binary MSBT
+            # replacement often doesn't work, but XMSBT overlays do.
+            originals_dir = self.merged_output_dir / ".originals"
+            for mod_name, msbt_path in providers:
+                try:
+                    if not msbt_path.exists():
+                        continue
+                    mod_folder = self.mods_root / mod_name
+                    rel = str(msbt_path.relative_to(mod_folder)).replace("\\", "/")
+                    backup_dest = originals_dir / mod_name / rel
+                    backup_dest.parent.mkdir(parents=True, exist_ok=True)
+                    if not backup_dest.exists():
+                        shutil.move(str(msbt_path), str(backup_dest))
+                        logger.info("ConflictResolver",
+                                    f"Disabled binary MSBT: {mod_name}/{rel} "
+                                    f"(moved to .originals)")
+                        # Clean empty dirs
+                        parent = msbt_path.parent
+                        while parent != mod_folder and parent.exists():
+                            try:
+                                if not any(parent.iterdir()):
+                                    parent.rmdir()
+                                    parent = parent.parent
+                                else:
+                                    break
+                            except OSError:
+                                break
+                except OSError as e:
+                    logger.warn("ConflictResolver",
+                                f"Could not disable binary MSBT {msbt_path.name}: {e}")
+
         return generated

@@ -6,24 +6,33 @@ _pygame_available = False
 _pygame_error = ""
 _pygame_initialized = False
 
+# Try to import pygame at module level so it's available as a global name
+try:
+    import pygame as pygame
+except ImportError:
+    pygame = None  # type: ignore
+
 
 def _ensure_mixer():
     """Lazily initialize pygame mixer on first use."""
-    global _pygame_available, _pygame_error, _pygame_initialized
+    global _pygame_available, _pygame_error, _pygame_initialized, pygame
     if _pygame_initialized:
         return
     _pygame_initialized = True
+    if pygame is None:
+        try:
+            import pygame as _pg
+            pygame = _pg
+        except ImportError:
+            _pygame_error = "pygame not installed"
+            return
     try:
-        import pygame
         pygame.mixer.init(frequency=48000, size=-16, channels=2, buffer=4096)
         _pygame_available = True
-    except ImportError:
-        _pygame_error = "pygame not installed"
     except Exception as e:
         _pygame_error = str(e)
         # Try with different settings
         try:
-            import pygame
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
             _pygame_available = True
             _pygame_error = ""

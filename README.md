@@ -43,7 +43,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Automatic Scanning** — Detects when multiple mods modify the same game file
 - **Type-Based Grouping** — Conflicts grouped by file type (XMSBT, MSBT, PRC, STPRM, STDAT) with explanations
 - **Auto-Merge** — XMSBT text conflicts are merged using a union strategy (all labels from all mods combined); overlapping labels use last-mod-wins
-- **MSBT-to-XMSBT Overlay Generation** — Automatically extracts custom entries from binary MSBT files and generates XMSBT overlays, ensuring custom text (music names, character names, etc.) displays correctly on emulators
+- **MSBT-to-XMSBT Overlay Generation** — Automatically extracts custom entries from binary MSBT files and generates XMSBT overlays, ensuring custom text (music names, character names, etc.) displays correctly on emulators. Original binary MSBTs are disabled to prevent conflicts with the generated overlay
 - **Original File Management** — After merging, original XMSBT files are moved to `_MergedResources/.originals/` to prevent ARCropolis from double-loading both the originals and merged file
 - **Restore Originals** — One-click undo of all merges: restores original files to their mod folders and cleans up `_MergedResources`
 - **Backup Before Merge** — Configurable automatic backup creation before any merge or resolution operation
@@ -82,7 +82,10 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Smooth UI** — Resize debouncing, proper cleanup, and consistent dark theme
 - **Lazy Page Loading** — Pages are created on first navigation for fast startup
 - **Lazy Audio Init** — Pygame mixer initializes only when audio is first played, not at startup
-- **Fast Scrolling** — 5x scroll speed multiplier across all scrollable widgets
+- **Fast Scrolling** — 5x scroll speed multiplier across all scrollable widgets, automatically re-applied on page navigation and dynamic content changes
+- **Non-Blocking Audio** — Audio playback runs in a background thread so the UI never freezes during NUS3AUDIO conversion
+- **Unsaved Changes Warning** — Prompts before closing the application if you have unsaved music or CSS changes
+- **Atomic Config Writes** — Settings are written atomically (temp file + rename) to prevent corruption from crashes
 
 ## Screenshots
 

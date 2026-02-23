@@ -100,8 +100,8 @@ def _make_opus_tags() -> bytes:
 
 def _lopus_to_ogg(lopus_data: bytes) -> bytes:
     """Convert Nintendo LOPUS data to standard OGG Opus."""
-    if len(lopus_data) < 16:
-        raise ValueError("LOPUS data too short")
+    if len(lopus_data) < 30:
+        raise ValueError(f"LOPUS data too short ({len(lopus_data)} bytes, need at least 30)")
 
     magic = struct.unpack_from('<I', lopus_data, 0)[0]
 

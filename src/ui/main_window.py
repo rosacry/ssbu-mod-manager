@@ -142,8 +142,12 @@ class MainWindow(ctk.CTkFrame):
 
         # Show new page
         self.current_page = page_id
-        self.pages[page_id].lift()
-        self.pages[page_id].on_show()
+        page = self.pages[page_id]
+        page.lift()
+        page.on_show()
+        # Re-patch scroll speeds after page content may have changed
+        if hasattr(page, '_patch_all_scroll_speeds'):
+            page.after(150, page._patch_all_scroll_speeds)
         self.sidebar.set_active(page_id)
 
     def update_status(self, text: str):

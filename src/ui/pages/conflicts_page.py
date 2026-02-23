@@ -115,11 +115,41 @@ class ConflictsPage(BasePage):
 
     def on_show(self):
         if not self._scanned:
-            self._scan()
+            self._show_initial_prompt()
         elif self._needs_render:
             self._render()
         else:
             self.conflict_list.update_idletasks()
+
+    def _show_initial_prompt(self):
+        """Show an initial prompt with a scan button instead of auto-scanning."""
+        for w in self.conflict_list.winfo_children():
+            w.destroy()
+
+        prompt_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
+        prompt_frame.pack(pady=60)
+
+        ctk.CTkLabel(prompt_frame, text="No scan performed yet",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color="#cccccc").pack(pady=(0, 8))
+
+        ctk.CTkLabel(prompt_frame,
+                     text="Click the button below to scan your mods for file conflicts.\n"
+                          "This may take a few seconds depending on how many mods you have installed.",
+                     font=ctk.CTkFont(size=13), text_color="#888888",
+                     justify="center").pack(pady=(0, 20))
+
+        scan_prompt_btn = ctk.CTkButton(
+            prompt_frame, text="🔍  Scan for Conflicts", width=220, height=40,
+            fg_color="#1f538d", hover_color="#163b6a",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            corner_radius=8, command=self._scan,
+        )
+        scan_prompt_btn.pack()
+
+        self.summary_label.configure(
+            text="Click 'Scan for Conflicts' to check for mod file conflicts.",
+            text_color="#999999")
 
     def _force_scan(self):
         self._scanned = False
@@ -313,6 +343,8 @@ class ConflictsPage(BasePage):
                 card.pack(fill="x", pady=3)
 
         self.conflict_list.update_idletasks()
+        # Re-patch scroll speed after rendering new widgets
+        self.after(100, self._patch_all_scroll_speeds)
 
     def _merge_conflict(self, conflict):
         try:

@@ -12,6 +12,7 @@ def _patch_scrollable_frame_speed(frame: ctk.CTkScrollableFrame, speed: int = SC
 
     CustomTkinter's default scroll is 1 unit per mouse tick, which is too slow.
     This patches the internal canvas to scroll `speed` units per tick instead.
+    Also binds all child widgets so scrolling works regardless of mouse position.
     """
     try:
         canvas = frame._parent_canvas
@@ -26,6 +27,15 @@ def _patch_scrollable_frame_speed(frame: ctk.CTkScrollableFrame, speed: int = SC
         frame.bind("<MouseWheel>", _fast_scroll)
         if hasattr(frame, '_scrollbar'):
             frame._scrollbar.bind("<MouseWheel>", _fast_scroll)
+        # Bind all children so scroll works when hovering any child widget
+        def _bind_children(widget):
+            try:
+                widget.bind("<MouseWheel>", _fast_scroll)
+                for child in widget.winfo_children():
+                    _bind_children(child)
+            except Exception:
+                pass
+        _bind_children(frame)
     except (AttributeError, tk.TclError):
         pass
 
@@ -67,8 +77,9 @@ class BasePage(ctk.CTkFrame):
             pass
 
     def on_show(self):
-        """Called when the page is navigated to. Override to refresh data."""
-        pass
+        """Called when the page is navigated to. Override to refresh data.
+        Re-patches scroll speeds to catch any dynamically created widgets."""
+        self.after(100, self._patch_all_scroll_speeds)
 
     def on_hide(self):
         """Called when navigating away from this page."""

@@ -14,7 +14,7 @@ def extract_entries_from_msbt(msbt_path: Path) -> dict[str, str]:
     """Extract all text entries from a binary MSBT file.
 
     Returns a dict of {label: text} compatible with XMSBT format.
-    Only includes entries that contain printable text.
+    Only includes entries that contain meaningful text.
     """
     entries = {}
     try:
@@ -35,7 +35,13 @@ def extract_entries_from_msbt(msbt_path: Path) -> dict[str, str]:
             if idx >= len(msbt.TXT2.messages):
                 continue
             msg = msbt.TXT2.messages[idx]
-            text = ''.join(c for c in str(msg) if c.isprintable())
+            # Convert message to string, preserving printable text
+            # Some MSBT messages are complex objects with control tags —
+            # extract only the readable text portions
+            raw = str(msg)
+            # Strip embedded null bytes and control chars except newlines/tabs
+            text = ''.join(c for c in raw if c.isprintable() or c in '\n\t')
+            text = text.strip()
             if text:
                 entries[label_name] = text
 

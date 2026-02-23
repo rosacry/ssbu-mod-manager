@@ -1,5 +1,7 @@
 """Application configuration manager."""
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 from src.models.settings import AppSettings
@@ -66,8 +68,19 @@ class ConfigManager:
         }
 
         try:
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
+            # Atomic write: write to temp file then rename to prevent corruption
+            fd, tmp_path = tempfile.mkstemp(dir=str(CONFIG_DIR), suffix='.tmp')
+            try:
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, str(CONFIG_FILE))
+            except Exception:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except OSError as e:
             from src.utils.logger import logger
             logger.error("Config", f"Failed to save config: {e}")

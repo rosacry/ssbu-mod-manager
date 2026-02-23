@@ -263,11 +263,6 @@ class MusicManager:
         except Exception as e:
             logger.warn("MusicManager", f"Failed to auto-generate MSBT overlays: {e}")
 
-        # Load saved assignments if they exist
-        self._load_saved_assignments()
-
-        return self.tracks
-
     def _load_track_names_from_mod(self, mod_folder: Path) -> None:
         """Load track display names from XMSBT/MSBT files in a mod."""
         # Scan XMSBT overlay files
@@ -283,24 +278,64 @@ class MusicManager:
                 self._apply_track_names(entries)
 
     def _apply_track_names(self, entries: dict[str, str]) -> None:
-        """Apply track names from parsed XMSBT/MSBT entries to discovered tracks."""
+        """Apply track names from parsed XMSBT/MSBT entries to discovered tracks.
+
+        Matches MSBT labels (e.g. bgm_title_25AR) to discovered tracks
+        (e.g. bgm_25AR.nus3audio) using multiple heuristics.
+        """
+        # Build a lookup from MSBT title labels → display text
+        title_lookup: dict[str, str] = {}
         for label, text in entries.items():
             if not text or not text.strip():
                 continue
-            for track in self.tracks:
-                if track.display_name:
-                    continue
-                # Match by track_id appearing in the label or label suffix
+            # Only process bgm_title_ labels (these contain track display names)
+            lower_label = label.lower()
+            if 'bgm_title' in lower_label or 'bgm_menu' in lower_label:
+                title_lookup[label] = text.strip()
+
+        if not title_lookup:
+            # No title entries found, try using all entries as a fallback
+            title_lookup = {k: v.strip() for k, v in entries.items() if v and v.strip()}
+
+        for track in self.tracks:
+            if track.display_name:
+                continue
+
+            track_id_lower = track.track_id.lower()
+            # Strip "bgm_" prefix from track ID for matching
+            track_id_bare = track_id_lower
+            if track_id_bare.startswith("bgm_"):
+                track_id_bare = track_id_bare[4:]
+
+            best_match = None
+
+            for label, text in title_lookup.items():
+                # Direct: track_id appears in label or vice versa
                 if track.track_id in label or label.endswith(track.track_id):
-                    track.display_name = text.strip()
+                    best_match = text
                     break
-                # Also try matching by the hash/numeric part after "bgm_title_"
-                # e.g. label "bgm_title_25AR" matches track "bgm_25AR"
-                label_suffix = label.rsplit('_', 1)[-1] if '_' in label else ''
-                track_suffix = track.track_id.rsplit('_', 1)[-1] if '_' in track.track_id else ''
-                if label_suffix and track_suffix and label_suffix == track_suffix:
-                    track.display_name = text.strip()
-                    break
+
+                # Extract the ID suffix from the label (e.g. "25AR" from "bgm_title_25AR")
+                label_parts = label.rsplit('_', 1)
+                label_suffix = label_parts[-1].lower() if len(label_parts) >= 2 else None
+
+                if label_suffix:
+                    # Match by suffix: label suffix matches end of track_id
+                    # e.g. label "bgm_title_25AR" → suffix "25ar"
+                    #      track "bgm_sonic__speed_highway_25AR" → ends with "25ar"
+                    if track_id_lower.endswith(label_suffix) or track_id_bare.endswith(label_suffix):
+                        best_match = text
+                        break
+
+                    # Match by suffix appearing as a component in track_id
+                    # e.g. label suffix "25AR" in track "bgm_25AR"
+                    track_suffix = track.track_id.rsplit('_', 1)[-1].lower() if '_' in track.track_id else ''
+                    if label_suffix and track_suffix and label_suffix == track_suffix:
+                        best_match = text
+                        break
+
+            if best_match:
+                track.display_name = best_match
 
     def get_stage_list(self) -> list[StageInfo]:
         """Get list of all vanilla stages."""
@@ -404,8 +439,12 @@ class MusicManager:
         # Handle main menu music separately
         menu_tracks = self.get_tracks_for_stage("ui_stage_id_menu")
         if menu_tracks:
-            self._apply_menu_music(menu_tracks[0], mods_root)
-            result["menu_music_set"] = True
+            try:
+                self._apply_menu_music(menu_tracks[0], mods_root)
+                result["menu_music_set"] = True
+            except Exception as e:
+                logger.error("MusicManager", f"Failed to apply menu music: {e}")
+                result["menu_music_set"] = False
 
         # Find the music source mod that has ui_bgm_db.prc and ui_stage_db.prc
         source_mod = self._find_music_source_mod(mods_root)
@@ -441,14 +480,10 @@ class MusicManager:
         menu_bgm_dir.mkdir(parents=True, exist_ok=True)
         dest = menu_bgm_dir / "bgm_z90_menu.nus3audio"
 
-        try:
-            # Copy the track's audio file as the menu BGM
-            shutil.copy2(str(track.file_path), str(dest))
-            logger.info("MusicManager",
-                        f"Menu music set to: {track.display_name or track.track_id} "
-                        f"(from {track.source_mod})")
-        except Exception as e:
-            logger.error("MusicManager", f"Failed to set menu music: {e}")
+        shutil.copy2(str(track.file_path), str(dest))
+        logger.info("MusicManager",
+                    f"Menu music set to: {track.display_name or track.track_id} "
+                    f"(from {track.source_mod})")
 
     def _find_music_source_mod(self, mods_root: Path) -> Optional[Path]:
         """Find a mod folder that contains ui_bgm_db.prc (the BGM database)."""

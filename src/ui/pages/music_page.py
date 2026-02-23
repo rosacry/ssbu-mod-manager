@@ -323,13 +323,31 @@ class MusicPage(BasePage):
         self.stage_listbox.delete(0, tk.END)
         self._stage_ids = []
         comp_only = self.competitive_var.get()
+
+        # Insert "Main Menu" first with a special prefix, then other stages
+        menu_stage = None
+        other_stages = []
         for stage in stages:
-            if comp_only and stage.stage_id not in COMPETITIVE_STAGES:
-                continue
+            if stage.stage_id == "ui_stage_id_menu":
+                menu_stage = stage
+            else:
+                other_stages.append(stage)
+
+        def _insert_stage(stage):
+            if comp_only and stage.stage_id not in COMPETITIVE_STAGES and stage.stage_id != "ui_stage_id_menu":
+                return
             count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
+            prefix = "🎵 " if stage.stage_id == "ui_stage_id_menu" else ""
             suffix = f" ({count})" if count > 0 else ""
-            self.stage_listbox.insert(tk.END, f"{stage.stage_name}{suffix}")
+            self.stage_listbox.insert(tk.END, f"{prefix}{stage.stage_name}{suffix}")
             self._stage_ids.append(stage.stage_id)
+
+        # Always show Main Menu first
+        if menu_stage:
+            _insert_stage(menu_stage)
+
+        for stage in other_stages:
+            _insert_stage(stage)
 
     def _filter_stages(self, *args):
         search = self.stage_search_var.get().lower()
@@ -337,18 +355,35 @@ class MusicPage(BasePage):
         self.stage_listbox.delete(0, tk.END)
         self._stage_ids = []
         comp_only = self.competitive_var.get()
+
+        # Sort: Main Menu first, then alphabetical
+        menu_stage = None
+        other_stages = []
         for stage in stages:
-            if comp_only and stage.stage_id not in COMPETITIVE_STAGES:
-                continue
-            if search in stage.stage_name.lower():
-                count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
-                suffix = f" ({count})" if count > 0 else ""
-                self.stage_listbox.insert(tk.END, f"{stage.stage_name}{suffix}")
-                self._stage_ids.append(stage.stage_id)
+            if stage.stage_id == "ui_stage_id_menu":
+                menu_stage = stage
+            else:
+                other_stages.append(stage)
+
+        def _insert_if_match(stage):
+            if comp_only and stage.stage_id not in COMPETITIVE_STAGES and stage.stage_id != "ui_stage_id_menu":
+                return
+            if search and search not in stage.stage_name.lower():
+                return
+            count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
+            prefix = "🎵 " if stage.stage_id == "ui_stage_id_menu" else ""
+            suffix = f" ({count})" if count > 0 else ""
+            self.stage_listbox.insert(tk.END, f"{prefix}{stage.stage_name}{suffix}")
+            self._stage_ids.append(stage.stage_id)
+
+        if menu_stage:
+            _insert_if_match(menu_stage)
+        for stage in other_stages:
+            _insert_if_match(stage)
 
     def _on_stage_select(self, event):
         sel = self.stage_listbox.curselection()
-        if not sel:
+        if not sel or sel[0] >= len(self._stage_ids):
             return
         self._selected_stage = self._stage_ids[sel[0]]
         stage_name = VANILLA_STAGES.get(self._selected_stage, self._selected_stage)
@@ -504,6 +539,7 @@ class MusicPage(BasePage):
             self._render_playlist()
             self._populate_stages()
             self._update_summary()
+            self.app.mark_unsaved()
 
     def _move_up(self, track):
         if self._selected_stage:
@@ -521,6 +557,7 @@ class MusicPage(BasePage):
             self._render_playlist()
             self._populate_stages()
             self._update_summary()
+            self.app.mark_unsaved()
 
     def _add_all_to_stage(self):
         if not self._selected_stage:
@@ -538,6 +575,7 @@ class MusicPage(BasePage):
             self._render_playlist()
             self._populate_stages()
             self._update_summary()
+            self.app.mark_unsaved()
 
     def _assign_all_to_all(self):
         if messagebox.askyesno("Assign All", "Assign ALL tracks to ALL stages?"):
@@ -545,6 +583,7 @@ class MusicPage(BasePage):
             self._render_playlist()
             self._populate_stages()
             self._update_summary()
+            self.app.mark_unsaved()
 
     def _on_exclude_change(self):
         self.app.music_manager.set_exclude_vanilla(self.exclude_var.get())
@@ -559,7 +598,7 @@ class MusicPage(BasePage):
             self._play_selected()
 
     def _play_selected(self):
-        """Play the selected track."""
+        """Play the selected track (in background thread to avoid UI freeze)."""
         track = self._get_selected_track()
         if not track:
             self.player_status.configure(text="Select a track first", text_color="#e94560")
@@ -569,7 +608,16 @@ class MusicPage(BasePage):
         self.player_status.configure(text="Loading...", text_color="#888888")
         self.update_idletasks()
 
-        success, msg = audio_player.play(track.file_path)
+        def _play_bg():
+            result = audio_player.play(track.file_path)
+            if not self.app.shutting_down:
+                self.after(0, lambda: self._on_play_result(result, track))
+
+        threading.Thread(target=_play_bg, daemon=True).start()
+
+    def _on_play_result(self, result, track):
+        """Handle play result on the main thread."""
+        success, msg = result
         color = "#2fa572" if success else "#e94560"
         self.player_status.configure(text=msg, text_color=color)
         if success:
@@ -611,6 +659,7 @@ class MusicPage(BasePage):
             if result.get("prc_updated"):
                 msg += f"\nPRC updated in: {result['output_mod']}"
             logger.info("Music", f"Saved: {result['stages_configured']} stages, {result['tracks_assigned']} tracks")
+            self.app.mark_saved()
             messagebox.showinfo("Saved", msg)
         except Exception as e:
             logger.error("Music", f"Save failed: {e}")

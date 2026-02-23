@@ -245,6 +245,7 @@ class CSSPage(BasePage):
         val = self.fields[field].get()
         chara = self.css_manager.characters[self.selected_index]
         self.css_manager.update_field(chara, field, val)
+        self.app.mark_unsaved()
 
     def add_character(self):
         if self.selected_index == -1:
@@ -252,6 +253,7 @@ class CSSPage(BasePage):
             return
         base = self.css_manager.characters[self.selected_index]
         self.css_manager.duplicate_character(base)
+        self.app.mark_unsaved()
         self._update_listbox()
 
         self.search_var.set("")
@@ -436,6 +438,7 @@ class CSSPage(BasePage):
         try:
             self.css_manager.save()
             logger.info("CSS", "Changes saved successfully")
+            self.app.mark_saved()
             messagebox.showinfo("Success", "Changes saved successfully!")
             self._update_listbox()
         except Exception as e:

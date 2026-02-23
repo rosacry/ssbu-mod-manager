@@ -373,24 +373,54 @@ class MigrationPage(BasePage):
         self.progress_bar.set(0)
 
     def on_show(self):
-        """Refresh detected emulators when page is shown."""
-        self._refresh_detected()
+        """Refresh detected emulators when page is shown (async to avoid lag)."""
         self._on_source_changed(self.source_var.get())
+        # Refresh detected emulators in background thread to avoid UI lag
+        if not getattr(self, '_detected_loaded', False):
+            self._refresh_detected_async()
 
-    def _refresh_detected(self):
-        """Show all detected emulators with their paths and data summary."""
+    def _refresh_detected_async(self):
+        """Refresh detected emulators in a background thread."""
+        # Show placeholder while loading
+        for w in self.detected_info_frame.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(self.detected_info_frame,
+                     text="Detecting emulators...",
+                     font=ctk.CTkFont(size=12), text_color="#888888"
+                     ).pack(anchor="w", pady=5)
+
+        def do_detect():
+            detected = auto_detect_all_emulators()
+            # Gather data for each detected emulator
+            results = []
+            for emu_name, emu_path in detected:
+                items = scan_emulator_data(emu_path)
+                total_files = sum(i.file_count for i in items if i.exists)
+                total_size = sum(i.total_size for i in items if i.exists)
+                results.append((emu_name, emu_path, total_files, total_size))
+
+            if not self.app.shutting_down:
+                try:
+                    self.after(0, lambda: self._render_detected(results))
+                except Exception:
+                    pass
+
+        threading.Thread(target=do_detect, daemon=True).start()
+
+    def _render_detected(self, results):
+        """Render detected emulators from pre-computed data."""
+        self._detected_loaded = True
         for w in self.detected_info_frame.winfo_children():
             w.destroy()
 
-        detected = auto_detect_all_emulators()
-        if not detected:
+        if not results:
             ctk.CTkLabel(self.detected_info_frame,
                          text="No emulators detected. Install an emulator and set up SSBU first.",
                          font=ctk.CTkFont(size=12), text_color="#888888"
                          ).pack(anchor="w", pady=5)
             return
 
-        for emu_name, emu_path in detected:
+        for emu_name, emu_path, total_files, total_size in results:
             row = ctk.CTkFrame(self.detected_info_frame, fg_color="#1e1e38", corner_radius=6)
             row.pack(fill="x", pady=3)
 
@@ -403,12 +433,7 @@ class MigrationPage(BasePage):
                                       font=ctk.CTkFont(size=11), text_color="#7a7a9a", anchor="w")
             path_label.pack(side="left", padx=5, pady=8)
 
-            # Quick size indicator
-            items = scan_emulator_data(emu_path)
-            total_files = sum(i.file_count for i in items if i.exists)
-            total_size = sum(i.total_size for i in items if i.exists)
             size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
-
             if total_files > 0:
                 size_label = ctk.CTkLabel(row,
                     text=f"{total_files} files, {size_mb:.1f} MB",
