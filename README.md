@@ -7,7 +7,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 ## Features
 
 ### Mod Management
-- **Enable/Disable Mods** — Toggle mods on and off with a single click (rename or move method)
+- **Enable/Disable Mods** — Toggle mods on and off with a single click (moves disabled mods outside the mods folder so ARCropolis/LayeredFS won't load them)
 - **Enable/Disable All** — Bulk-toggle all mods with confirmation dialogs
 - **Category Detection** — Mods are automatically categorized by content type (Character, Audio, Stage, UI, Effect, etc.)
 - **Grouping & Filtering** — Group mods by category, filter by status, and search by name
@@ -28,15 +28,15 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 
 ### Music Management
 - **3-Column Layout** — Stages on the left, playlist in the middle, available tracks on the right
-- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Robust NUS3AUDIO section parser handles non-aligned sections and JUNK padding. Full support for SSBU's OPUS container format with both big-endian and little-endian frame size detection, header parsing, LOPUS sub-header detection, and frame extraction with TOC-byte validation. Automatically converts OGG Opus to WAV via ffmpeg when needed, with raw ffmpeg fallback for edge cases. Click any track while music is playing to auto-switch playback
-- **Volume Control** — Adjustable volume slider for playback
+- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Uses ffmpeg for high-fidelity NUS3AUDIO decoding when available, with robust manual fallback parser supporting non-aligned sections, JUNK padding, big/little-endian frame sizes, LOPUS sub-header detection, and TOC-byte validation. Automatically converts OGG Opus to WAV via ffmpeg when needed. Click any track while music is playing to auto-switch playback
+- **Volume & Seek** — Adjustable volume slider and seek timeline for playback
 - **Stage Playlists** — Assign tracks to specific stages with drag-to-reorder
 - **Main Menu Music** — Change the main menu background music by assigning a track to the "Main Menu" stage entry
 - **Competitive Stages Filter** — Filter stage list to show only tournament-legal stages (Battlefield, Small Battlefield, Final Destination, Smashville, Town and City, Pokemon Stadium 2, Kalos Pokemon League, Hollow Bastion, Northern Cave, Yoshi's Story)
 - **Bulk Operations** — Assign all tracks to all stages, clear all assignments
 - **Auto Track Name Detection** — Automatically extracts track names from both XMSBT and binary MSBT files, including extended tracklist mods
 - **Beautified Track Names** — Raw BGM filenames like `bgm_sonic_adventure__mechanical_resonance` are automatically transformed into readable names like "Mechanical Resonance [Sonic Adventure]" using 100+ franchise mappings
-- **Auto MSBT Overlay Generation** — Extracts custom text entries from binary MSBT files and generates XMSBT (XML overlay) files in `_MergedResources`. This ensures custom track names, character names, and other text additions from mods are visible in-game even when the emulator's LayeredFS can't reliably load binary MSBT replacements. Entries from multiple mods are merged (union). Legacy stale binary MSBT copies are automatically cleaned up to prevent ARCropolis conflicts (Error 2-0069). Original mod files are never moved or deleted
+- **Auto MSBT Overlay Generation** — Extracts custom text entries from binary MSBT files and generates XMSBT (XML overlay) files in `_MergedResources`. This ensures custom track names, character names, and other text additions from mods are visible in-game even when the emulator's LayeredFS can't reliably load binary MSBT replacements. Entries from multiple mods are merged (union). Locale-specific MSBT files (e.g. `msg_bgm+us_en.msbt`) are automatically renamed to locale-independent names (e.g. `msg_bgm.msbt`) so ARCropolis uses them as universal fallbacks. Legacy stale binary MSBT copies are automatically cleaned up to prevent ARCropolis conflicts (Error 2-0069). Original mod files are never moved or deleted
 - **Save** — Generates PRC configuration for in-game music (use the global Save button in the toolbar)
 
 ### Conflict Detection & Resolution
@@ -87,6 +87,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Non-Blocking Audio** — Audio playback runs in a background thread so the UI never freezes during NUS3AUDIO conversion
 - **Global Save / Discard** — Save and Discard buttons right-aligned in the toolbar header (alongside Undo/Redo). Save is bright green when active, Discard is grey. Both buttons are visually shaded out when there's nothing to save. Ctrl+S to save
 - **Unsaved Changes Warning** — Prompts before closing the application if you have unsaved music or CSS changes
+- **Auto-Save Settings** — Settings are saved automatically when changed, with debounced writes to prevent excessive disk I/O
 - **Atomic Config Writes** — Settings are written atomically (temp file + rename) to prevent corruption from crashes
 
 ## Screenshots

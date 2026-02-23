@@ -40,9 +40,8 @@ _CATEGORY_PRIORITY = [
 
 
 class ModManager:
-    def __init__(self, mods_path: Path, disable_method: str = "rename"):
+    def __init__(self, mods_path: Path, disable_method: str = "move"):
         self.mods_path = mods_path
-        self.disable_method = disable_method
         self.scanner = FileScanner()
         self._mods: list[Mod] = []
         self._cached = False
@@ -70,7 +69,9 @@ class ModManager:
                 # Skip well-known non-mod dot-directories
                 if folder.name in (".git", ".vscode", ".idea", ".DS_Store", ".svn", ".hg"):
                     continue
-                status = ModStatus.DISABLED
+                # Dot-prefixed folders are still loaded by the emulator,
+                # so they are effectively ENABLED despite the naming.
+                status = ModStatus.ENABLED
             else:
                 status = ModStatus.ENABLED
 
@@ -85,10 +86,26 @@ class ModManager:
 
             self._mods.append(mod)
 
-        # Also scan .disabled directory for mods disabled via "move" method
-        disabled_dir = self.mods_path / ".disabled"
+        # Also scan disabled_mods directory (sibling of mods folder)
+        disabled_dir = self.mods_path.parent / "disabled_mods"
         if disabled_dir.exists() and disabled_dir.is_dir():
             for folder in sorted(disabled_dir.iterdir()):
+                if not folder.is_dir():
+                    continue
+
+                mod = Mod(
+                    name=folder.name,
+                    path=folder,
+                    status=ModStatus.DISABLED,
+                )
+                mod.metadata.categories = self._quick_categorize(folder)
+                self._mods.append(mod)
+
+        # Also scan legacy .disabled directory inside mods for backward
+        # compat (move them out on next disable/enable cycle)
+        legacy_disabled = self.mods_path / ".disabled"
+        if legacy_disabled.exists() and legacy_disabled.is_dir():
+            for folder in sorted(legacy_disabled.iterdir()):
                 if not folder.is_dir():
                     continue
 
@@ -209,20 +226,15 @@ class ModManager:
         if mod.status == ModStatus.ENABLED:
             return
 
-        if self.disable_method == "rename":
-            new_name = mod.name[1:] if mod.name.startswith(".") else mod.name
-            new_path = safe_rename(mod.path, new_name)
-            mod.name = new_name
-            mod.path = new_path
-            mod.status = ModStatus.ENABLED
-        else:
-            new_path = self.mods_path / mod.original_name
-            if new_path.exists():
-                raise FileExistsError(f"Cannot enable: '{mod.original_name}' already exists in mods folder")
-            mod.path.rename(new_path)
-            mod.path = new_path
-            mod.name = mod.original_name
-            mod.status = ModStatus.ENABLED
+        # Always use "move" strategy — renaming doesn't prevent
+        # ARCropolis / the emulator from loading the folder.
+        new_path = self.mods_path / mod.original_name
+        if new_path.exists():
+            raise FileExistsError(f"Cannot enable: '{mod.original_name}' already exists in mods folder")
+        mod.path.rename(new_path)
+        mod.path = new_path
+        mod.name = mod.original_name
+        mod.status = ModStatus.ENABLED
 
         self.invalidate_cache()
 
@@ -230,21 +242,18 @@ class ModManager:
         if mod.status == ModStatus.DISABLED:
             return
 
-        if self.disable_method == "rename":
-            new_name = f".{mod.name}"
-            new_path = safe_rename(mod.path, new_name)
-            mod.name = new_name
-            mod.path = new_path
-            mod.status = ModStatus.DISABLED
-        else:
-            disabled_dir = self.mods_path / ".disabled"
-            disabled_dir.mkdir(exist_ok=True)
-            new_path = disabled_dir / mod.name
-            if new_path.exists():
-                raise FileExistsError(f"Cannot disable: '{mod.name}' already exists in disabled folder")
-            mod.path.rename(new_path)
-            mod.path = new_path
-            mod.status = ModStatus.DISABLED
+        # Move to a sibling directory OUTSIDE the mods folder so the
+        # emulator / ARCropolis cannot see it at all.  Using a
+        # sub-folder of mods (like ".disabled") does NOT work because
+        # ARCropolis scans all directories regardless of name.
+        disabled_dir = self.mods_path.parent / "disabled_mods"
+        disabled_dir.mkdir(exist_ok=True)
+        new_path = disabled_dir / mod.name
+        if new_path.exists():
+            raise FileExistsError(f"Cannot disable: '{mod.name}' already exists in disabled folder")
+        mod.path.rename(new_path)
+        mod.path = new_path
+        mod.status = ModStatus.DISABLED
 
         self.invalidate_cache()
 

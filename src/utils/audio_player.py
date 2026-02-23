@@ -232,6 +232,47 @@ class AudioPlayer:
     def volume(self) -> float:
         return self._volume
 
+    def get_position(self) -> float:
+        """Get current playback position in seconds."""
+        if not _pygame_initialized or not _pygame_available:
+            return 0.0
+        try:
+            return pygame.mixer.music.get_pos() / 1000.0
+        except Exception:
+            return 0.0
+
+    def get_duration(self) -> float:
+        """Get duration of current track in seconds (estimated from file)."""
+        if not self._current_file or not self._current_file.exists():
+            return 0.0
+        try:
+            import wave
+            if self._current_file.suffix.lower() == '.wav':
+                with wave.open(str(self._current_file), 'rb') as wf:
+                    return wf.getnframes() / wf.getframerate()
+        except Exception:
+            pass
+        # Rough estimate from file size for other formats
+        try:
+            size = self._current_file.stat().st_size
+            # ~192 kbps average for compressed audio
+            return size / 24000.0
+        except Exception:
+            return 0.0
+
+    def seek(self, position: float):
+        """Seek to a position in seconds."""
+        if not _pygame_initialized or not _pygame_available or not self._playing:
+            return
+        try:
+            pygame.mixer.music.set_pos(position)
+        except Exception:
+            # Some formats may not support seeking; restart and skip
+            try:
+                pygame.mixer.music.play(start=position)
+            except Exception:
+                pass
+
     def cleanup(self):
         """Clean up audio resources."""
         self.stop()

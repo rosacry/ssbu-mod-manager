@@ -226,6 +226,25 @@ class MusicPage(BasePage):
         self.volume_slider.set(70)
         self.volume_slider.pack(side="left", padx=(0, 6))
 
+        # Seek timeline
+        self.seek_label = ctk.CTkLabel(player_inner, text="0:00",
+                                       font=ctk.CTkFont(size=10), text_color="#555555")
+        self.seek_label.pack(side="left", padx=(4, 2))
+        self._seek_dragging = False
+        self.seek_slider = ctk.CTkSlider(
+            player_inner, from_=0, to=100, width=120, height=14,
+            command=self._on_seek_drag,
+            fg_color="#2a2a4a", progress_color="#1f538d",
+            button_color="#4488cc", button_hover_color="#5599dd",
+        )
+        self.seek_slider.set(0)
+        self.seek_slider.pack(side="left", padx=(0, 2))
+        self.seek_slider.bind("<ButtonPress-1>", lambda e: setattr(self, '_seek_dragging', True))
+        self.seek_slider.bind("<ButtonRelease-1>", self._on_seek_release)
+        self.seek_duration_label = ctk.CTkLabel(player_inner, text="0:00",
+                                                 font=ctk.CTkFont(size=10), text_color="#555555")
+        self.seek_duration_label.pack(side="left", padx=(2, 6))
+
         # Now playing status
         self.player_status = ctk.CTkLabel(
             player_inner, text="",
@@ -703,6 +722,11 @@ class MusicPage(BasePage):
                 text="■  Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
             # Start polling for end-of-track to reset button state
             self._poll_playback_end()
+            # Start seek bar updates
+            dur = audio_player.get_duration()
+            self.seek_duration_label.configure(text=self._fmt_time(int(dur)))
+            self.seek_slider.set(0)
+            self._update_seek_bar()
         else:
             self.after(5000, lambda: self.player_status.configure(text=""))
 
@@ -724,10 +748,46 @@ class MusicPage(BasePage):
         self.play_toggle_btn.configure(
             text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
         self.player_status.configure(text="Stopped", text_color="#888888")
+        self.seek_slider.set(0)
+        self.seek_label.configure(text="0:00")
+        self.seek_duration_label.configure(text="0:00")
         self.after(2000, lambda: self.player_status.configure(text=""))
 
     def _on_volume_change(self, value):
         audio_player.set_volume(value / 100.0)
+
+    def _on_seek_drag(self, value):
+        """Called continuously as the seek slider is dragged."""
+        dur = audio_player.get_duration()
+        if dur > 0:
+            secs = int(value / 100.0 * dur)
+            self.seek_label.configure(text=self._fmt_time(secs))
+
+    def _on_seek_release(self, event):
+        """Seek to position when slider is released."""
+        self._seek_dragging = False
+        dur = audio_player.get_duration()
+        if dur > 0 and self._is_playing:
+            pos = self.seek_slider.get() / 100.0 * dur
+            audio_player.seek(pos)
+
+    def _update_seek_bar(self):
+        """Periodically update the seek slider to reflect playback position."""
+        if not self._is_playing or self._seek_dragging:
+            return
+        dur = audio_player.get_duration()
+        pos = audio_player.get_position()
+        if dur > 0:
+            pct = min(100.0, pos / dur * 100.0)
+            self.seek_slider.set(pct)
+            self.seek_label.configure(text=self._fmt_time(int(pos)))
+            self.seek_duration_label.configure(text=self._fmt_time(int(dur)))
+        self.after(500, self._update_seek_bar)
+
+    @staticmethod
+    def _fmt_time(seconds: int) -> str:
+        m, s = divmod(max(0, seconds), 60)
+        return f"{m}:{s:02d}"
 
     def save_changes(self):
         """Public save method invoked by the global toolbar Save button."""

@@ -46,6 +46,11 @@ class ModManagerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
+        # Hide window during initialization to prevent the "flash" where
+        # a tiny default-sized window appears briefly before the real
+        # geometry is applied.
+        self.withdraw()
+
         self.title("SSBU Mod Manager")
 
         # Shutdown flag for background threads
@@ -134,6 +139,33 @@ class ModManagerApp(ctk.CTk):
             except Exception as e:
                 logger.warn("App", f"Failed to restore moved files: {e}")
 
+        # Migrate mods from legacy .disabled subfolder to the new
+        # disabled_mods sibling directory (ARCropolis loads all folders
+        # inside mods regardless of name, so .disabled didn't work).
+        mods_p = settings.mods_path or Path(".")
+        legacy_disabled = mods_p / ".disabled"
+        if legacy_disabled.exists() and legacy_disabled.is_dir():
+            new_disabled = mods_p.parent / "disabled_mods"
+            new_disabled.mkdir(exist_ok=True)
+            migrated = 0
+            for item in list(legacy_disabled.iterdir()):
+                if item.is_dir():
+                    dest = new_disabled / item.name
+                    if not dest.exists():
+                        try:
+                            item.rename(dest)
+                            migrated += 1
+                        except OSError:
+                            pass
+            if migrated:
+                logger.info("App", f"Migrated {migrated} mod(s) from .disabled to disabled_mods")
+            # Remove legacy dir if empty
+            try:
+                if not any(legacy_disabled.iterdir()):
+                    legacy_disabled.rmdir()
+            except OSError:
+                pass
+
         logger.info("App", "All managers initialized")
 
         # Build UI
@@ -182,6 +214,9 @@ class ModManagerApp(ctk.CTk):
         self.bind_all("<MouseWheel>", self._global_fast_scroll, add=False)
 
         logger.info("App", "Application startup complete")
+
+        # Show the window now that geometry and all UI elements are ready.
+        self.deiconify()
 
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
@@ -307,6 +342,15 @@ class ModManagerApp(ctk.CTk):
             if isinstance(w, tk.Text):
                 scrollable = w
                 break
+            # CTkScrollableFrame — its internal canvas is NOT in the
+            # ancestor chain of child widgets, so we must detect the
+            # frame itself and grab its _parent_canvas.
+            if isinstance(w, ctk.CTkScrollableFrame):
+                try:
+                    scrollable = w._parent_canvas
+                    break
+                except AttributeError:
+                    pass
             if isinstance(w, tk.Canvas):
                 # Only canvases that have a scrollregion (i.e. are scrollable)
                 try:
@@ -471,7 +515,6 @@ class ModManagerApp(ctk.CTk):
         settings = self.config_manager.settings
         self.mod_manager = ModManager(
             settings.mods_path or Path("."),
-            settings.mod_disable_method,
         )
         self.plugin_manager = PluginManager(settings.plugins_path or Path("."))
         self.conflict_resolver = ConflictResolver(settings.mods_path or Path("."))

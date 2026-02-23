@@ -9,7 +9,7 @@ class AppSettings:
     mods_path: Optional[Path] = None
     plugins_path: Optional[Path] = None
     css_mod_folder: Optional[Path] = None
-    mod_disable_method: str = "rename"
+    mod_disable_method: str = "move"
     theme: str = "Dark"
     window_geometry: str = "1400x900"
     last_opened_page: str = "dashboard"

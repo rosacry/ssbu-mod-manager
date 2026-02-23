@@ -79,21 +79,9 @@ class SettingsPage(BasePage):
         ctk.CTkButton(css_frame, text="Browse", width=80,
                       command=self._browse_css, height=34, corner_radius=8).pack(side="left")
 
-        # Mod Disable Method
-        method_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
-        method_section.pack(fill="x", pady=(0, 15))
-
-        ctk.CTkLabel(method_section, text="Mod Disable Method",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
-                     ).pack(fill="x", padx=15, pady=(15, 5))
-
-        self.method_var = ctk.StringVar(value=settings.mod_disable_method)
-        ctk.CTkRadioButton(method_section, text='Rename (prefix with ".")',
-                           variable=self.method_var, value="rename"
-                           ).pack(fill="x", padx=15, pady=3)
-        ctk.CTkRadioButton(method_section, text="Move to disabled folder",
-                           variable=self.method_var, value="move"
-                           ).pack(fill="x", padx=15, pady=(3, 15))
+        # Mod Disable Method — no longer configurable; "move" is the
+        # only method that actually prevents ARCropolis from loading.
+        self.method_var = ctk.StringVar(value="move")
 
         # General options
         gen_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
@@ -111,17 +99,37 @@ class SettingsPage(BasePage):
         ctk.CTkCheckBox(gen_section, text="Create backup before merge operations",
                         variable=self.backup_var).pack(fill="x", padx=15, pady=(3, 15))
 
-        # Save button
+        # Reset button (auto-save replaces save button)
         btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(5, 20))
-
-        ctk.CTkButton(btn_frame, text="Save Settings", width=160,
-                      fg_color="#2fa572", hover_color="#106a43",
-                      command=self._save_settings, height=38, corner_radius=8).pack(side="left", padx=(0, 10))
 
         ctk.CTkButton(btn_frame, text="Reset to Defaults", width=160,
                       fg_color="#555555", hover_color="#444444",
                       command=self._reset, height=38, corner_radius=8).pack(side="left")
+
+        # Auto-save: trace all settings variables
+        self._auto_save_active = True
+        self.sdmc_var.trace_add("write", lambda *_: self._auto_save())
+        self.css_var.trace_add("write", lambda *_: self._auto_save())
+        self.auto_detect_var.trace_add("write", lambda *_: self._auto_save())
+        self.backup_var.trace_add("write", lambda *_: self._auto_save())
+
+    def _auto_save(self):
+        """Auto-save settings whenever any value changes."""
+        if not self._auto_save_active:
+            return
+        # Debounce: cancel any pending auto-save and schedule a new one
+        if hasattr(self, '_auto_save_id') and self._auto_save_id:
+            try:
+                self.after_cancel(self._auto_save_id)
+            except Exception:
+                pass
+        self._auto_save_id = self.after(300, self._do_auto_save)
+
+    def _do_auto_save(self):
+        """Actually persist the settings."""
+        self._auto_save_id = None
+        self._save_settings(quiet=True)
 
     def on_show(self):
         self._validate_sdmc()
@@ -195,7 +203,7 @@ class SettingsPage(BasePage):
         else:
             self.sdmc_status.configure(text=msg, text_color="#e94560")
 
-    def _save_settings(self):
+    def _save_settings(self, quiet: bool = False):
         settings = self.app.config_manager.settings
 
         sdmc_str = self.sdmc_var.get()
@@ -227,16 +235,19 @@ class SettingsPage(BasePage):
         self.app._update_managers()
         logger.info("Settings", "Settings saved successfully")
 
-        messagebox.showinfo("Saved", "Settings saved successfully.")
+        if not quiet:
+            messagebox.showinfo("Saved", "Settings saved successfully.")
 
     def _reset(self):
         from src.models.settings import AppSettings
+        self._auto_save_active = False  # Prevent traces from firing during reset
         self.app.config_manager.save(AppSettings())
         self.sdmc_var.set("")
         self.css_var.set("")
-        self.method_var.set("rename")
+        self.method_var.set("move")
         self.auto_detect_var.set(True)
         self.backup_var.set(True)
         self.sdmc_status.configure(text="Reset to defaults", text_color="#888888")
         self.app._update_managers()
+        self._auto_save_active = True
         logger.info("Settings", "Settings reset to defaults")

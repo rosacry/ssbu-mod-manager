@@ -1,5 +1,6 @@
 """Resolve conflicts between mods - especially XMSBT merging."""
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,9 @@ from src.utils.xmsbt_parser import (
 )
 from src.utils.file_utils import backup_file
 from src.utils.logger import logger
+
+# Regex to match locale-specific MSBT filenames like msg_bgm+us_en.msbt
+_LOCALE_MSBT_RE = re.compile(r'^(.+)\+[a-z]{2}_[a-z]{2}(\.msbt)$', re.IGNORECASE)
 
 
 class ConflictResolver:
@@ -234,6 +238,69 @@ class ConflictResolver:
                     pass
 
     # ------------------------------------------------------------------
+    # Locale-specific MSBT rename utility
+    # ------------------------------------------------------------------
+    def rename_locale_msbt_files(self) -> int:
+        """Rename locale-specific MSBT files to locale-independent names.
+
+        ARCropolis loads MSBT files like ``msg_bgm+us_en.msbt`` only for
+        the US-English locale.  When multiple mods provide locale-specific
+        MSBTs at the same relative path, only one wins — causing custom
+        track names to disappear for the losing mods.
+
+        Renaming ``msg_bgm+us_en.msbt`` → ``msg_bgm.msbt`` (and similarly
+        for ``msg_title+us_en.msbt`` → ``msg_title.msbt``) makes the file
+        locale-independent.  ARCropolis uses locale-independent files as a
+        fallback for *all* locales, which avoids the conflict.
+
+        Only renames files whose base name (without locale suffix) does NOT
+        already exist in the same directory — preventing data loss.
+
+        Returns the number of files renamed.
+        """
+        if not self.mods_root.exists():
+            return 0
+
+        renamed = 0
+        for folder in self.mods_root.iterdir():
+            if not folder.is_dir():
+                continue
+            if folder.name.startswith(".") or folder.name.startswith("_"):
+                continue
+
+            for msbt_file in folder.rglob("*.msbt"):
+                m = _LOCALE_MSBT_RE.match(msbt_file.name)
+                if not m:
+                    continue
+
+                base_name = m.group(1) + m.group(2)  # e.g. msg_bgm.msbt
+                target = msbt_file.parent / base_name
+
+                if target.exists():
+                    # A locale-independent version already exists; skip
+                    logger.debug("ConflictResolver",
+                                 f"Skipped rename (target exists): "
+                                 f"{msbt_file.name} in {folder.name}")
+                    continue
+
+                try:
+                    msbt_file.rename(target)
+                    renamed += 1
+                    logger.info("ConflictResolver",
+                                f"Renamed locale MSBT: {msbt_file.name} → "
+                                f"{base_name} in {folder.name}")
+                except OSError as e:
+                    logger.warn("ConflictResolver",
+                                f"Failed to rename {msbt_file.name} in "
+                                f"{folder.name}: {e}")
+
+        if renamed:
+            logger.info("ConflictResolver",
+                        f"Renamed {renamed} locale-specific MSBT file(s) "
+                        f"to locale-independent names")
+        return renamed
+
+    # ------------------------------------------------------------------
     # Binary MSBT → XMSBT overlay generation (emulator-compatible)
     # ------------------------------------------------------------------
     def generate_msbt_overlays(self) -> int:
@@ -260,6 +327,11 @@ class ConflictResolver:
         """
         if not self.mods_root.exists():
             return 0
+
+        # Rename locale-specific MSBT files first (e.g. msg_bgm+us_en.msbt
+        # → msg_bgm.msbt) so they become locale-independent and stop
+        # conflicting with other mods' locale-specific copies.
+        self.rename_locale_msbt_files()
 
         # Restore any .xmsbt.managed files left by a previous version
         # of this tool.  These renames caused ARCropolis Error 2-0069.

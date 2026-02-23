@@ -1327,6 +1327,28 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     if len(data) < 8 or data[:4] != b'NUS3':
         return False, "Not a valid NUS3AUDIO file", None
 
+    # --- Priority 1: let ffmpeg decode the NUS3AUDIO file directly ---
+    # ffmpeg 5.0+ can read NUS3AUDIO natively and produces clean WAV
+    # output without any custom frame extraction.  This avoids the
+    # distortion that can result from our manual OGG Opus construction.
+    ffmpeg = _find_ffmpeg()
+    if ffmpeg:
+        try:
+            wav_out = cache_dir / f"{cache_key}.wav"
+            ff_result = subprocess.run(
+                [ffmpeg, "-y", "-i", str(nus3audio_path),
+                 "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
+                 str(wav_out)],
+                capture_output=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if ff_result.returncode == 0 and wav_out.exists() and wav_out.stat().st_size > 1000:
+                from src.utils.logger import logger as _lg
+                _lg.info("NUS3AUDIO", f"ffmpeg decoded NUS3AUDIO directly: {nus3audio_path.name}")
+                return True, f"Playing: {nus3audio_path.name}", wav_out
+        except Exception:
+            pass  # fall through to manual approach
+
     sections = _find_sections(data)
 
     # Extract audio entries using ADOF if available

@@ -135,12 +135,16 @@ class PluginsPage(BasePage):
         else:
             switch.deselect()
 
-        # Plugin info - name + description in single label
+        # Plugin info - name + filename + description in single label
         name = plugin.display_name
         desc = plugin.description
+        fname = plugin.filename
         name_color = "#d0d0e8" if is_enabled else "#454560"
 
         display_text = name
+        # Show actual filename if it differs from display name
+        if fname and fname != name:
+            display_text += f"  ({fname})"
         if desc and desc != name:
             display_text += f"  \u2014  {desc}"
 
