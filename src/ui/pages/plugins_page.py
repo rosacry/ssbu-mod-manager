@@ -110,9 +110,9 @@ class PluginsPage(BasePage):
         is_enabled = plugin.status == PluginStatus.ENABLED
         is_required = plugin.known_info and plugin.known_info.required
 
-        row = ctk.CTkFrame(self.plugin_list, fg_color="#242438", corner_radius=6,
-                           height=52)
-        row.pack(fill="x", pady=2)
+        row = ctk.CTkFrame(self.plugin_list, fg_color="#1c1c34", corner_radius=6,
+                           height=44)
+        row.pack(fill="x", pady=1, padx=2)
         row.pack_propagate(False)
 
         # Colored left accent bar
@@ -127,6 +127,7 @@ class PluginsPage(BasePage):
             row, text="", width=42, height=20,
             command=lambda p=plugin: self._on_toggle(p),
             onvalue=True, offvalue=False,
+            bg_color="#1c1c34",
         )
         switch.pack(side="left", padx=(8, 6))
         if is_enabled:
@@ -137,7 +138,7 @@ class PluginsPage(BasePage):
         # Plugin info - name + description in single label
         name = plugin.display_name
         desc = plugin.description
-        name_color = "white" if is_enabled else "#666666"
+        name_color = "#d0d0e8" if is_enabled else "#454560"
 
         display_text = name
         if desc and desc != name:
@@ -145,9 +146,9 @@ class PluginsPage(BasePage):
 
         ctk.CTkLabel(
             row, text=display_text,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=12),
             text_color=name_color, anchor="w",
-        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ).pack(side="left", fill="x", expand=True, padx=(2, 8))
 
         # Size
         ctk.CTkLabel(

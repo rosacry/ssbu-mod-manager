@@ -336,14 +336,16 @@ class DashboardPage(BasePage):
                     try:
                         self.after(0, lambda: self._show_fix_dialog(mergeable))
                     except Exception:
-                        pass
+                        self._loading = False
             except Exception as e:
                 logger.error("Dashboard", f"Conflict fix failed: {e}")
                 if not self.app.shutting_down:
                     try:
                         self.after(0, lambda: self._fix_error(str(e)))
                     except Exception:
-                        pass
+                        self._loading = False
+                else:
+                    self._loading = False
 
         threading.Thread(target=do_fix, daemon=True).start()
 
@@ -393,12 +395,22 @@ class DashboardPage(BasePage):
                                 f"Generated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s)")
 
                 if not self.app.shutting_down:
-                    self.after(0, lambda: self._on_resolve_done(
-                        actually_resolved, failed, msbt_overlays, len(mergeable)))
+                    try:
+                        self.after(0, lambda: self._on_resolve_done(
+                            actually_resolved, failed, msbt_overlays, len(mergeable)))
+                    except Exception:
+                        self._loading = False
+                else:
+                    self._loading = False
             except Exception as e:
                 logger.error("Dashboard", f"Resolution failed: {e}")
                 if not self.app.shutting_down:
-                    self.after(0, lambda: self._fix_error(str(e)))
+                    try:
+                        self.after(0, lambda: self._fix_error(str(e)))
+                    except Exception:
+                        self._loading = False
+                else:
+                    self._loading = False
 
         threading.Thread(target=do_resolve, daemon=True).start()
 

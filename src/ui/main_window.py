@@ -64,15 +64,6 @@ class MainWindow(ctk.CTkFrame):
         self.action_label.pack(side="left")
 
         # Save & Discard buttons — right-aligned
-        self.discard_btn = ctk.CTkButton(
-            toolbar_inner, text="\u2716 Discard", width=90, height=30,
-            fg_color="#555570", hover_color="#666688",
-            font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6,
-            state="disabled", command=self._discard,
-            text_color="#ffffff",
-        )
-        self.discard_btn.pack(side="right", padx=(4, 0))
-
         self.save_btn = ctk.CTkButton(
             toolbar_inner, text="\u2713 Save", width=80, height=30,
             fg_color="#27ae60", hover_color="#2ecc71",
@@ -80,7 +71,16 @@ class MainWindow(ctk.CTkFrame):
             state="disabled", command=self._save,
             text_color="#ffffff",
         )
-        self.save_btn.pack(side="right", padx=(0, 4))
+        self.save_btn.pack(side="right", padx=(4, 0))
+
+        self.discard_btn = ctk.CTkButton(
+            toolbar_inner, text="\u2716 Discard", width=90, height=30,
+            fg_color="#555570", hover_color="#666688",
+            font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6,
+            state="disabled", command=self._discard,
+            text_color="#ffffff",
+        )
+        self.discard_btn.pack(side="right", padx=(0, 4))
 
         # Keyboard shortcuts
         parent.bind("<Control-z>", lambda e: self._undo())

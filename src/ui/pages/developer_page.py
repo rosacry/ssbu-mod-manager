@@ -84,9 +84,8 @@ class DeveloperPage(BasePage):
         )
         self.log_text.pack(side="left", fill="both", expand=True)
 
-        # Scrollbar
-        scrollbar = tk.Scrollbar(log_frame, command=self.log_text.yview,
-                                  bg="#0e0e1a", troughcolor="#0e0e1a")
+        # Scrollbar (styled to match rest of app)
+        scrollbar = ctk.CTkScrollbar(log_frame, command=self.log_text.yview)
         scrollbar.pack(side="right", fill="y")
         self.log_text.configure(yscrollcommand=scrollbar.set)
 

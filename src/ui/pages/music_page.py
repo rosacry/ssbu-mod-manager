@@ -65,8 +65,8 @@ class MusicPage(BasePage):
         content.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
         # === LEFT COLUMN: Stage list ===
-        left = ctk.CTkFrame(content, width=240, fg_color="#242438", corner_radius=10)
-        content.add(left, minsize=180, stretch="never")
+        left = ctk.CTkFrame(content, width=320, fg_color="#242438", corner_radius=10)
+        content.add(left, minsize=200, stretch="never")
 
         ctk.CTkLabel(left, text="Stages",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -158,8 +158,8 @@ class MusicPage(BasePage):
                       ).pack(side="right", padx=5)
 
         # === RIGHT COLUMN: Available tracks ===
-        right = ctk.CTkFrame(content, width=340, fg_color="#242438", corner_radius=10)
-        content.add(right, minsize=200, stretch="never")
+        right = ctk.CTkFrame(content, width=420, fg_color="#242438", corner_radius=10)
+        content.add(right, minsize=250, stretch="never")
 
         avail_header = ctk.CTkFrame(right, fg_color="transparent")
         avail_header.pack(fill="x", padx=10, pady=(10, 5))
@@ -306,15 +306,30 @@ class MusicPage(BasePage):
         mods_path = settings.mods_path
 
         def scan():
-            tracks = self.app.music_manager.discover_tracks(mods_path)
-            logger.info("Music", f"Found {len(tracks)} tracks")
-            if not self.app.shutting_down:
-                try:
-                    self.after(0, lambda: self._on_tracks_loaded(tracks))
-                except Exception:
-                    pass
+            try:
+                tracks = self.app.music_manager.discover_tracks(mods_path)
+                logger.info("Music", f"Found {len(tracks)} tracks")
+                if not self.app.shutting_down:
+                    try:
+                        self.after(0, lambda: self._on_tracks_loaded(tracks))
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error("Music", f"Track scan failed: {e}")
+                if not self.app.shutting_down:
+                    try:
+                        self.after(0, lambda: self._on_scan_error(str(e)))
+                    except Exception:
+                        pass
 
         threading.Thread(target=scan, daemon=True).start()
+
+    def _on_scan_error(self, error_msg: str):
+        """Handle track scan failure on the main thread."""
+        self._stop_spinner()
+        self.track_count_label.configure(text="Scan failed")
+        from tkinter import messagebox
+        messagebox.showerror("Scan Error", f"Failed to scan tracks: {error_msg}")
 
     def _on_tracks_loaded(self, tracks):
         self._loaded = True
@@ -650,11 +665,24 @@ class MusicPage(BasePage):
             audio_player.stop()
             self._is_playing = False
 
+        # Cancel any in-flight play request by bumping the generation counter
+        if not hasattr(self, '_play_generation'):
+            self._play_generation = 0
+        self._play_generation += 1
+        current_gen = self._play_generation
+
         self.player_status.configure(text="Loading...", text_color="#888888")
         self.update_idletasks()
 
         def _play_bg():
+            # If another play request was issued, abandon this one
+            if current_gen != self._play_generation:
+                return
             result = audio_player.play(track.file_path)
+            if current_gen != self._play_generation:
+                # A newer request superseded us; stop what we just started
+                audio_player.stop()
+                return
             if not self.app.shutting_down:
                 self.after(0, lambda: self._on_play_result(result, track))
 
@@ -669,8 +697,22 @@ class MusicPage(BasePage):
             self._is_playing = True
             self.play_toggle_btn.configure(
                 text="■  Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+            # Start polling for end-of-track to reset button state
+            self._poll_playback_end()
         else:
             self.after(5000, lambda: self.player_status.configure(text=""))
+
+    def _poll_playback_end(self):
+        """Periodically check if playback ended so the button resets."""
+        if not self._is_playing:
+            return
+        if not audio_player.is_playing:
+            self._is_playing = False
+            self.play_toggle_btn.configure(
+                text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
+            self.player_status.configure(text="")
+            return
+        self.after(500, self._poll_playback_end)
 
     def _stop_playback(self):
         audio_player.stop()

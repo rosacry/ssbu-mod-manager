@@ -47,8 +47,8 @@ class CSSPage(BasePage):
         main_frame.pack(fill="both", expand=True, padx=30, pady=(0, 5))
 
         # Left panel - character list
-        left_frame = ctk.CTkFrame(main_frame, width=420, fg_color="#242438", corner_radius=10)
-        main_frame.add(left_frame, minsize=250, stretch="never")
+        left_frame = ctk.CTkFrame(main_frame, width=500, fg_color="#242438", corner_radius=10)
+        main_frame.add(left_frame, minsize=300, stretch="never")
 
         ctk.CTkLabel(left_frame, text="Characters",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -88,12 +88,18 @@ class CSSPage(BasePage):
                      textvariable=self.search_var, height=32
                      ).pack(fill="x", padx=10, pady=5)
 
-        self.listbox = tk.Listbox(left_frame, bg="#1e1e2e", fg="#cccccc",
+        listbox_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        listbox_frame.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+
+        self.listbox = tk.Listbox(listbox_frame, bg="#1e1e2e", fg="#cccccc",
                                   selectbackground="#1f538d",
                                   selectforeground="white",
                                   font=("Segoe UI", 10),
                                   relief="flat", bd=0, highlightthickness=0)
-        self.listbox.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+        listbox_scroll = ctk.CTkScrollbar(listbox_frame, command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=listbox_scroll.set)
+        self.listbox.pack(side="left", fill="both", expand=True)
+        listbox_scroll.pack(side="right", fill="y")
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
 
         # Bottom action buttons

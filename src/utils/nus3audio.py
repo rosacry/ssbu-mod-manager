@@ -629,15 +629,81 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
     """Convert a raw OPUS container (magic 'OPUS') to standard OGG Opus.
 
     The OPUS container format found in NUS3AUDIO files has several variants:
-    1. OPUS magic + LOPUS sub-header (0x80000001..0x80000004)
-    2. OPUS magic + raw length-prefixed opus frames
-    3. OPUS magic + custom header + opus frame data with fixed slot sizes
-    4. OPUS magic + offset table + opus frame data
 
-    We try multiple approaches to handle all variants.
+    **SSBU OPUS container** (most common in custom SSBU tracks):
+      Big-endian header (0x40 bytes):
+        0x00: "OPUS" magic
+        0x08: u32 total_samples (BE)
+        0x0C: u32 channels (BE)
+        0x10: u32 sample_rate (BE)
+        0x20: u32 data_offset (BE) — typically 0x40
+        0x24: u32 data_size (BE)
+      At data_offset: LOPUS sub-header (LE) with frame data using
+        big-endian u32 frame sizes in fixed-size slots.
+
+    Other variants:
+      1. OPUS magic + LOPUS sub-header (0x80000001..0x80000004)
+      2. OPUS magic + raw length-prefixed opus frames
+      3. OPUS magic + custom header + opus frame data with fixed slot sizes
+
+    We try the SSBU format first, then fall back to generic strategies.
     """
     if len(audio_data) < 8:
         raise ValueError("OPUS container too short")
+
+    # --- Strategy 0: SSBU OPUS container with big-endian header ---
+    # The SSBU OPUS format has a BE header with data_offset, channels,
+    # sample_rate fields, pointing to LOPUS sub-data with BE frame sizes.
+    if len(audio_data) >= 0x28:
+        try:
+            container_data_offset = struct.unpack_from('>I', audio_data, 0x20)[0]
+            container_data_size = struct.unpack_from('>I', audio_data, 0x24)[0]
+            container_channels = struct.unpack_from('>I', audio_data, 0x0C)[0]
+            container_sample_rate = struct.unpack_from('>I', audio_data, 0x10)[0]
+
+            # Validate: data_offset should be reasonable, channels 1-8,
+            # sample_rate 8000-192000, and data should fit
+            if (0x10 <= container_data_offset <= 0x100
+                    and 1 <= container_channels <= 8
+                    and 8000 <= container_sample_rate <= 192000
+                    and container_data_offset + container_data_size <= len(audio_data) + 64):
+                inner = audio_data[container_data_offset:]
+
+                # Check for LOPUS sub-header inside the inner data
+                if len(inner) >= 0x28:
+                    sub_magic = struct.unpack_from('<I', inner, 0)[0]
+                    if sub_magic & 0x80000000:
+                        # Parse LOPUS header for frame_slot_size
+                        lopus_type = sub_magic & 0xFF
+                        if lopus_type in (1, 2, 3, 4):
+                            slot_size = struct.unpack_from('<H', inner, 0x0A)[0]
+                            if slot_size == 0:
+                                slot_size = struct.unpack_from('<I', inner, 0x14)[0]
+                            if 8 <= slot_size <= 0x2000:
+                                # Try extracting frames with BE u32 sizes
+                                # Frame data starts after the extended LOPUS header
+                                # (typically at 0x28, sometimes at header_size)
+                                for frame_start in [0x28, 0x20, 0x30, 0x18]:
+                                    frames = _extract_opus_be_slots(
+                                        inner, frame_start, slot_size)
+                                    if len(frames) >= 10:
+                                        pre_skip = 312
+                                        if len(inner) > 0x1C:
+                                            ps = struct.unpack_from(
+                                                '<H', inner, 0x1A)[0]
+                                            if ps == 0:
+                                                ps = struct.unpack_from(
+                                                    '<I', inner, 0x1C)[0]
+                                            if 0 < ps < 10000:
+                                                pre_skip = ps
+                                        return _build_ogg_opus_from_frames(
+                                            frames,
+                                            channels=container_channels,
+                                            sample_rate=container_sample_rate,
+                                            pre_skip=pre_skip,
+                                        )
+        except Exception:
+            pass  # Fall through to other strategies
 
     # Skip the "OPUS" magic (4 bytes)
     inner_data = audio_data[4:]
@@ -709,6 +775,35 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
         errors.append(f"Strategy 6 (synthetic LOPUS): {e}")
 
     raise ValueError(f"All OPUS conversion strategies failed: {'; '.join(errors[:3])}")
+
+
+def _extract_opus_be_slots(data: bytes, start_offset: int,
+                           slot_size: int) -> list[bytes]:
+    """Extract Opus frames using big-endian u32 sizes in fixed-size slots.
+
+    The SSBU OPUS container stores frame lengths as big-endian u32
+    at the start of each fixed-size slot, followed by the Opus packet data
+    and zero-padding to fill the slot.
+
+    Args:
+        data: Inner LOPUS data (starting from the LOPUS header).
+        start_offset: Byte offset within *data* where frame slots begin.
+        slot_size: Fixed number of bytes per slot (header field at 0x0A).
+
+    Returns:
+        List of raw Opus frame bytes.
+    """
+    frames: list[bytes] = []
+    pos = start_offset
+    while pos + 4 <= len(data):
+        frame_size = struct.unpack_from('>I', data, pos)[0]
+        if frame_size == 0 or frame_size > slot_size:
+            break
+        if pos + 4 + frame_size > len(data):
+            break
+        frames.append(data[pos + 4:pos + 4 + frame_size])
+        pos += slot_size
+    return frames
 
 
 def _scan_opus_frames(data: bytes) -> bytes:
