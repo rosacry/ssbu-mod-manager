@@ -1339,6 +1339,40 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     if len(data) < 8 or data[:4] != b'NUS3':
         return False, "Not a valid NUS3AUDIO file", None
 
+    # ── Priority 1: let ffmpeg decode the whole NUS3AUDIO file ──
+    # Modern ffmpeg (5.0+) has native NUS3AUDIO support and produces
+    # clean PCM output, bypassing our manual LOPUS→OGG construction
+    # which can introduce distortion.
+    ffmpeg = _find_ffmpeg()
+    if ffmpeg:
+        try:
+            wav_out = cache_dir / f"{cache_key}.wav"
+            result = subprocess.run(
+                [ffmpeg, "-y", "-i", str(nus3audio_path),
+                 "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
+                 str(wav_out)],
+                capture_output=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode == 0 and wav_out.exists():
+                sz = wav_out.stat().st_size
+                # Validate: WAV header (44 bytes) + at least 0.1s of audio
+                # at 48kHz stereo 16-bit  = 44 + 19200 ≈ 19244 bytes
+                if sz > 19000:
+                    from src.utils.logger import logger
+                    logger.info("NUS3AUDIO",
+                                f"ffmpeg decoded NUS3AUDIO directly ({sz} bytes)")
+                    return True, f"Playing: {nus3audio_path.name}", wav_out
+                # Tiny output — ffmpeg couldn't properly decode; clean up
+                try:
+                    wav_out.unlink()
+                except OSError:
+                    pass
+        except Exception as e:
+            from src.utils.logger import logger
+            logger.debug("NUS3AUDIO", f"ffmpeg direct decode failed: {e}")
+
+    # ── Priority 2: manual extraction + per-format conversion ──
     sections = _find_sections(data)
 
     # Extract audio entries using ADOF if available

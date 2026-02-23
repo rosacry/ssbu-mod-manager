@@ -202,6 +202,14 @@ class MusicPage(BasePage):
         player_frame = ctk.CTkFrame(right, fg_color="#1e1e30", corner_radius=6)
         player_frame.pack(fill="x", padx=10, pady=(2, 4))
 
+        # Now playing status — above the controls so it's always visible
+        self.player_status = ctk.CTkLabel(
+            player_frame, text="",
+            font=ctk.CTkFont(size=10), text_color="#2fa572",
+            anchor="w",
+        )
+        self.player_status.pack(fill="x", padx=8, pady=(5, 0))
+
         player_inner = ctk.CTkFrame(player_frame, fg_color="transparent")
         player_inner.pack(fill="x", padx=8, pady=5)
 
@@ -244,13 +252,6 @@ class MusicPage(BasePage):
         self.seek_duration_label = ctk.CTkLabel(player_inner, text="0:00",
                                                  font=ctk.CTkFont(size=10), text_color="#555555")
         self.seek_duration_label.pack(side="left", padx=(2, 6))
-
-        # Now playing status
-        self.player_status = ctk.CTkLabel(
-            player_inner, text="",
-            font=ctk.CTkFont(size=10), text_color="#666666",
-        )
-        self.player_status.pack(side="left", fill="x", expand=True)
 
         # Add track button
         add_btn_frame = ctk.CTkFrame(right, fg_color="transparent")

@@ -49,6 +49,7 @@ class ConflictsPage(BasePage):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
         self._conflicts = []
+        self._locale_msbts = []  # locale-specific MSBT files detected
         self._scanned = False
         self._scanning = False
         self._needs_render = False
@@ -107,6 +108,13 @@ class ConflictsPage(BasePage):
             self.auto_btn_frame, text="Restore Originals",
             fg_color="#b08a2a", hover_color="#8a6b1f",
             command=self._restore_originals, width=180,
+            corner_radius=8, height=34,
+        )
+
+        self.fix_locale_btn = ctk.CTkButton(
+            self.auto_btn_frame, text="Fix Locale MSBT Files",
+            fg_color="#1f538d", hover_color="#163b6a",
+            command=self._fix_locale_msbts, width=200,
             corner_radius=8, height=34,
         )
 
@@ -188,6 +196,12 @@ class ConflictsPage(BasePage):
                 conflicts = self.app.conflict_detector.detect_conflicts(mods_path)
                 logger.info("Conflicts", f"Found {len(conflicts)} total conflicts")
 
+                # Detect locale-specific MSBT files
+                locale_msbts = self.app.conflict_resolver.detect_locale_msbts()
+                if locale_msbts:
+                    logger.info("Conflicts",
+                                f"Found {len(locale_msbts)} locale-specific MSBT file(s)")
+
                 merged_dir = mods_path / "_MergedResources"
                 merged_files = set()
                 if merged_dir.exists():
@@ -202,7 +216,7 @@ class ConflictsPage(BasePage):
 
                 # Only deliver results if this scan hasn't been superseded
                 if not self.app.shutting_down and getattr(self, "_scan_generation", 0) == current_gen:
-                    self.after(0, lambda: self._on_scan_done(conflicts))
+                    self.after(0, lambda: self._on_scan_done(conflicts, locale_msbts))
             except Exception as e:
                 tb = traceback.format_exc()
                 logger.error("Conflicts", f"Scan failed: {e}\n{tb}")
@@ -224,10 +238,11 @@ class ConflictsPage(BasePage):
                      text=f"Scan error: {error_msg}\nClick 'Rescan' to try again.",
                      font=ctk.CTkFont(size=13), text_color="#e94560").pack(pady=40)
 
-    def _on_scan_done(self, conflicts):
+    def _on_scan_done(self, conflicts, locale_msbts=None):
         self._scanning = False
         self._scanned = True
         self._conflicts = conflicts
+        self._locale_msbts = locale_msbts or []
 
         try:
             if self.winfo_ismapped() and self.winfo_viewable():
@@ -247,8 +262,9 @@ class ConflictsPage(BasePage):
             w.destroy()
         self.auto_resolve_btn.pack_forget()
         self.restore_btn.pack_forget()
+        self.fix_locale_btn.pack_forget()
 
-        if not self._conflicts:
+        if not self._conflicts and not self._locale_msbts:
             self.summary_label.configure(
                 text="No conflicts detected. All your mods are compatible.",
                 text_color="#2fa572")
@@ -266,8 +282,8 @@ class ConflictsPage(BasePage):
             return
 
         total = len(self._conflicts)
-        mergeable = sum(1 for c in self._conflicts if c.is_mergeable and not c.resolved)
-        resolved = sum(1 for c in self._conflicts if c.resolved)
+        mergeable = sum(1 for c in self._conflicts if c.is_mergeable and not c.resolved) if self._conflicts else 0
+        resolved = sum(1 for c in self._conflicts if c.resolved) if self._conflicts else 0
         mods = set()
         for c in self._conflicts:
             mods.update(c.mods_involved)
@@ -280,12 +296,19 @@ class ConflictsPage(BasePage):
 
         type_info = ", ".join(f"{count} {ext}" for ext, count in sorted(type_counts.items()))
 
-        summary_text = (f"{total} conflicts across {len(mods)} mods | "
-                        f"{type_info} | "
-                        f"{mergeable} auto-resolvable | {resolved} resolved")
+        locale_count = len(self._locale_msbts)
+        summary_parts = []
+        if total:
+            summary_parts.append(f"{total} conflicts across {len(mods)} mods")
+            summary_parts.append(type_info)
+            summary_parts.append(f"{mergeable} auto-resolvable")
+            summary_parts.append(f"{resolved} resolved")
+        if locale_count:
+            summary_parts.append(f"{locale_count} locale MSBT file(s) to fix")
+        summary_text = " | ".join(summary_parts) if summary_parts else "No conflicts found."
         self.summary_label.configure(
             text=summary_text,
-            text_color="#e94560" if mergeable > 0 else "#2fa572")
+            text_color="#e94560" if (mergeable > 0 or locale_count > 0) else "#2fa572")
 
         if mergeable > 0:
             self.auto_resolve_btn.pack(side="left")
@@ -293,6 +316,9 @@ class ConflictsPage(BasePage):
         else:
             # Still show restore button in case user needs to undo a previous merge
             self.restore_btn.pack(side="left")
+
+        if locale_count > 0:
+            self.fix_locale_btn.pack(side="left", padx=(10, 0))
 
         # Group conflicts by type and render with explanations
         by_ext = {}
@@ -341,6 +367,42 @@ class ConflictsPage(BasePage):
                     on_ignore=self._ignore_conflict,
                 )
                 card.pack(fill="x", pady=3)
+
+        # Render locale-specific MSBT section if any were found
+        if self._locale_msbts:
+            locale_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+            locale_header.pack(fill="x", pady=(12, 4))
+
+            lh_inner = ctk.CTkFrame(locale_header, fg_color="transparent")
+            lh_inner.pack(fill="x", padx=12, pady=8)
+
+            ctk.CTkLabel(lh_inner,
+                         text=f"Locale-Specific MSBT Files ({len(self._locale_msbts)})",
+                         font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color="#d4a017", anchor="w").pack(anchor="w")
+
+            ctk.CTkLabel(lh_inner,
+                         text="These MSBT files have locale suffixes (e.g. msg_bgm+us_en.msbt) which "
+                              "limit them to a single language. Renaming them removes the locale suffix "
+                              "(e.g. → msg_bgm.msbt) so they work for all languages and avoid conflicts "
+                              "between mods. Click 'Fix Locale MSBT Files' above to rename them all.",
+                         font=ctk.CTkFont(size=11), text_color="#888888",
+                         anchor="w", wraplength=800, justify="left").pack(anchor="w", pady=(4, 0))
+
+            # List each locale MSBT file
+            for mod_name, filename, fpath in self._locale_msbts:
+                row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
+                row.pack(fill="x", pady=2, padx=4)
+
+                row_inner = ctk.CTkFrame(row, fg_color="transparent")
+                row_inner.pack(fill="x", padx=10, pady=6)
+
+                ctk.CTkLabel(row_inner, text=f"\u26a0  {filename}",
+                             font=ctk.CTkFont(size=12), text_color="#d4a017",
+                             anchor="w").pack(side="left")
+                ctk.CTkLabel(row_inner, text=f"in {mod_name}",
+                             font=ctk.CTkFont(size=11), text_color="#888888",
+                             anchor="w").pack(side="left", padx=(10, 0))
 
         self.conflict_list.update_idletasks()
         # Re-patch scroll speed after rendering new widgets
@@ -434,3 +496,39 @@ class ConflictsPage(BasePage):
         except Exception as e:
             logger.error("Conflicts", f"Restore failed: {e}")
             messagebox.showerror("Error", f"Restore failed: {e}")
+
+    def _fix_locale_msbts(self):
+        """Rename locale-specific MSBT files to locale-independent names."""
+        if not self._locale_msbts:
+            messagebox.showinfo("Info", "No locale-specific MSBT files to fix.")
+            return
+
+        count = len(self._locale_msbts)
+        examples = "\n".join(
+            f"  {fn}  →  {fn.split('+')[0]}.msbt  (in {mod})"
+            for mod, fn, _ in self._locale_msbts[:5]
+        )
+        if count > 5:
+            examples += f"\n  ... and {count - 5} more"
+
+        confirm = messagebox.askyesno(
+            "Fix Locale MSBT Files",
+            f"This will rename {count} locale-specific MSBT file(s) "
+            f"to locale-independent names:\n\n{examples}\n\n"
+            f"This makes them work for all languages and avoids conflicts "
+            f"between mods.\n\nContinue?"
+        )
+        if not confirm:
+            return
+
+        try:
+            resolver = self.app.conflict_resolver
+            renamed = resolver.rename_locale_msbt_files()
+            logger.info("Conflicts", f"Fixed {renamed} locale MSBT file(s)")
+            messagebox.showinfo("Done", f"Renamed {renamed} locale-specific MSBT file(s).")
+            # Re-scan to update the view
+            self._scanned = False
+            self._scan()
+        except Exception as e:
+            logger.error("Conflicts", f"Fix locale MSBTs failed: {e}")
+            messagebox.showerror("Error", f"Failed to fix locale MSBT files: {e}")

@@ -300,6 +300,34 @@ class ConflictResolver:
                         f"to locale-independent names")
         return renamed
 
+    def detect_locale_msbts(self) -> list[tuple[str, str, Path]]:
+        """Detect locale-specific MSBT files that should be renamed.
+
+        Returns a list of (mod_name, original_filename, file_path) tuples
+        for each locale-specific MSBT file found.
+        """
+        if not self.mods_root.exists():
+            return []
+
+        results = []
+        for folder in self.mods_root.iterdir():
+            if not folder.is_dir():
+                continue
+            if folder.name.startswith(".") or folder.name.startswith("_"):
+                continue
+
+            for msbt_file in folder.rglob("*.msbt"):
+                m = _LOCALE_MSBT_RE.match(msbt_file.name)
+                if not m:
+                    continue
+                base_name = m.group(1) + m.group(2)
+                target = msbt_file.parent / base_name
+                if target.exists():
+                    continue  # Already has locale-independent version
+                results.append((folder.name, msbt_file.name, msbt_file))
+
+        return results
+
     # ------------------------------------------------------------------
     # Binary MSBT → XMSBT overlay generation (emulator-compatible)
     # ------------------------------------------------------------------
@@ -328,10 +356,10 @@ class ConflictResolver:
         if not self.mods_root.exists():
             return 0
 
-        # Rename locale-specific MSBT files first (e.g. msg_bgm+us_en.msbt
-        # → msg_bgm.msbt) so they become locale-independent and stop
-        # conflicting with other mods' locale-specific copies.
-        self.rename_locale_msbt_files()
+        # NOTE: Locale-specific MSBT renaming (e.g. msg_bgm+us_en.msbt →
+        # msg_bgm.msbt) is no longer done automatically here. It is now
+        # triggered manually via the Conflicts page "Fix Locale MSBT
+        # Files" button so users can review before renaming.
 
         # Restore any .xmsbt.managed files left by a previous version
         # of this tool.  These renames caused ARCropolis Error 2-0069.

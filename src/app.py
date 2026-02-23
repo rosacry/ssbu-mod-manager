@@ -48,13 +48,10 @@ class ModManagerApp(ctk.CTk):
 
         # Hide window during initialization to prevent the "flash" where
         # a tiny default-sized window appears briefly before the real
-        # geometry is applied.  Use alpha=0 (transparent) instead of
-        # withdraw() because deiconify() can glitch on some Windows
-        # configurations with customtkinter.
-        try:
-            self.attributes('-alpha', 0)
-        except Exception:
-            pass
+        # geometry is applied.  Use withdraw() to completely hide the
+        # window.  After all geometry and UI setup, deiconify() brings
+        # it back in its final state without any visible flash.
+        self.withdraw()
 
         self.title("SSBU Mod Manager")
 
@@ -216,15 +213,22 @@ class ModManagerApp(ctk.CTk):
 
         # Global fast-scroll: intercept ALL MouseWheel events application-wide
         # and scroll the nearest scrollable ancestor 5× faster.
-        self.bind_all("<MouseWheel>", self._global_fast_scroll, add=False)
+        # Use add="+" to coexist with CTkScrollableFrame's own handlers.
+        self.bind_all("<MouseWheel>", self._global_fast_scroll, add="+")
+
+        # Prevent CTkScrollableFrame from overriding our global scroll
+        # handler.  CTkScrollableFrame's <Enter>/<Leave> handlers call
+        # bind_all/unbind_all which replaces our handler.  Monkey-patch
+        # the class to disable this behaviour — our global handler
+        # already handles all scroll events uniformly.
+        self._neutralize_ctk_scroll_management()
 
         logger.info("App", "Application startup complete")
 
         # Show the window now that geometry and all UI elements are ready.
-        try:
-            self.attributes('-alpha', 1)
-        except Exception:
-            pass
+        # Force layout to process so the window appears at its final size.
+        self.update_idletasks()
+        self.deiconify()
 
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
@@ -323,6 +327,42 @@ class ModManagerApp(ctk.CTk):
     # ─── Global fast scroll ───────────────────────────────────────────
 
     _SCROLL_SPEED = 5  # Multiplier for mouse wheel scrolling
+
+    def _neutralize_ctk_scroll_management(self):
+        """Prevent CTkScrollableFrame from overriding our global scroll handler.
+
+        CTkScrollableFrame binds <Enter>/<Leave> on its canvas to call
+        bind_all/unbind_all for <MouseWheel>, which replaces any existing
+        global handler (including ours).  We monkey-patch the class method
+        ``_mouse_wheel_all`` to be a no-op so only our global handler runs.
+        Also unbind any existing <Enter>/<Leave> scroll bindings on all
+        existing CTkScrollableFrame instances.
+        """
+        import types
+
+        # Patch the class so new instances don't interfere
+        def _noop_mouse_wheel(self_csf, event):
+            pass  # Our global handler handles all scrolling
+
+        ctk.CTkScrollableFrame._mouse_wheel_all = _noop_mouse_wheel
+
+        # Also neutralize existing instances by unbinding their canvas
+        # Enter/Leave handlers that call bind_all/unbind_all
+        def _neutralize_existing(widget):
+            if isinstance(widget, ctk.CTkScrollableFrame):
+                try:
+                    widget._parent_canvas.unbind("<Enter>")
+                    widget._parent_canvas.unbind("<Leave>")
+                    widget._parent_canvas.unbind("<MouseWheel>")
+                except Exception:
+                    pass
+            try:
+                for child in widget.winfo_children():
+                    _neutralize_existing(child)
+            except Exception:
+                pass
+
+        _neutralize_existing(self)
 
     def _global_fast_scroll(self, event):
         """Intercept every MouseWheel event and scroll 5× faster.
@@ -515,6 +555,8 @@ class ModManagerApp(ctk.CTk):
             page = page_class(self.main_window.content, self)
             self.main_window.register_page(page_id, page)
             logger.info("App", f"Created page: {page_id}")
+            # Neutralize CTkScrollableFrame scroll management on new page
+            self.after(100, lambda: self._neutralize_ctk_scroll_management())
         logger.info("App", f"Navigate to: {page_id}")
         self.main_window.navigate(page_id)
 
