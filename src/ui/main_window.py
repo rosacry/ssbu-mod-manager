@@ -51,20 +51,49 @@ class MainWindow(ctk.CTkFrame):
         )
         self.redo_btn.pack(side="left", padx=(0, 12))
 
+        # Separator between undo/redo and save/discard
+        sep_label = ctk.CTkLabel(toolbar_inner, text="|", text_color="#333355",
+                                 font=ctk.CTkFont(size=14))
+        sep_label.pack(side="left", padx=(0, 12))
+
+        # Action label (between undo/redo and save/discard)
         self.action_label = ctk.CTkLabel(
             toolbar_inner, text="",
             font=ctk.CTkFont(size=11), text_color="#666666",
         )
         self.action_label.pack(side="left")
 
+        # Save & Discard buttons — right-aligned, bright colours
+        self.discard_btn = ctk.CTkButton(
+            toolbar_inner, text="\u2716 Discard", width=90, height=30,
+            fg_color="#c0392b", hover_color="#e74c3c",
+            font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6,
+            state="disabled", command=self._discard,
+            text_color="#ffffff",
+        )
+        self.discard_btn.pack(side="right", padx=(4, 0))
+
+        self.save_btn = ctk.CTkButton(
+            toolbar_inner, text="\u2713 Save", width=80, height=30,
+            fg_color="#27ae60", hover_color="#2ecc71",
+            font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6,
+            state="disabled", command=self._save,
+            text_color="#ffffff",
+        )
+        self.save_btn.pack(side="right", padx=(0, 4))
+
         # Keyboard shortcuts
         parent.bind("<Control-z>", lambda e: self._undo())
         parent.bind("<Control-Z>", lambda e: self._undo())
         parent.bind("<Control-y>", lambda e: self._redo())
         parent.bind("<Control-Y>", lambda e: self._redo())
+        parent.bind("<Control-s>", lambda e: self._save())
+        parent.bind("<Control-S>", lambda e: self._save())
 
         # Listen for action history changes
         action_history.add_listener(self._update_undo_redo)
+        # Listen for unsaved changes
+        self._unsaved_listener_id = None
 
         self.content = ctk.CTkFrame(right, fg_color="transparent", corner_radius=0)
         self.content.pack(fill="both", expand=True)
@@ -111,6 +140,66 @@ class MainWindow(ctk.CTkFrame):
                 if hasattr(page, '_loaded'):
                     page._loaded = False
                 page.on_show()
+
+    def _save(self):
+        """Invoke save on the current page (if it has unsaved changes)."""
+        if not self.app._has_unsaved_changes:
+            return
+        # Try current page first
+        if self.current_page and self.current_page in self.pages:
+            page = self.pages[self.current_page]
+            if hasattr(page, 'save_changes') and callable(page.save_changes):
+                page.save_changes()
+                self.update_save_discard()
+                return
+        # Fallback: try all pages that have unsaved changes
+        for page_id, page in self.pages.items():
+            if hasattr(page, 'save_changes') and callable(page.save_changes):
+                page.save_changes()
+                self.update_save_discard()
+                return
+
+    def _discard(self):
+        """Discard unsaved changes by reloading the current page."""
+        from tkinter import messagebox
+        confirm = messagebox.askyesno(
+            "Discard Changes",
+            "Discard all unsaved changes?")
+        if not confirm:
+            return
+        self.app.mark_saved()
+        self.update_save_discard()
+        # Reload current page
+        if self.current_page and self.current_page in self.pages:
+            page = self.pages[self.current_page]
+            if hasattr(page, '_loaded'):
+                page._loaded = False
+            page.on_show()
+        self.action_label.configure(text="Changes discarded", text_color="#e94560")
+        self._safe_after(3000, lambda: self.action_label.configure(text=""))
+
+    def update_save_discard(self):
+        """Update save/discard button states based on unsaved changes."""
+        self._safe_after(0, self._update_save_discard_impl)
+
+    def _update_save_discard_impl(self):
+        try:
+            if self.app._has_unsaved_changes:
+                self.save_btn.configure(state="normal",
+                                        fg_color="#27ae60",
+                                        text_color="#ffffff")
+                self.discard_btn.configure(state="normal",
+                                           fg_color="#c0392b",
+                                           text_color="#ffffff")
+            else:
+                self.save_btn.configure(state="disabled",
+                                        fg_color="#1e3828",
+                                        text_color="#8888aa")
+                self.discard_btn.configure(state="disabled",
+                                           fg_color="#381e1e",
+                                           text_color="#8888aa")
+        except Exception:
+            pass
 
     def _update_undo_redo(self):
         """Update undo/redo button states (thread-safe)."""

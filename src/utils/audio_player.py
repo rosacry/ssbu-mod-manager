@@ -120,6 +120,23 @@ class AudioPlayer:
     def _play_file(self, file_path: Path) -> tuple[bool, str]:
         """Play a standard audio file."""
         try:
+            # Proactively detect OGG Opus files — pygame/stb_vorbis silently
+            # produces no audio for Opus (no exception, just silence).
+            if file_path.suffix.lower() == ".ogg":
+                try:
+                    with open(file_path, 'rb') as f:
+                        header = f.read(48)
+                    if b'OpusHead' in header:
+                        wav_result = self._try_ffmpeg_fallback(file_path)
+                        if wav_result:
+                            return wav_result
+                        return False, (
+                            "This track uses Opus audio which pygame cannot play.\n"
+                            "Install ffmpeg and add it to PATH for playback."
+                        )
+                except OSError:
+                    pass
+
             self.stop()
             pygame.mixer.music.load(str(file_path))
             pygame.mixer.music.set_volume(self._volume)

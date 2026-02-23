@@ -1,13 +1,12 @@
 """Resolve conflicts between mods - especially XMSBT merging."""
+import hashlib
 import json
-import re
 import shutil
 from pathlib import Path
 from typing import Optional
 from src.models.conflict import FileConflict, ResolutionStrategy
 from src.utils.xmsbt_parser import (
     parse_xmsbt, write_xmsbt, merge_xmsbt_files,
-    extract_entries_from_msbt, filter_custom_entries,
 )
 from src.utils.file_utils import backup_file
 from src.utils.logger import logger
@@ -219,30 +218,37 @@ class ConflictResolver:
                     pass
 
     # ------------------------------------------------------------------
-    # Binary MSBT → XMSBT overlay generation
+    # Binary MSBT overlay generation (emulator-compatible)
     # ------------------------------------------------------------------
     def generate_msbt_overlays(self) -> int:
-        """Scan mods for binary .msbt files and generate XMSBT overlays.
+        """Scan mods for binary .msbt files and copy them to _MergedResources.
 
-        Some mods ship binary MSBT replacements instead of XMSBT overlays.
-        This method generates a supplemental XMSBT overlay in
-        _MergedResources that has track-name entries extracted from the
-        binary MSBTs.  The overlay acts as an additional safety net —
-        ARCropolis will still load the binary MSBTs normally *and*
-        apply the overlay on top.
+        Emulators (Eden, Ryujinx, Yuzu, etc.) use LayeredFS for mod
+        loading — they can only replace files, **not** process XMSBT
+        (XML-based) patches.  Generating XMSBT overlays is therefore
+        useless on emulators and can even interfere with correct MSBT
+        loading when the emulator or ARCropolis tries to apply them.
 
-        Binary MSBT files are **never moved or disabled**.  This avoids
-        breaking emulators (LayeredFS) or setups where ARCropolis does
-        not load _MergedResources.
+        This method takes the opposite approach: it copies the actual
+        **binary** .msbt files into ``_MergedResources`` so that the
+        emulator has a single authoritative copy of each message file.
 
-        Returns the number of XMSBT overlay files generated / updated.
+        When multiple mods provide the same MSBT path, the largest file
+        (most comprehensive) is chosen.  The originals in each mod
+        folder are **never** moved or deleted.
+
+        Old ``.xmsbt`` files in ``_MergedResources`` that correspond to
+        binary MSBTs are cleaned up to prevent interference.
+
+        Returns the number of binary MSBT files copied / updated.
         """
         if not self.mods_root.exists():
             return 0
 
-        # Collect binary MSBT files, grouped by base name
-        # e.g. "ui/message/msg_bgm" → [("Sonic Extended Tracklist", Path(…+us_en.msbt)), ...]
-        msbt_groups: dict[str, list[tuple[str, Path]]] = {}
+        # Collect ALL binary MSBTs across active mods.
+        # Key: relative path (e.g. "ui/message/msg_bgm+us_en.msbt")
+        # Value: list of (mod_name, full_path) tuples
+        msbt_providers: dict[str, list[tuple[str, Path]]] = {}
 
         for folder in self.mods_root.iterdir():
             if not folder.is_dir():
@@ -251,77 +257,87 @@ class ConflictResolver:
                 continue
             mod_name = folder.name
             for fpath in folder.rglob("*.msbt"):
-                # Only process locale-specific MSBTs (e.g. msg_bgm+us_en.msbt).
-                if '+' not in fpath.stem:
-                    continue
                 rel = str(fpath.relative_to(folder)).replace("\\", "/")
-                base = re.sub(r'\+[a-z]{2}_[a-z]{2}\.msbt$', '', rel, flags=re.I)
-                if base.endswith('.msbt'):
-                    base = base[:-5]
-                if base not in msbt_groups:
-                    msbt_groups[base] = []
-                msbt_groups[base].append((mod_name, fpath))
+                if rel not in msbt_providers:
+                    msbt_providers[rel] = []
+                msbt_providers[rel].append((mod_name, fpath))
 
-        if not msbt_groups:
+        if not msbt_providers:
             return 0
 
         generated = 0
-        for base_name, providers in msbt_groups.items():
-            # Prefer +us_en variant; fall back to first available
-            chosen_path = None
-            for _mod, p in providers:
-                if '+us_en' in p.name:
-                    chosen_path = p
-                    break
-            if chosen_path is None:
-                chosen_path = providers[0][1]
 
-            # Extract entries from the binary MSBT
-            all_entries = extract_entries_from_msbt(chosen_path)
-            if not all_entries:
+        for rel_path, providers in msbt_providers.items():
+            # Pick the best source file.
+            # If only one mod has this MSBT, use it directly.
+            # If multiple mods provide it, choose the largest file
+            # (most likely to contain all entries including custom ones).
+            best_path = None
+            best_size = -1
+            for _mod_name, fpath in providers:
+                try:
+                    fsize = fpath.stat().st_size
+                except OSError:
+                    fsize = 0
+                if fsize > best_size:
+                    best_size = fsize
+                    best_path = fpath
+
+            if best_path is None or best_size <= 0:
                 continue
 
-            # Determine output XMSBT path
-            xmsbt_rel = base_name + ".xmsbt"
-            output_path = self.merged_output_dir / xmsbt_rel
-
-            is_bgm = 'bgm' in base_name.lower() or 'bgm' in chosen_path.name.lower()
-
+            output_path = self.merged_output_dir / rel_path
+            # Skip if _MergedResources already has an identical copy
             if output_path.exists():
-                existing = parse_xmsbt(output_path)
-                new_entries = {k: v for k, v in all_entries.items()
-                               if k not in existing}
-                if not new_entries:
-                    logger.info("ConflictResolver",
-                                f"No new entries from {chosen_path.name} "
-                                f"(all {len(all_entries)} already in merged XMSBT)")
-                    continue
-                new_entries = filter_custom_entries(new_entries, inclusive=is_bgm)
-                if not new_entries:
-                    logger.info("ConflictResolver",
-                                f"No custom entries to add from {chosen_path.name}")
-                    continue
-                existing.update(new_entries)
-                final_entries = existing
-            else:
-                final_entries = filter_custom_entries(all_entries, inclusive=is_bgm)
-                if not final_entries:
-                    logger.info("ConflictResolver",
-                                f"No custom entries found in {chosen_path.name}")
-                    continue
+                try:
+                    src_hash = hashlib.md5(best_path.read_bytes()).hexdigest()
+                    dst_hash = hashlib.md5(output_path.read_bytes()).hexdigest()
+                    if src_hash == dst_hash:
+                        continue
+                except OSError:
+                    pass
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            write_xmsbt(output_path, final_entries)
-            generated += 1
-            logger.info("ConflictResolver",
-                        f"Generated XMSBT overlay from {chosen_path.name}: "
-                        f"{len(final_entries)} entries → {xmsbt_rel}")
+            try:
+                shutil.copy2(str(best_path), str(output_path))
+                generated += 1
+                if len(providers) > 1:
+                    mod_list = ", ".join(m for m, _ in providers)
+                    logger.info("ConflictResolver",
+                                f"Merged MSBT from {len(providers)} mods → "
+                                f"{rel_path} (source: {best_path.parent.name}) "
+                                f"[mods: {mod_list}]")
+                else:
+                    logger.info("ConflictResolver",
+                                f"Copied MSBT overlay: {rel_path} "
+                                f"(from {best_path.parent.name})")
+            except OSError as e:
+                logger.warn("ConflictResolver",
+                            f"Failed to copy {rel_path}: {e}")
 
-        # Ensure _MergedResources is recognized as a mod
+        # Clean up old XMSBT files that correspond to binary MSBTs
+        # we just copied.  These XMSBT files were generated by older
+        # versions and can interfere on emulators or ARCropolis.
+        self._cleanup_legacy_xmsbt(msbt_providers)
+
         if generated > 0:
             self._ensure_merged_config()
 
         return generated
+
+    def _cleanup_legacy_xmsbt(self, msbt_providers: dict) -> None:
+        """Remove XMSBT files from _MergedResources that are superseded
+        by binary MSBTs.  Also removes non-locale XMSBT files (legacy)."""
+        if not self.merged_output_dir.exists():
+            return
+
+        for xmsbt_file in list(self.merged_output_dir.rglob("*.xmsbt")):
+            try:
+                xmsbt_file.unlink()
+                logger.info("ConflictResolver",
+                            f"Cleaned up legacy XMSBT: {xmsbt_file.name}")
+            except OSError:
+                pass
 
 
 

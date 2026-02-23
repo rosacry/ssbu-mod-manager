@@ -30,12 +30,6 @@ class MusicPage(BasePage):
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 
-        save_btn = ctk.CTkButton(header_frame, text="Save & Apply", width=130,
-                                 command=self._save_assignments,
-                                 fg_color="#2fa572", hover_color="#106a43",
-                                 corner_radius=8, height=34)
-        save_btn.pack(side="right", padx=(5, 0))
-
         scan_btn = ctk.CTkButton(header_frame, text="Rescan Tracks", width=130,
                                  command=self._force_scan,
                                  fg_color="#555555", hover_color="#444444",
@@ -642,6 +636,10 @@ class MusicPage(BasePage):
 
     def _on_volume_change(self, value):
         audio_player.set_volume(value / 100.0)
+
+    def save_changes(self):
+        """Public save method invoked by the global toolbar Save button."""
+        self._save_assignments()
 
     def _save_assignments(self):
         settings = self.app.config_manager.settings

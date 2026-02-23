@@ -310,7 +310,10 @@ class DashboardPage(BasePage):
             except Exception as e:
                 logger.error("Dashboard", f"Conflict fix failed: {e}")
                 if not self.app.shutting_down:
-                    self.after(0, lambda: self._fix_error(str(e)))
+                    try:
+                        self.after(0, lambda: self._fix_error(str(e)))
+                    except Exception:
+                        pass
 
         threading.Thread(target=do_fix, daemon=True).start()
 
@@ -326,8 +329,9 @@ class DashboardPage(BasePage):
             self.xmsbt_info.configure(text="No text file conflicts detected.", text_color="#2fa572")
             return
 
-        files_list = "\n".join(f"  - {c.relative_path} ({len(c.mods_involved)} mods)"
-                               for c in mergeable[:10])
+        files_list = "\n".join(
+            f"  \u2022 {c.relative_path}\n     Mods: {', '.join(c.mods_involved)}"
+            for c in mergeable[:10])
         if len(mergeable) > 10:
             files_list += f"\n  ... and {len(mergeable) - 10} more"
 

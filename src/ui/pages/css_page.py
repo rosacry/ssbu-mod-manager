@@ -24,12 +24,6 @@ class CSSPage(BasePage):
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 
-        self.save_btn = ctk.CTkButton(header_frame, text="Save Changes",
-                                      command=self.save_changes, state="disabled",
-                                      fg_color="#2fa572", hover_color="#106a43",
-                                      corner_radius=8, height=34, width=130)
-        self.save_btn.pack(side="right", padx=(5, 0))
-
         self.load_btn = ctk.CTkButton(header_frame, text="Load CSS Mod Folder",
                                       command=self.load_mod_folder,
                                       fg_color="#555555", hover_color="#444444",
@@ -201,7 +195,7 @@ class CSSPage(BasePage):
             return False
 
     def _enable_buttons(self):
-        for btn in [self.save_btn, self.add_btn, self.hide_btn,
+        for btn in [self.add_btn, self.hide_btn,
                     self.one_click_btn, self.delete_btn, self.auto_hide_btn,
                     self.gen_template_btn]:
             btn.configure(state="normal")
@@ -294,7 +288,7 @@ class CSSPage(BasePage):
             self.fields[field].set("")
         self._update_listbox()
         logger.info("CSS", f"Character deleted: {chara['Name (Normal)']}")
-        messagebox.showinfo("Success", "Character deleted. Click 'Save Changes' to finalize.")
+        messagebox.showinfo("Success", "Character deleted. Click Save in the toolbar to finalize.")
 
     def auto_hide_unused(self):
         if not self.css_manager.mod_folder:
@@ -311,7 +305,7 @@ class CSSPage(BasePage):
             f"Characters shown: {results['shown_count']}\n"
             f"Characters hidden: {results['hidden_count']}\n\n"
             f"Detected name_ids:\n{', '.join(results['installed_name_ids'])}\n\n"
-            f"Don't forget to click 'Save Changes' when done.")
+            f"Don't forget to click Save in the toolbar when done.")
 
     def one_click_add_character(self):
         mod_dir = filedialog.askdirectory(title="Select Character Mod Folder")
@@ -351,7 +345,7 @@ class CSSPage(BasePage):
             summary += f"Display Order: {logical}\n"
             if detection['announcer_label']:
                 summary += f"Announcer: {detection['announcer_label']}\n"
-            summary += f"\nDon't forget to click 'Save Changes'."
+            summary += f"\nDon't forget to click Save in the toolbar."
 
             logger.info("CSS", f"Added character: {final_name}")
             messagebox.showinfo("Success", summary)

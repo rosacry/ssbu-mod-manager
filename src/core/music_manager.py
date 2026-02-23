@@ -322,8 +322,11 @@ class MusicManager:
                 if label_suffix:
                     # Match by suffix: label suffix matches end of track_id
                     # e.g. label "bgm_title_25AR" → suffix "25ar"
-                    #      track "bgm_sonic__speed_highway_25AR" → ends with "25ar"
-                    if track_id_lower.endswith(label_suffix) or track_id_bare.endswith(label_suffix):
+                    #      track "bgm_sonic__speed_highway_25AR" → ends with "_25ar"
+                    # Require underscore boundary to avoid false positives
+                    # with short numeric suffixes like "01", "02".
+                    if (track_id_lower.endswith('_' + label_suffix)
+                            or track_id_bare == label_suffix):
                         best_match = text
                         break
 

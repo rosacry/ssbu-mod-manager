@@ -1,15 +1,26 @@
 """Wrapper around pylibms (LMS) for MSBT operations."""
 from pathlib import Path
 from typing import Any, Optional
-from LMS.Message.MSBT import MSBT
-from LMS.Stream.Reader import Reader
-from LMS.Stream.Writer import Writer
 import io
+
+try:
+    from LMS.Message.MSBT import MSBT
+    from LMS.Stream.Reader import Reader
+    from LMS.Stream.Writer import Writer
+    _lms_available = True
+except ImportError:
+    _lms_available = False
+    MSBT = None  # type: ignore
+    Reader = None  # type: ignore
+    Writer = None  # type: ignore
 
 
 class MSBTHandler:
-    def load(self, path: Path) -> MSBT:
+    def load(self, path: Path) -> "MSBT":
         """Load an MSBT file."""
+        if not _lms_available:
+            raise ImportError("LMS (pylibms) is not installed. "
+                              "Install it with: pip install PylibMS")
         with open(path, 'rb') as f:
             data = f.read()
         msbt = MSBT()
@@ -17,8 +28,11 @@ class MSBTHandler:
         msbt.read(reader)
         return msbt
 
-    def save(self, msbt: MSBT, path: Path) -> None:
+    def save(self, msbt: "MSBT", path: Path) -> None:
         """Save an MSBT file."""
+        if not _lms_available:
+            raise ImportError("LMS (pylibms) is not installed. "
+                              "Install it with: pip install PylibMS")
         buffer = io.BytesIO()
         writer = Writer(buffer)
         msbt.write(writer)

@@ -28,7 +28,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 
 ### Music Management
 - **3-Column Layout** — Stages on the left, playlist in the middle, available tracks on the right
-- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Automatically converts OGG Opus to WAV via ffmpeg when needed
+- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Robust NUS3AUDIO section parser handles non-aligned sections and JUNK padding. Automatically converts OGG Opus to WAV via ffmpeg when needed
 - **Volume Control** — Adjustable volume slider for playback
 - **Stage Playlists** — Assign tracks to specific stages with drag-to-reorder
 - **Main Menu Music** — Change the main menu background music by assigning a track to the "Main Menu" stage entry
@@ -36,14 +36,14 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Bulk Operations** — Assign all tracks to all stages, clear all assignments
 - **Auto Track Name Detection** — Automatically extracts track names from both XMSBT and binary MSBT files, including extended tracklist mods
 - **Beautified Track Names** — Raw BGM filenames like `bgm_sonic_adventure__mechanical_resonance` are automatically transformed into readable names like "Mechanical Resonance [Sonic Adventure]" using 100+ franchise mappings
-- **Auto MSBT Overlay Generation** — Generates XMSBT overlays during music scan so custom track names display correctly in-game
-- **Save & Apply** — Generates PRC configuration for in-game music
+- **Auto MSBT Overlay Generation** — Copies binary MSBT files from mods into `_MergedResources` during music scan, ensuring custom track names display correctly in-game on emulators. Unlike the previous XMSBT approach, binary MSBT copies work with LayeredFS-based emulators (Eden, Ryujinx, Yuzu, etc.) that cannot process ARCropolis-specific XMSBT patches. Legacy XMSBT files are automatically cleaned up
+- **Save** — Generates PRC configuration for in-game music (use the global Save button in the toolbar)
 
 ### Conflict Detection & Resolution
 - **Automatic Scanning** — Detects when multiple mods modify the same game file
 - **Type-Based Grouping** — Conflicts grouped by file type (XMSBT, MSBT, PRC, STPRM, STDAT) with explanations
 - **Auto-Merge** — XMSBT text conflicts are merged using a union strategy (all labels from all mods combined); overlapping labels use last-mod-wins
-- **MSBT-to-XMSBT Overlay Generation** — Automatically extracts custom entries from binary MSBT files and generates supplemental XMSBT overlays in `_MergedResources`, ensuring custom text (music names, character names, etc.) displays correctly in-game. Original mod files are never moved or modified
+- **MSBT-to-XMSBT Overlay Generation** — Automatically extracts custom entries from binary MSBT files and copies them as binary overlays into `_MergedResources` for emulator compatibility. When multiple mods provide the same MSBT, the most comprehensive file is chosen. Legacy XMSBT files are automatically cleaned up to prevent interference. Original mod files are never moved or modified
 - **ARCropolis Config** — Automatically creates `config.json` in `_MergedResources` so ARCropolis recognizes it as a valid mod
 - **Restore Originals** — One-click undo of all merges: restores any previously moved files to their mod folders and cleans up `_MergedResources`
 - **Startup Auto-Restore** — On launch, automatically restores any files that were moved by previous versions, ensuring mod integrity
@@ -85,6 +85,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Lazy Audio Init** — Pygame mixer initializes only when audio is first played, not at startup
 - **Fast Scrolling** — 5x scroll speed multiplier across all scrollable widgets, automatically re-applied on page navigation and dynamic content changes
 - **Non-Blocking Audio** — Audio playback runs in a background thread so the UI never freezes during NUS3AUDIO conversion
+- **Global Save / Discard** — Save and Discard buttons right-aligned in the toolbar header (alongside Undo/Redo) with bright green/red colours when active. Ctrl+S to save
 - **Unsaved Changes Warning** — Prompts before closing the application if you have unsaved music or CSS changes
 - **Atomic Config Writes** — Settings are written atomically (temp file + rename) to prevent corruption from crashes
 
@@ -251,7 +252,7 @@ ssbu-mod-manager/
 - **PRC (`ui_chara_db.prc`)** — The character database. Each entry defines a CSS slot with fields like `ui_chara_id`, `fighter_kind`, `name_id`, `disp_order`, costume indices, and announcer voice labels.
 - **MSBT (`msg_name.msbt`)** — The display name text file. Labels like `nam_chr1_00_{name_id}` map to character names shown on screen.
 - **XMSBT (`.xmsbt`)** — Text override files used by mods. When multiple mods have XMSBT files for the same path, they can be merged automatically.
-- **MSBT-to-XMSBT Conversion** — Some mods ship binary `.msbt` files (full replacements). The tool auto-detects these and generates supplemental `.xmsbt` overlays in `_MergedResources` containing the custom entries, providing a safety net without altering the original mod files.
+- **MSBT-to-XMSBT Conversion** — Some mods ship binary `.msbt` files (full replacements). The tool auto-detects these and copies them into `_MergedResources` as binary overlays, ensuring emulator compatibility without relying on ARCropolis-specific XMSBT patches. Legacy XMSBT files are cleaned up automatically.
 - **Mod Detection** — The tool reads `config.json`, portrait filenames, `.xmsbt` text files, and narration sound files from each mod folder to auto-detect properties.
 - **Conflict Detection** — Scans all enabled mods for files at the same relative path. Groups conflicts by type and offers resolution strategies.
 
@@ -261,6 +262,7 @@ ssbu-mod-manager/
 |----------|--------|
 | Ctrl+Z | Undo last action |
 | Ctrl+Y | Redo last undone action |
+| Ctrl+S | Save changes |
 | Ctrl+Plus | Zoom in (increase UI scale by 10%) |
 | Ctrl+Minus | Zoom out (decrease UI scale by 10%) |
 | Ctrl+0 | Reset zoom to 100% |

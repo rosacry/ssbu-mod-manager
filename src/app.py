@@ -365,10 +365,14 @@ class ModManagerApp(ctk.CTk):
     def mark_unsaved(self):
         """Mark that there are unsaved changes."""
         self._has_unsaved_changes = True
+        if hasattr(self, 'main_window'):
+            self.main_window.update_save_discard()
 
     def mark_saved(self):
         """Mark that all changes have been saved."""
         self._has_unsaved_changes = False
+        if hasattr(self, 'main_window'):
+            self.main_window.update_save_discard()
 
     def _register_page_classes(self):
         """Register page classes for lazy instantiation."""

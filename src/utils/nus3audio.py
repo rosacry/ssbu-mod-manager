@@ -54,7 +54,6 @@ def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
     # Write WAV next to the OGG if it's already in a temp/cache dir,
     # otherwise write to the system temp directory to avoid polluting
     # mod folders.
-    import tempfile
     parent = str(ogg_path.parent).lower()
     if "temp" in parent or "cache" in parent or "appdata" in parent:
         wav_path = ogg_path.with_suffix(".wav")
@@ -69,8 +68,19 @@ def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
         )
         if result.returncode == 0 and wav_path.exists() and wav_path.stat().st_size > 44:
             return wav_path
-    except Exception:
-        pass
+        # Log ffmpeg failure details
+        try:
+            from src.utils.logger import logger
+            stderr = result.stderr.decode('utf-8', errors='replace')[:200] if result.stderr else ''
+            logger.warn("NUS3AUDIO", f"ffmpeg conversion failed (rc={result.returncode}): {stderr}")
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            from src.utils.logger import logger
+            logger.warn("NUS3AUDIO", f"ffmpeg conversion error: {e}")
+        except Exception:
+            pass
     return None
 
 
@@ -292,6 +302,9 @@ def _find_sections(data: bytes) -> dict[str, tuple[int, int]]:
     # Handle AUDIINDX section (8-byte magic, 4-byte size)
     if pos + 12 <= len(data) and data[pos:pos + 8] == b'AUDIINDX':
         size = struct.unpack_from('<I', data, pos + 8)[0]
+        # Sanity check: size must not exceed remaining data
+        if size > len(data) - pos - 12:
+            size = len(data) - pos - 12
         sections['AUDIINDX'] = (pos + 12, size)
         pos += 12 + size
         # Align to 4 bytes
@@ -305,15 +318,41 @@ def _find_sections(data: bytes) -> dict[str, tuple[int, int]]:
             name_str = name.decode('ascii').strip()
         except UnicodeDecodeError:
             break
+        # Reject names containing non-printable ASCII (control chars, nulls)
+        if not name_str or not all(c.isalnum() or c in '_-' for c in name_str):
+            break
         size = struct.unpack_from('<I', data, pos + 4)[0]
         # Sanity check: size must not exceed remaining data
         if size > len(data) - pos - 8:
             break
         sections[name_str] = (pos + 8, size)
         pos += 8 + size
-        # Align to 4 bytes
+        # NUS3AUDIO sections are NOT always 4-byte aligned (e.g. TNNM
+        # with an odd-length track name).  Only align if the next bytes
+        # don't already look like a valid section header.
         if pos % 4:
-            pos += 4 - (pos % 4)
+            peek = data[pos:pos + 4] if pos + 4 <= len(data) else b''
+            try:
+                peek_str = peek.decode('ascii').strip()
+            except UnicodeDecodeError:
+                peek_str = ''
+            if not (peek_str and all(c.isalnum() or c in '_-' for c in peek_str)):
+                pos += 4 - (pos % 4)
+
+    # Fallback: if PACK wasn't found by sequential parsing (alignment
+    # or padding issues), scan the remaining data for the PACK magic.
+    if 'PACK' not in sections:
+        scan_start = pos
+        while scan_start + 8 <= len(data):
+            idx = data.find(b'PACK', scan_start, len(data))
+            if idx == -1:
+                break
+            pack_size = struct.unpack_from('<I', data, idx + 4)[0]
+            if 0 < pack_size <= len(data) - idx - 8:
+                sections['PACK'] = (idx + 8, pack_size)
+                break
+            scan_start = idx + 1
+
     return sections
 
 
@@ -910,6 +949,20 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     for ext in ('.wav', '.ogg'):
         cached = cache_dir / f"{cache_key}{ext}"
         if cached.exists():
+            # If cached file is an OGG Opus, it can't be played by pygame.
+            # Try to convert to WAV first, or skip the cache entry.
+            if ext == '.ogg':
+                try:
+                    with open(cached, 'rb') as _f:
+                        _hdr = _f.read(48)
+                    if b'OpusHead' in _hdr:
+                        wav_path = _convert_ogg_opus_to_wav(cached)
+                        if wav_path and wav_path.exists():
+                            return True, f"Playing: {nus3audio_path.name}", wav_path
+                        # ffmpeg not available — skip this cached OGG
+                        continue
+                except OSError:
+                    pass
             return True, f"Playing: {nus3audio_path.name}", cached
 
     try:
@@ -981,8 +1034,15 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                 wav_path = _convert_ogg_opus_to_wav(ogg_path)
                 if wav_path:
                     return True, f"Playing: {display_name}", wav_path
-                # ffmpeg not available — return OGG anyway (may work with newer SDL)
-                return True, f"Playing: {display_name}", ogg_path
+                # ffmpeg not available — OGG Opus is unplayable by pygame
+                from src.utils.logger import logger
+                logger.warn("NUS3AUDIO",
+                            "Opus audio requires ffmpeg for playback. "
+                            "Install ffmpeg and add it to PATH.")
+                return False, (
+                    "This track uses Opus audio which requires ffmpeg for playback.\n"
+                    "Install ffmpeg and add it to PATH."
+                ), None
             except Exception as e:
                 from src.utils.logger import logger
                 logger.warn("NUS3AUDIO", f"LOPUS conversion failed: {e}")
@@ -1019,7 +1079,15 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
             if wav_path:
                 return True, f"Playing: {display_name}", wav_path
-            return True, f"Playing: {display_name}", ogg_path
+            # ffmpeg not available — OGG Opus is unplayable by pygame
+            from src.utils.logger import logger
+            logger.warn("NUS3AUDIO",
+                        "Opus audio requires ffmpeg for playback. "
+                        "Install ffmpeg and add it to PATH.")
+            return False, (
+                "This track uses Opus audio which requires ffmpeg for playback.\n"
+                "Install ffmpeg and add it to PATH."
+            ), None
         except Exception as e:
             from src.utils.logger import logger
             logger.warn("NUS3AUDIO", f"OPUS container conversion failed: {e}")
