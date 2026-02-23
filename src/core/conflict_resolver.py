@@ -193,6 +193,22 @@ class ConflictResolver:
             except OSError as e:
                 logger.warn("ConflictResolver", f"Could not restore {merged_file.name}: {e}")
 
+        # Restore .xmsbt.managed files (disabled by previous versions)
+        for managed_file in self.mods_root.rglob("*.xmsbt.managed"):
+            original_path = managed_file.parent / managed_file.name.replace(".managed", "")
+            try:
+                if not original_path.exists():
+                    managed_file.rename(original_path)
+                    count += 1
+                    logger.info("ConflictResolver",
+                                f"Restored managed XMSBT: {managed_file.name}")
+                else:
+                    managed_file.unlink()
+                    count += 1
+            except OSError as e:
+                logger.warn("ConflictResolver",
+                            f"Could not restore {managed_file.name}: {e}")
+
         # Clean up merged XMSBT files from _MergedResources
         if self.merged_output_dir.exists():
             for xmsbt_file in self.merged_output_dir.rglob("*.xmsbt"):
@@ -244,6 +260,43 @@ class ConflictResolver:
         """
         if not self.mods_root.exists():
             return 0
+
+        # Restore any .xmsbt.managed files left by a previous version
+        # of this tool.  These renames caused ARCropolis Error 2-0069.
+        for managed in self.mods_root.rglob("*.xmsbt.managed"):
+            original = managed.parent / managed.name.replace(".managed", "")
+            try:
+                if not original.exists():
+                    managed.rename(original)
+                    logger.info("ConflictResolver",
+                                f"Restored managed XMSBT: {managed.name}")
+                else:
+                    managed.unlink()
+            except OSError:
+                pass
+
+        # Remove stray XMSBT files that this tool placed into mod
+        # folders (not _MergedResources) — they also cause Error 2-0069.
+        for folder in self.mods_root.iterdir():
+            if not folder.is_dir():
+                continue
+            if folder.name.startswith(".") or folder.name.startswith("_"):
+                continue
+            for xmsbt in folder.rglob("*.xmsbt"):
+                # If a matching .msbt exists in the same directory,
+                # this XMSBT was likely injected by our tool.  Remove it
+                # so only the _MergedResources overlay is active.
+                msbt_sibling = xmsbt.parent / (xmsbt.stem + ".msbt")
+                if msbt_sibling.exists():
+                    # Check if the XMSBT looks like ours (contains SSBUModManager marker)
+                    try:
+                        content = xmsbt.read_text(encoding='utf-8', errors='ignore')
+                        if 'SSBUModManager' in content or 'xmsbt' in content[:200]:
+                            # Likely not a user-created XMSBT.
+                            # Don't remove user XMSBTs that came with the mod.
+                            pass  # Keep it — it might be from the mod itself
+                    except OSError:
+                        pass
 
         # Collect ALL binary MSBTs across active mods.
         # Key: relative path (e.g. "ui/message/msg_bgm+us_en.msbt")
@@ -367,45 +420,6 @@ class ConflictResolver:
             except Exception as e:
                 logger.warn("ConflictResolver",
                             f"Failed to write XMSBT overlay {xmsbt_rel}: {e}")
-
-            # Also place a copy of the XMSBT inside each mod that has
-            # a binary MSBT for this message. This guarantees ARCropolis
-            # picks up the overlay regardless of which mod is active or
-            # what load-order it uses. Mods that already ship their own
-            # XMSBT are skipped (their entries are already merged above).
-            mods_with_own_xmsbt = set(m for m, _ in xmsbt_list)
-            for mod_name, fpath in msbt_list:
-                if mod_name in mods_with_own_xmsbt:
-                    continue
-                in_mod_xmsbt = fpath.parent / (fpath.stem + ".xmsbt")
-                if in_mod_xmsbt.exists():
-                    continue
-                try:
-                    write_xmsbt(in_mod_xmsbt, all_custom_entries)
-                    logger.info("ConflictResolver",
-                                f"Placed XMSBT overlay in {mod_name}/"
-                                f"{in_mod_xmsbt.name}")
-                except Exception as e:
-                    logger.warn("ConflictResolver",
-                                f"Failed to write XMSBT to mod folder: {e}")
-
-            # If multiple mods have XMSBT files for the same message,
-            # disable the per-mod XMSBTs (rename to .xmsbt.managed)
-            # so only _MergedResources overlay is active.
-            # This prevents ARCropolis load-order issues.
-            if len(xmsbt_list) > 1:
-                for mod_name, fpath in xmsbt_list:
-                    managed = fpath.parent / (fpath.name + ".managed")
-                    if not managed.exists():
-                        try:
-                            fpath.rename(managed)
-                            logger.info("ConflictResolver",
-                                        f"Disabled conflicting XMSBT: "
-                                        f"{mod_name}/{fpath.name} → "
-                                        f"{managed.name}")
-                        except OSError as e:
-                            logger.warn("ConflictResolver",
-                                        f"Could not disable {fpath.name}: {e}")
 
         if generated > 0:
             self._ensure_merged_config()

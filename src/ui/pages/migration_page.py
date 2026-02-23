@@ -374,6 +374,7 @@ class MigrationPage(BasePage):
 
     def on_show(self):
         """Refresh detected emulators when page is shown (async to avoid lag)."""
+        super().on_show()
         self._on_source_changed(self.source_var.get())
         # Refresh detected emulators in background thread to avoid UI lag
         if not getattr(self, '_detected_loaded', False):
@@ -402,6 +403,8 @@ class MigrationPage(BasePage):
             if not self.app.shutting_down:
                 try:
                     self.after(0, lambda: self._render_detected(results))
+                    # Re-patch scroll speeds after dynamic content is created
+                    self.after(200, self._patch_all_scroll_speeds)
                 except Exception:
                     pass
 

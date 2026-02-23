@@ -48,7 +48,7 @@ class CSSPage(BasePage):
 
         # Left panel - character list
         left_frame = ctk.CTkFrame(main_frame, width=600, fg_color="#242438", corner_radius=10)
-        main_frame.add(left_frame, minsize=400, stretch="never")
+        main_frame.add(left_frame, minsize=400, stretch="never", width=600)
 
         ctk.CTkLabel(left_frame, text="Characters",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"

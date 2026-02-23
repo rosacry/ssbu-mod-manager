@@ -856,7 +856,7 @@ class OnlineCompatPage(BasePage):
 
     def on_show(self):
         """Auto-analyze on first visit, but don't block UI."""
-        pass  # User clicks 'Analyze Mods' button when ready
+        super().on_show()
 
     def _analyze_mods(self):
         """Analyze all enabled mods and categorize them."""

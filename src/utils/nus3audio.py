@@ -254,6 +254,14 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
         if len(be_frames) > len(opus_frames) and _validate_opus_frames(be_frames):
             opus_frames = be_frames
 
+    # If size-prefixed extraction failed, try CBR (fixed-size) frames
+    # where each slot is an entire Opus packet with no size prefix.
+    if len(opus_frames) < 10 or not _validate_opus_frames(opus_frames):
+        cbr_frames = _extract_opus_cbr_frames(
+            lopus_data, frame_size, search_start=header_size)
+        if len(cbr_frames) >= 10 and _validate_opus_frames(cbr_frames):
+            opus_frames = cbr_frames
+
     if not opus_frames:
         raise ValueError("No Opus frames extracted from LOPUS data")
 
@@ -737,6 +745,20 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                                             pre_skip=parsed_pre_skip,
                                         )
 
+                                # Try CBR (fixed-size) frames — LOPUS type 1
+                                # uses entire slot_size as raw Opus packet
+                                # with no per-frame size prefix.
+                                cbr_start = struct.unpack_from('<I', inner, 4)[0]
+                                cbr_frames = _extract_opus_cbr_frames(
+                                    inner, slot_size, search_start=cbr_start)
+                                if len(cbr_frames) >= 10 and _validate_opus_frames(cbr_frames):
+                                    return _build_ogg_opus_from_frames(
+                                        cbr_frames,
+                                        channels=container_channels,
+                                        sample_rate=container_sample_rate,
+                                        pre_skip=parsed_pre_skip,
+                                    )
+
                         # LOPUS sub-header detected but slot extraction failed;
                         # try the full LOPUS parser on the inner data directly.
                         try:
@@ -828,6 +850,60 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
     raise ValueError(f"All OPUS conversion strategies failed: {'; '.join(errors[:3])}")
 
 
+def _extract_opus_cbr_frames(data: bytes, slot_size: int,
+                             search_start: int = 0x18) -> list[bytes]:
+    """Extract fixed-size (CBR) Opus frames with no per-frame size prefix.
+
+    LOPUS type 0x80000001 can use constant bitrate where each Opus packet
+    is exactly *slot_size* bytes, packed sequentially after the header.
+    We scan for offsets (starting from *search_start*) where valid Opus
+    TOC bytes appear consistently at *slot_size* intervals, then pick the
+    best candidate (highest Opus config = fullband CELT for music).
+
+    Returns a list of raw Opus frame bytes, or an empty list on failure.
+    """
+    if slot_size < 8 or slot_size > 0x2000:
+        return []
+
+    end_search = min(search_start + slot_size, len(data) - slot_size * 3)
+    candidates: list[tuple[int, int, int]] = []  # (config, offset, num_frames)
+
+    for test_off in range(search_start, max(search_start, end_search)):
+        if test_off + slot_size * 3 > len(data):
+            break
+        toc = data[test_off]
+        cfg = (toc >> 3) & 0x1F
+        if cfg < 12:  # skip SILK-only configs; music uses hybrid/CELT
+            continue
+
+        # Check TOC config consistency at slot_size intervals
+        total = min(50, (len(data) - test_off) // slot_size)
+        if total < 3:
+            continue
+        consistent = sum(
+            1 for n in range(total)
+            if ((data[test_off + n * slot_size] >> 3) & 0x1F) == cfg
+        )
+        if consistent >= total * 0.8 and consistent >= 3:
+            num_frames = (len(data) - test_off) // slot_size
+            candidates.append((cfg, test_off, num_frames))
+
+    if not candidates:
+        return []
+
+    # Pick the candidate with the highest config value.
+    # Music files use fullband CELT (configs 28-31) which sorts highest.
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    best_cfg, best_off, _ = candidates[0]
+
+    frames: list[bytes] = []
+    pos = best_off
+    while pos + slot_size <= len(data):
+        frames.append(data[pos:pos + slot_size])
+        pos += slot_size
+    return frames
+
+
 def _extract_opus_be_slots(data: bytes, start_offset: int,
                            slot_size: int) -> list[bytes]:
     """Extract Opus frames using big-endian u32 sizes in fixed-size slots.
@@ -884,6 +960,7 @@ def _validate_opus_frames(frames: list[bytes], min_consistent: int = 5) -> bool:
     * The majority of frames start with a byte whose top-5-bit config
       field is consistent (same Opus mode throughout the track).
     * Frame sizes are in a reasonable range (2–2000 bytes).
+    * At least 70% of sampled frames share the dominant config.
     """
     if not frames:
         return False
@@ -900,9 +977,13 @@ def _validate_opus_frames(frames: list[bytes], min_consistent: int = 5) -> bool:
     if not configs:
         return False
 
-    # The most common config should appear in at least min_consistent frames
+    # The most common config must appear in at least 70% of sampled
+    # frames AND at least min_consistent frames.  The 70% threshold
+    # prevents false positives from misaligned data that can have
+    # random config distributions.
     most_common_count = max(configs.values())
-    return most_common_count >= min(min_consistent, sample_count)
+    threshold = max(min_consistent, sample_count * 7 // 10)
+    return most_common_count >= threshold
 
 
 def _scan_opus_frames(data: bytes, channels: int = 2,
@@ -1147,7 +1228,8 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
         file_size = os.path.getsize(nus3audio_path)
     except OSError:
         file_size = 0
-    cache_key = f"{nus3audio_path.stem}_{file_size}"
+    from src import __version__
+    cache_key = f"{nus3audio_path.stem}_{file_size}_v{__version__}"
 
     # Check for any cached format (prefer WAV over OGG since pygame handles WAV better)
     for ext in ('.wav', '.ogg'):

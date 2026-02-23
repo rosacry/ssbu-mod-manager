@@ -63,10 +63,11 @@ class MusicPage(BasePage):
             borderwidth=0, relief="flat", sashcursor="sb_h_double_arrow",
         )
         content.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        self._paned = content  # store for sash positioning
 
         # === LEFT COLUMN: Stage list ===
         left = ctk.CTkFrame(content, width=420, fg_color="#242438", corner_radius=10)
-        content.add(left, minsize=280, stretch="never")
+        content.add(left, minsize=280, stretch="never", width=420)
 
         ctk.CTkLabel(left, text="Stages",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -126,7 +127,7 @@ class MusicPage(BasePage):
 
         # === MIDDLE COLUMN: Stage playlist ===
         middle = ctk.CTkFrame(content, fg_color="#242438", corner_radius=10)
-        content.add(middle, minsize=200, stretch="always")
+        content.add(middle, minsize=200, stretch="always", width=300)
 
         playlist_header = ctk.CTkFrame(middle, fg_color="transparent")
         playlist_header.pack(fill="x", padx=12, pady=(10, 5))
@@ -159,7 +160,7 @@ class MusicPage(BasePage):
 
         # === RIGHT COLUMN: Available tracks ===
         right = ctk.CTkFrame(content, width=550, fg_color="#242438", corner_radius=10)
-        content.add(right, minsize=350, stretch="never")
+        content.add(right, minsize=350, stretch="never", width=550)
 
         avail_header = ctk.CTkFrame(right, fg_color="transparent")
         avail_header.pack(fill="x", padx=10, pady=(10, 5))
