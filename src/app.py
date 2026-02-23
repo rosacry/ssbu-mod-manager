@@ -221,14 +221,37 @@ class ModManagerApp(ctk.CTk):
         # bind_all/unbind_all which replaces our handler.  Monkey-patch
         # the class to disable this behaviour — our global handler
         # already handles all scroll events uniformly.
-        self._neutralize_ctk_scroll_management()
+        try:
+            self._neutralize_ctk_scroll_management()
+        except Exception as e:
+            logger.warn("App", f"Failed to neutralize CTk scroll management: {e}")
 
         logger.info("App", "Application startup complete")
+
+        # Install a global Tk error handler so exceptions in after()
+        # callbacks, event handlers, etc. are logged instead of silently
+        # killing the application.
+        self.report_callback_exception = self._on_tk_error
 
         # Show the window now that geometry and all UI elements are ready.
         # Force layout to process so the window appears at its final size.
         self.update_idletasks()
         self.deiconify()
+
+    @staticmethod
+    def _on_tk_error(exc_type, exc_value, exc_tb):
+        """Log Tk callback exceptions instead of letting them crash the app."""
+        import traceback
+        msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        logger.error("TkCallback", msg)
+        # Also write to stderr / crash.log so it survives even if the
+        # window is killed before logs are inspected.
+        import sys
+        try:
+            sys.stderr.write(f"[TkCallback] {msg}\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
 
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
@@ -351,9 +374,11 @@ class ModManagerApp(ctk.CTk):
         def _neutralize_existing(widget):
             if isinstance(widget, ctk.CTkScrollableFrame):
                 try:
-                    widget._parent_canvas.unbind("<Enter>")
-                    widget._parent_canvas.unbind("<Leave>")
-                    widget._parent_canvas.unbind("<MouseWheel>")
+                    canvas = getattr(widget, '_parent_canvas', None)
+                    if canvas is not None:
+                        canvas.unbind("<Enter>")
+                        canvas.unbind("<Leave>")
+                        canvas.unbind("<MouseWheel>")
                 except Exception:
                     pass
             try:
@@ -362,7 +387,10 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
 
-        _neutralize_existing(self)
+        try:
+            _neutralize_existing(self)
+        except Exception:
+            pass
 
     def _global_fast_scroll(self, event):
         """Intercept every MouseWheel event and scroll 5× faster.
@@ -556,7 +584,12 @@ class ModManagerApp(ctk.CTk):
             self.main_window.register_page(page_id, page)
             logger.info("App", f"Created page: {page_id}")
             # Neutralize CTkScrollableFrame scroll management on new page
-            self.after(100, lambda: self._neutralize_ctk_scroll_management())
+            def _safe_neutralize():
+                try:
+                    self._neutralize_ctk_scroll_management()
+                except Exception as e:
+                    logger.warn("App", f"Failed to neutralize CTk scroll on page: {e}")
+            self.after(100, _safe_neutralize)
         logger.info("App", f"Navigate to: {page_id}")
         self.main_window.navigate(page_id)
 

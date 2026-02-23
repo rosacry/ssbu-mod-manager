@@ -6,6 +6,13 @@ import traceback
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Redirect stderr to a file so we capture errors even in --windowed mode
+_log_dir = os.path.dirname(os.path.abspath(sys.argv[0] if sys.argv else __file__))
+try:
+    sys.stderr = open(os.path.join(_log_dir, "crash.log"), "w", encoding="utf-8")
+except OSError:
+    pass
+
 
 def main():
     try:
