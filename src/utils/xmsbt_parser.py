@@ -15,39 +15,63 @@ def extract_entries_from_msbt(msbt_path: Path) -> dict[str, str]:
 
     Returns a dict of {label: text} compatible with XMSBT format.
     Only includes entries that contain meaningful text.
+
+    Supports pylibms v3.x (``lms.message.msbtio.read_msbt``) and
+    falls back to the legacy v1.x API (``LMS.Message.MSBT``).
     """
     entries = {}
     try:
-        from LMS.Message.MSBT import MSBT
-        from LMS.Stream.Reader import Reader
+        # pylibms v3.x API (package name: lms)
+        from lms.message.msbtio import read_msbt  # noqa: F811
 
         with open(msbt_path, 'rb') as f:
             data = f.read()
 
-        msbt = MSBT()
-        reader = Reader(data)
-        msbt.read(reader)
+        msbt = read_msbt(data)
 
-        # labels is a dict: {int_index: str_label_name}
-        for idx, label_name in msbt.LBL1.labels.items():
+        for entry in msbt:
+            label_name = entry.name
             if not isinstance(label_name, str):
                 continue
-            if idx >= len(msbt.TXT2.messages):
+            text = entry.message.text
+            if not text:
                 continue
-            msg = msbt.TXT2.messages[idx]
-            # Convert message to string, preserving printable text
-            # Some MSBT messages are complex objects with control tags —
-            # extract only the readable text portions
-            raw = str(msg)
             # Strip embedded null bytes and control chars except newlines/tabs
-            text = ''.join(c for c in raw if c.isprintable() or c in '\n\t')
+            text = ''.join(c for c in text if c.isprintable() or c in '\n\t')
             text = text.strip()
             if text:
                 entries[label_name] = text
 
         logger.info("XMSBT", f"Extracted {len(entries)} entries from {msbt_path.name}")
     except ImportError:
-        logger.warn("XMSBT", "pylibms (LMS) not installed - cannot parse binary MSBT files")
+        # Fallback: try legacy pylibms v1.x API
+        try:
+            from LMS.Message.MSBT import MSBT as MSBT_v1  # noqa: F811
+            from LMS.Stream.Reader import Reader  # noqa: F811
+
+            with open(msbt_path, 'rb') as f:
+                data = f.read()
+
+            msbt = MSBT_v1()
+            reader = Reader(data)
+            msbt.read(reader)
+
+            for idx, label_name in msbt.LBL1.labels.items():
+                if not isinstance(label_name, str):
+                    continue
+                if idx >= len(msbt.TXT2.messages):
+                    continue
+                msg = msbt.TXT2.messages[idx]
+                raw = str(msg)
+                text = ''.join(c for c in raw if c.isprintable() or c in '\n\t')
+                text = text.strip()
+                if text:
+                    entries[label_name] = text
+
+            logger.info("XMSBT", f"Extracted {len(entries)} entries from {msbt_path.name}")
+        except ImportError:
+            logger.warn("XMSBT", "pylibms not installed - cannot parse binary MSBT files. "
+                         "Install with: pip install pylibms")
     except Exception as e:
         logger.warn("XMSBT", f"Failed to parse MSBT {msbt_path.name}: {e}")
     return entries

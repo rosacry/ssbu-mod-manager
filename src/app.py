@@ -177,6 +177,10 @@ class ModManagerApp(ctk.CTk):
         # Fallback: low-level key handler for Windows where keysyms may mismatch
         self.bind_all("<KeyPress>", self._on_keypress_zoom)
 
+        # Global fast-scroll: intercept ALL MouseWheel events application-wide
+        # and scroll the nearest scrollable ancestor 5× faster.
+        self.bind_all("<MouseWheel>", self._global_fast_scroll, add=False)
+
         logger.info("App", "Application startup complete")
 
     def _apply_scaled_geometry(self, scale: float):
@@ -272,6 +276,62 @@ class ModManagerApp(ctk.CTk):
         elif char == '0' or keysym in ('0', 'KP_0'):
             self._zoom_reset()
             return "break"
+
+    # ─── Global fast scroll ───────────────────────────────────────────
+
+    _SCROLL_SPEED = 5  # Multiplier for mouse wheel scrolling
+
+    def _global_fast_scroll(self, event):
+        """Intercept every MouseWheel event and scroll 5× faster.
+
+        Walks up the widget tree from the widget under the mouse cursor
+        to find the nearest scrollable ancestor (Canvas inside a
+        CTkScrollableFrame, Listbox, or Text) and scrolls it.
+        """
+        import tkinter as tk
+        try:
+            # Find the widget directly under the mouse pointer
+            widget = event.widget.winfo_containing(event.x_root, event.y_root)
+            if widget is None:
+                return
+        except Exception:
+            return
+
+        # Walk up the hierarchy looking for a scrollable widget
+        w = widget
+        scrollable = None
+        while w is not None:
+            if isinstance(w, tk.Listbox):
+                scrollable = w
+                break
+            if isinstance(w, tk.Text):
+                scrollable = w
+                break
+            if isinstance(w, tk.Canvas):
+                # Only canvases that have a scrollregion (i.e. are scrollable)
+                try:
+                    sr = w.cget("scrollregion")
+                    if sr:
+                        scrollable = w
+                        break
+                except tk.TclError:
+                    pass
+            try:
+                w = w.master
+            except Exception:
+                break
+
+        if scrollable is None:
+            return
+
+        try:
+            delta = int(-self._SCROLL_SPEED * (event.delta / 120))
+            scrollable.yview_scroll(delta, "units")
+        except tk.TclError:
+            pass
+        return "break"
+
+    # ─── Window events ────────────────────────────────────────────────
 
     def _on_configure(self, event):
         """Handle window resize events smoothly."""
