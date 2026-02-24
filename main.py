@@ -91,31 +91,16 @@ def main():
         app = ModManagerApp()
         _write_debug("app created, entering mainloop...")
 
-        # Start a heartbeat: write a timestamp to crash.log every 2s
-        # so we can tell exactly when the process stops.
-        _heartbeat_count = [0]
-        def _heartbeat():
-            if app._shutting_down:
-                return
-            _heartbeat_count[0] += 1
-            _write_debug(f"[heartbeat] tick {_heartbeat_count[0]}")
-            try:
-                app.after(2000, _heartbeat)
-            except Exception:
-                pass
-        app.after(2000, _heartbeat)
-
-        # Verify window visibility
-        try:
-            state = app.wm_state()
-            geom = app.winfo_geometry()
-            mapped = app.winfo_ismapped()
-            _write_debug(f"[window] state={state} geometry={geom} mapped={mapped}")
-        except Exception as e:
-            _write_debug(f"[window] query failed: {e}")
-
         app.mainloop()
         _write_debug("mainloop exited normally")
+    except SystemExit as e:
+        _write_debug(f"SystemExit raised (code={e.code})")
+        _write_debug(traceback.format_exc())
+    except KeyboardInterrupt:
+        _write_debug("KeyboardInterrupt")
+    except BaseException:
+        _write_debug("EXCEPTION in main():")
+        _write_debug(traceback.format_exc())
     except SystemExit as e:
         _write_debug(f"SystemExit raised (code={e.code})")
         _write_debug(traceback.format_exc())

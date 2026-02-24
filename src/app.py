@@ -56,9 +56,11 @@ class ModManagerApp(ctk.CTk):
         super().__init__()
         _dbg("super().__init__() OK")
 
-        # Hide the window completely during initialization to prevent
-        # the ugly flash of a partially-built window.
-        self.withdraw()
+        # Make the window fully transparent during init so the user
+        # doesn't see a half-built frame.  withdraw()/deiconify() is
+        # unreliable on some Windows configurations (the window stays
+        # hidden even after deiconify), so we use alpha instead.
+        self.attributes('-alpha', 0)
 
         self.title("SSBU Mod Manager")
 
@@ -254,9 +256,11 @@ class ModManagerApp(ctk.CTk):
         self.report_callback_exception = self._on_tk_error
 
         self.update_idletasks()
-        _dbg("update_idletasks done, calling deiconify...")
-        self.deiconify()
-        _dbg(f"deiconify done, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
+        _dbg("update_idletasks done, showing window...")
+        self.attributes('-alpha', 1)
+        self.lift()
+        self.focus_force()
+        _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
