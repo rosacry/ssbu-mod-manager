@@ -276,6 +276,11 @@ MIT
 
 ## Changelog
 
+### v3.1.11
+- **Fix: global playback distortion hardening** - Reworked pygame mixer initialization to use stricter fixed output format and larger buffer to reduce global crackle/distortion across all tracks
+- **Fix: Windows audio backend fallback** - Added driver fallback attempts (`default`, `directsound`, `wasapi`, `winmm`) so problematic SDL audio backends no longer block clean playback
+- **Diagnostics: playback backend visibility** - Added startup log line with selected mixer driver/init tuple/buffer in `crash.log` (`[AudioPlayer] Pygame mixer initialized (...)`)
+
 ### v3.1.10
 - **Fix: remaining OPUS noisy-container winners** - Relaxed the low-noise override trigger so high-`zcr` container selections with only moderately low stereo correlation are still re-evaluated against cleaner candidates
 - **Fix: cleaner-candidate requirement** - Override now requires a substantial `zcr` improvement relative to the selected candidate (not just an absolute threshold), reducing false switches while catching persistent distortion cases
