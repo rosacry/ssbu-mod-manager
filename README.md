@@ -28,7 +28,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 
 ### Music Management
 - **3-Column Layout** — Stages on the left, playlist in the middle, available tracks on the right
-- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Uses ffmpeg for high-fidelity NUS3AUDIO decoding when available, with robust manual fallback parser supporting non-aligned sections, JUNK padding, big/little-endian frame sizes, LOPUS sub-header detection, and TOC-byte validation. Automatically converts OGG Opus to WAV via ffmpeg when needed. Click any track while music is playing to auto-switch playback
+- **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Uses ffmpeg for high-fidelity NUS3AUDIO decoding when available, with robust manual fallback parser supporting non-aligned sections, JUNK padding, big/little-endian frame sizes, LOPUS sub-header detection, and TOC-byte validation. Playback backend auto-selects ffplay when available (fallback: pygame mixer). Automatically converts OGG Opus to WAV via ffmpeg when needed. Click any track while music is playing to auto-switch playback
 - **Background Track Scanning** — Auto-scan of available tracks continues in the background even if you navigate to another page, and the results are ready when you return
 - **Volume & Seek** — Adjustable volume slider and seek timeline for playback
 - **Stage Playlists** — Assign tracks to specific stages with drag-to-reorder
@@ -240,7 +240,7 @@ ssbu-mod-manager/
 │   │       └── toggle_switch.py    # Toggle switch widget
 │   └── utils/
 │       ├── action_history.py       # Undo/redo system
-│       ├── audio_player.py         # Audio playback (pygame)
+│       ├── audio_player.py         # Audio playback (ffplay with pygame fallback)
 │       ├── file_utils.py           # File operation utilities
 │       ├── hashing.py              # PRC hash resolution
 │       ├── logger.py               # In-memory debug logger
@@ -275,6 +275,12 @@ ssbu-mod-manager/
 MIT
 
 ## Changelog
+
+### v3.1.12
+- **Fix: persistent distortion despite correct decode selection** - Added ffplay playback backend and made it the preferred path when available, bypassing SDL/pygame mixer output issues on systems where decoded audio still sounded distorted
+- **Feature: backend auto-selection** - Audio preview now uses `ffplay` if present; otherwise it falls back to pygame mixer
+- **Feature: ffplay transport support** - Implemented play/stop/pause/unpause/seek/volume behavior on ffplay backend (pause/seek/volume use restart-from-position semantics where required)
+- **Diagnostics: backend logging** - Playback now logs `Using ffplay backend (...)` when ffplay path is active so backend choice is visible in `crash.log`
 
 ### v3.1.11
 - **Fix: global playback distortion hardening** - Reworked pygame mixer initialization to use stricter fixed output format and larger buffer to reduce global crackle/distortion across all tracks
