@@ -421,7 +421,7 @@ class ModsPage(BasePage):
         menu.withdraw()
         menu.overrideredirect(True)
         menu.attributes("-topmost", True)
-        menu.configure(fg_color="transparent")
+        menu.configure(fg_color="#101427")
 
         frame = ctk.CTkFrame(
             menu,

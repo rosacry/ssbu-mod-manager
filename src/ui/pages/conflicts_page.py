@@ -124,25 +124,6 @@ class ConflictsPage(BasePage):
         self.bind("<Configure>", self._on_page_configure, add="+")
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
-        self._initial_prompt_frame = ctk.CTkFrame(self, fg_color="transparent")
-        ctk.CTkLabel(self._initial_prompt_frame, text="No scan performed yet",
-                     font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color="#cccccc").pack(pady=(0, 8))
-
-        ctk.CTkLabel(self._initial_prompt_frame,
-                     text="Click the button below to scan your mods for file conflicts.\n"
-                          "This may take a few seconds depending on how many mods you have installed.",
-                     font=ctk.CTkFont(size=13), text_color="#888888",
-                     justify="center").pack(pady=(0, 20))
-
-        scan_prompt_btn = ctk.CTkButton(
-            self._initial_prompt_frame, text="\U0001F50D  Scan for Conflicts", width=220, height=40,
-            fg_color="#1f538d", hover_color="#163b6a",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            corner_radius=8, command=self._scan,
-        )
-        scan_prompt_btn.pack()
-
     def on_show(self):
         if self._scanning:
             self._set_rescan_visible(True)
@@ -167,13 +148,38 @@ class ConflictsPage(BasePage):
         self.fix_locale_btn.pack_forget()
         for w in self.conflict_list.winfo_children():
             w.destroy()
+
+        self._initial_prompt_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
+        self._initial_prompt_frame.pack(fill="x", pady=(0, 24))
+        ctk.CTkLabel(self._initial_prompt_frame, text="No scan performed yet",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color="#cccccc").pack(pady=(0, 8))
+
+        ctk.CTkLabel(self._initial_prompt_frame,
+                     text="Click the button below to scan your mods for file conflicts.\n"
+                          "This may take a few seconds depending on how many mods you have installed.",
+                     font=ctk.CTkFont(size=13), text_color="#888888",
+                     justify="center").pack(pady=(0, 20))
+
+        scan_prompt_btn = ctk.CTkButton(
+            self._initial_prompt_frame, text="\U0001F50D  Scan for Conflicts", width=220, height=40,
+            fg_color="#1f538d", hover_color="#163b6a",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            corner_radius=8, command=self._scan,
+        )
+        scan_prompt_btn.pack()
+
         self._initial_prompt_visible = True
         self.after(0, self._reposition_initial_prompt)
 
     def _hide_initial_prompt(self):
         self._initial_prompt_visible = False
         if self._initial_prompt_frame is not None:
-            self._initial_prompt_frame.place_forget()
+            try:
+                self._initial_prompt_frame.destroy()
+            except Exception:
+                pass
+            self._initial_prompt_frame = None
 
     def _set_rescan_visible(self, visible: bool):
         try:
@@ -190,23 +196,14 @@ class ConflictsPage(BasePage):
         self.after(0, self._reposition_initial_prompt)
 
     def _reposition_initial_prompt(self):
-        """Position the initial prompt around the visual center of page content."""
+        """Keep the initial prompt centered in the visible scroll viewport."""
         if not self._initial_prompt_visible or self._initial_prompt_frame is None:
             return
         try:
             frame = self._initial_prompt_frame
             if not frame.winfo_exists():
                 return
-            self.update_idletasks()
-            page_h = max(1, int(self.winfo_height()))
-            list_y = max(0, int(self.conflict_list.winfo_y()))
-            list_h = max(1, int(self.conflict_list.winfo_height()))
-            frame_h = max(1, int(frame.winfo_reqheight()))
-            # Slightly above the list-center reads closer to true page center.
-            target_y = int(list_y + (list_h * 0.43))
-            margin = max(32, (frame_h // 2) + 6)
-            target_y = max(margin, min(page_h - margin, target_y))
-            frame.place_configure(relx=0.5, y=target_y, anchor="center")
+            self._center_content_in_view(frame)
         except Exception:
             pass
 

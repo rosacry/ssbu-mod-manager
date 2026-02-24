@@ -359,12 +359,15 @@ class DashboardPage(BasePage):
 
         if not mergeable and not locale_msbts:
             messagebox.showinfo("No Conflicts",
-                "No unresolved XMSBT text conflicts found.")
+                "No unresolved MBST/XMSBT text conflicts found.")
             self._conflict_cache = 0
             self._locale_msbt_cache = 0
             self.stat_cards["conflicts"].configure(text="0")
-            self.info_frame.configure(fg_color="#1e2e20")
-            self.xmsbt_info.configure(text="No text file conflicts detected.", text_color="#2fa572")
+            self.info_frame.configure(fg_color="#142820")
+            self.xmsbt_info.configure(
+                text="\u2714  No text file conflicts detected. Your mods are compatible.",
+                text_color="#2fa572",
+            )
             return
 
         # Build description of what will be fixed

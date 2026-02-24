@@ -2,6 +2,7 @@
 import customtkinter as ctk
 import importlib
 import re
+import time
 from pathlib import Path
 from tkinter import messagebox
 
@@ -84,6 +85,7 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_widgets = set()
         self._scroll_refresh_full_counter = 0
         self._pointer_left_down = False
+        self._suppress_scroll_refresh_until = 0.0
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -405,7 +407,7 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(130, self._flush_pending_scale)
+        self._zoom_apply_after_id = self.after(160, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -499,6 +501,8 @@ class ModManagerApp(ctk.CTk):
 
     def _set_left_button_down(self, pressed: bool):
         self._pointer_left_down = bool(pressed)
+        if pressed:
+            self._suppress_scroll_refresh_until = time.monotonic() + 0.35
 
     @staticmethod
     def _widget_can_scroll_vertically(widget) -> bool:
@@ -663,6 +667,8 @@ class ModManagerApp(ctk.CTk):
         try:
             if event.delta == 0:
                 return "break"
+            if self._pointer_left_down:
+                return "break"
             direction = -1 if event.delta > 0 else 1
             ticks = max(1, min(4, int(round(abs(event.delta) / 120))))
             page_id = None
@@ -701,10 +707,12 @@ class ModManagerApp(ctk.CTk):
     def _schedule_scroll_refresh(self, widget):
         """Throttle redraws while wheel-scrolling to avoid transient text artifacts."""
         try:
+            if time.monotonic() < self._suppress_scroll_refresh_until:
+                return
             self._scroll_refresh_widgets.add(widget)
             if self._scroll_refresh_after_id:
                 return
-            self._scroll_refresh_after_id = self.after(12, self._flush_scroll_refresh)
+            self._scroll_refresh_after_id = self.after(16, self._flush_scroll_refresh)
         except Exception:
             pass
 
@@ -720,14 +728,13 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 3
+            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 5
             if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
                 for widget in widgets:
                     try:
-                        widget.update()
+                        widget.after_idle(widget.update_idletasks)
                     except Exception:
                         pass
-            self.update_idletasks()
         except Exception:
             pass
 

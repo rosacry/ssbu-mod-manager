@@ -4,7 +4,6 @@ from tkinter import messagebox
 from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
 from src.utils.logger import logger
-from src.utils.file_utils import format_size
 
 
 class PluginsPage(BasePage):
@@ -153,16 +152,16 @@ class PluginsPage(BasePage):
         logger.info("Plugins", f"Rendered {len(plugins)} plugins")
 
     def _render_plugin_row(self, plugin):
-        """Render one plugin row with stable right-side metadata."""
+        """Render one plugin row with mods-style compact height."""
         is_enabled = plugin.status == PluginStatus.ENABLED
         is_required = bool(plugin.known_info and plugin.known_info.required)
         use_friendly_names = self._friendly_names_var.get()
         show_descriptions = self._show_descriptions_var.get()
 
-        row_height = 66 if (use_friendly_names and show_descriptions) else 54
+        row_height = 44
         row = ctk.CTkFrame(self.plugin_list, fg_color="#1c1c34", corner_radius=6,
                            height=row_height)
-        row.pack(fill="x", pady=2, padx=2)
+        row.pack(fill="x", pady=1, padx=2)
         row.pack_propagate(False)
 
         accent_color = "#1f538d" if is_enabled else "#3a3a4a"
@@ -183,53 +182,36 @@ class PluginsPage(BasePage):
         else:
             switch.deselect()
 
-        right_col = ctk.CTkFrame(row, fg_color="transparent", width=122)
-        right_col.pack(side="right", fill="y", padx=(6, 10), pady=(7, 7))
-        right_col.pack_propagate(False)
-
-        if is_required:
-            ctk.CTkLabel(
-                right_col,
-                text="REQUIRED",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                text_color="#e94560",
-                anchor="e",
-            ).pack(anchor="e")
-
-        ctk.CTkLabel(
-            right_col, text=format_size(plugin.file_size),
-            font=ctk.CTkFont(size=11), text_color="#777793", anchor="e",
-        ).pack(anchor="e", pady=(2, 0))
-
         info_col = ctk.CTkFrame(row, fg_color="transparent")
-        info_col.pack(side="left", fill="both", expand=True, padx=(2, 0), pady=(7, 7))
+        info_col.pack(side="left", fill="both", expand=True, padx=(2, 6), pady=(6, 6))
 
         name = self._plugin_display_name(plugin) if use_friendly_names else plugin.filename
-        name_color = "#d0d0e8" if is_enabled else "#454560"
-        ctk.CTkLabel(
-            info_col, text=name,
-            font=ctk.CTkFont(size=12, weight="bold" if is_enabled else "normal"),
-            text_color=name_color, anchor="w",
-        ).pack(fill="x")
-
-        detail_parts = []
-        base_filename = self._base_plugin_filename(plugin)
+        display_text = name
         if use_friendly_names:
+            base_filename = self._base_plugin_filename(plugin)
             if base_filename and base_filename != name:
-                detail_parts.append(base_filename)
+                display_text += f"  ({base_filename})"
             if show_descriptions:
                 desc = self._plugin_display_description(plugin).strip()
                 if desc and desc != name:
-                    detail_parts.append(desc)
-        detail_text = "  \u2014  ".join(detail_parts)
-        if detail_text:
+                    display_text += f"  \u2014  {desc}"
+
+        name_color = "#d0d0e8" if is_enabled else "#454560"
+        ctk.CTkLabel(
+            info_col,
+            text=display_text,
+            font=ctk.CTkFont(size=12),
+            text_color=name_color,
+            anchor="w",
+        ).pack(fill="x")
+
+        if is_required:
             ctk.CTkLabel(
-                info_col, text=detail_text,
-                font=ctk.CTkFont(size=11),
-                text_color="#7a7a9b" if is_enabled else "#44445f",
-                anchor="w",
-                justify="left",
-            ).pack(fill="x", pady=(2, 0))
+                row,
+                text="REQUIRED",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color="#e94560",
+            ).pack(side="right", padx=(0, 10))
 
         self._bind_context_menu_recursive(row, plugin)
 
@@ -386,7 +368,7 @@ class PluginsPage(BasePage):
         menu.withdraw()
         menu.overrideredirect(True)
         menu.attributes("-topmost", True)
-        menu.configure(fg_color="transparent")
+        menu.configure(fg_color="#101427")
 
         frame = ctk.CTkFrame(
             menu,
