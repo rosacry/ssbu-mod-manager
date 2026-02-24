@@ -1,5 +1,6 @@
 """Plugins management page - compact rows with accent bars."""
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import messagebox, simpledialog
 from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
@@ -60,7 +61,7 @@ class PluginsPage(BasePage):
 
         ctk.CTkCheckBox(
             name_controls,
-            text="Use friendly plugin names",
+            text="Use plugin names",
             variable=self._friendly_names_var,
             command=self._toggle_friendly_names,
             font=ctk.CTkFont(size=12),
@@ -181,13 +182,6 @@ class PluginsPage(BasePage):
         if desc and desc != name:
             display_text += f"  \u2014  {desc}"
 
-        ctk.CTkButton(
-            row, text="Rename", width=62, height=24,
-            fg_color="#333352", hover_color="#444470",
-            font=ctk.CTkFont(size=10), corner_radius=6,
-            command=lambda p=plugin: self._rename_plugin_title(p),
-        ).pack(side="right", padx=(0, 8))
-
         ctk.CTkLabel(
             row, text=display_text,
             font=ctk.CTkFont(size=12),
@@ -208,6 +202,8 @@ class PluginsPage(BasePage):
                 font=ctk.CTkFont(size=10, weight="bold"),
                 text_color="#e94560",
             ).pack(side="right", padx=(0, 5))
+
+        self._bind_context_menu_recursive(row, plugin)
 
     def _on_toggle(self, plugin):
         try:
@@ -316,6 +312,43 @@ class PluginsPage(BasePage):
             return plugin.display_name
         return base
 
+    def _has_custom_plugin_name(self, plugin) -> bool:
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "plugin_name_overrides", {}) or {})
+        return bool(overrides.get(self._base_plugin_filename(plugin), "").strip())
+
+    def _bind_context_menu_recursive(self, widget, plugin):
+        """Attach right-click plugin title actions to row and all children."""
+        try:
+            widget.bind("<Button-3>", lambda e, p=plugin: self._show_plugin_context_menu(e, p), add="+")
+        except Exception:
+            pass
+        try:
+            for child in widget.winfo_children():
+                self._bind_context_menu_recursive(child, plugin)
+        except Exception:
+            pass
+
+    def _show_plugin_context_menu(self, event, plugin):
+        """Show per-plugin context actions when plugin names are enabled."""
+        if not self._friendly_names_var.get():
+            return None
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label="Rename Plugin Name...",
+            command=lambda p=plugin: self._rename_plugin_title(p),
+        )
+        if self._has_custom_plugin_name(plugin):
+            menu.add_command(
+                label="Reset This Plugin Name",
+                command=lambda p=plugin: self._reset_single_custom_name(p),
+            )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
     def _rename_plugin_title(self, plugin):
         settings = self.app.config_manager.settings
         overrides = dict(getattr(settings, "plugin_name_overrides", {}) or {})
@@ -342,6 +375,17 @@ class PluginsPage(BasePage):
         self.app.config_manager.save(settings)
         self._loaded = False
         self._refresh()
+
+    def _reset_single_custom_name(self, plugin):
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "plugin_name_overrides", {}) or {})
+        base = self._base_plugin_filename(plugin)
+        if base in overrides:
+            overrides.pop(base, None)
+            settings.plugin_name_overrides = overrides
+            self.app.config_manager.save(settings)
+            self._loaded = False
+            self._refresh()
 
     def _reset_custom_names(self):
         settings = self.app.config_manager.settings

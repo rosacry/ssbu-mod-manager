@@ -82,6 +82,7 @@ class ModManagerApp(ctk.CTk):
         self._scroll_debug_keys = set()
         self._scroll_refresh_after_id = None
         self._scroll_refresh_widgets = set()
+        self._scroll_refresh_full_counter = 0
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -262,17 +263,8 @@ class ModManagerApp(ctk.CTk):
 
         self.update_idletasks()
 
-        # Centre the window on screen BEFORE making it visible.  The
-        # window was parked off-screen during init to avoid any flash.
-        try:
-            screen_w, screen_h = self._get_primary_screen_size()
-            win_w, win_h = self._get_current_geometry_size()
-            x = max(0, (screen_w - win_w) // 2)
-            y = max(0, (screen_h - win_h) // 2)
-            self.geometry(f"{win_w}x{win_h}+{x}+{y}")
-            self.update_idletasks()
-        except Exception:
-            pass
+        # Centre before first show; re-centered again right after map.
+        self._center_window_on_screen()
 
         _dbg("update_idletasks done, showing window...")
         if self._startup_hidden_withdraw:
@@ -292,10 +284,16 @@ class ModManagerApp(ctk.CTk):
             pass
         # Avoid aggressive focus_force() during startup; it can trigger
         # unstable behavior on some Windows setups.
+        self.after(20, self._center_window_on_screen)
+        self.after(180, self._center_window_on_screen)
         self.after(10, self.lift)
         if self._startup_hidden_withdraw:
             self.after(120, lambda: self._ensure_window_visible(attempt=1))
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
+        try:
+            logger.debug("App", f"Startup geometry: {self.geometry()}")
+        except Exception:
+            pass
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
@@ -404,7 +402,7 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(60, self._flush_pending_scale)
+        self._zoom_apply_after_id = self.after(90, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -490,10 +488,11 @@ class ModManagerApp(ctk.CTk):
 
     # --- Global fast scroll --------------------------------------------------
 
-    _SCROLL_SPEED = 4                    # Listbox/Text scroll multiplier
-    _CANVAS_SCROLL_PIXELS = 120          # Default canvas movement per wheel tick
-    _LONGFORM_SCROLL_SPEED = 10          # Long-form text/list widgets
-    _LONGFORM_CANVAS_SCROLL_PIXELS = 220 # Online Guide/Migration canvas boost
+    _SCROLL_SPEED = 3                    # Listbox/Text scroll multiplier
+    _CANVAS_SCROLL_PIXELS = 92           # Default canvas movement per wheel tick
+    _MODS_CANVAS_SCROLL_PIXELS = 76      # Keep Mods aligned with Plugins pace
+    _LONGFORM_SCROLL_SPEED = 6           # Long-form text/list widgets
+    _LONGFORM_CANVAS_SCROLL_PIXELS = 140 # Online Guide/Migration boost
 
     @staticmethod
     def _widget_can_scroll_vertically(widget) -> bool:
@@ -670,6 +669,8 @@ class ModManagerApp(ctk.CTk):
                 speed = self._CANVAS_SCROLL_PIXELS
                 if longform:
                     speed = self._LONGFORM_CANVAS_SCROLL_PIXELS
+                elif page_id == "mods":
+                    speed = self._MODS_CANVAS_SCROLL_PIXELS
             else:
                 speed = self._SCROLL_SPEED
                 if longform:
@@ -713,7 +714,11 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            self.update_idletasks()
+            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 4
+            if self._scroll_refresh_full_counter == 0:
+                self.update()
+            else:
+                self.update_idletasks()
         except Exception:
             pass
 
@@ -721,6 +726,14 @@ class ModManagerApp(ctk.CTk):
 
     def _get_primary_screen_size(self) -> tuple[int, int]:
         """Return primary monitor dimensions (Windows) with Tk fallback."""
+        # Prefer Tk values so logical pixels match geometry values under DPI scaling.
+        try:
+            w = int(self.winfo_screenwidth())
+            h = int(self.winfo_screenheight())
+            if w > 200 and h > 200:
+                return w, h
+        except Exception:
+            pass
         try:
             import ctypes
             user32 = ctypes.windll.user32
@@ -731,10 +744,7 @@ class ModManagerApp(ctk.CTk):
                 return w, h
         except Exception:
             pass
-        try:
-            return int(self.winfo_screenwidth()), int(self.winfo_screenheight())
-        except Exception:
-            return 1920, 1080
+        return 1920, 1080
 
     def _get_current_geometry_size(self) -> tuple[int, int]:
         """Best-effort read of current geometry width/height."""
@@ -758,6 +768,20 @@ class ModManagerApp(ctk.CTk):
         w = min(int(self._BASE_WIDTH * scale), sw - 40)
         h = min(int(self._BASE_HEIGHT * scale), sh - 80)
         return max(600, w), max(450, h)
+
+    def _center_window_on_screen(self):
+        """Center the window using DPI-consistent Tk screen dimensions."""
+        if self._shutting_down:
+            return
+        try:
+            self.update_idletasks()
+            sw, sh = self._get_primary_screen_size()
+            ww, wh = self._get_current_geometry_size()
+            x = max(0, (sw - ww) // 2)
+            y = max(0, (sh - wh) // 2)
+            self.geometry(f"{ww}x{wh}+{x}+{y}")
+        except Exception:
+            pass
 
     def _ensure_window_visible(self, attempt: int = 1):
         """Recover from startup cases where the window ends up hidden/minimized."""
@@ -791,11 +815,7 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
             try:
-                sw, sh = self._get_primary_screen_size()
-                ww, wh = self._get_current_geometry_size()
-                x = max(0, (sw - ww) // 2)
-                y = max(0, (sh - wh) // 2)
-                self.geometry(f"{ww}x{wh}+{x}+{y}")
+                self._center_window_on_screen()
             except Exception:
                 pass
             try:

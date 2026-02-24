@@ -54,6 +54,7 @@ class ConflictsPage(BasePage):
         self._scanning = False
         self._needs_render = False
         self._scan_generation = 0
+        self._initial_prompt_frame = None
         self._build_ui()
 
     def _build_ui(self):
@@ -119,6 +120,8 @@ class ConflictsPage(BasePage):
         )
 
         self.empty_state = ctk.CTkFrame(self, fg_color="transparent")
+        self.empty_state.bind("<Configure>", self._on_empty_state_configure, add="+")
+        self.bind("<Configure>", self._on_empty_state_configure, add="+")
         self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
@@ -138,7 +141,8 @@ class ConflictsPage(BasePage):
             w.destroy()
 
         prompt_frame = ctk.CTkFrame(self.empty_state, fg_color="transparent")
-        prompt_frame.place(relx=0.5, rely=0.5, anchor="center")
+        prompt_frame.place(relx=0.5, y=0, anchor="center")
+        self._initial_prompt_frame = prompt_frame
 
         ctk.CTkLabel(prompt_frame, text="No scan performed yet",
                      font=ctk.CTkFont(size=18, weight="bold"),
@@ -161,6 +165,7 @@ class ConflictsPage(BasePage):
         self.summary_label.configure(
             text="Click 'Scan for Conflicts' to check for mod file conflicts.",
             text_color="#999999")
+        self.after(20, self._reposition_initial_prompt)
 
     def _show_empty_state(self):
         """Show centered empty-state content and hide the scroll list."""
@@ -171,9 +176,11 @@ class ConflictsPage(BasePage):
             pass
         if not self.empty_state.winfo_manager():
             self.empty_state.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        self.after(10, self._reposition_initial_prompt)
 
     def _show_conflict_list(self):
         """Show the scroll list and hide the centered empty-state area."""
+        self._initial_prompt_frame = None
         try:
             if self.empty_state.winfo_manager():
                 self.empty_state.pack_forget()
@@ -181,6 +188,29 @@ class ConflictsPage(BasePage):
             pass
         if not self.conflict_list.winfo_manager():
             self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+
+    def _on_empty_state_configure(self, _event=None):
+        self.after(0, self._reposition_initial_prompt)
+
+    def _reposition_initial_prompt(self):
+        """Position the initial prompt at the visual center of the full page."""
+        frame = self._initial_prompt_frame
+        if frame is None:
+            return
+        try:
+            if not frame.winfo_exists() or not self.empty_state.winfo_ismapped():
+                return
+            self.update_idletasks()
+            page_h = max(1, int(self.winfo_height()))
+            empty_y = max(0, int(self.empty_state.winfo_y()))
+            empty_h = max(1, int(self.empty_state.winfo_height()))
+            target_y = int((page_h / 2) - empty_y)
+            frame_h = max(1, int(frame.winfo_reqheight()))
+            margin = max(40, frame_h // 2 + 8)
+            target_y = max(margin, min(empty_h - margin, target_y))
+            frame.place_configure(relx=0.5, y=target_y, anchor="center")
+        except Exception:
+            pass
 
     def _center_content_in_view(self, frame):
         """Center an empty-state block in the visible viewport."""
