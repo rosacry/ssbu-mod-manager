@@ -1767,6 +1767,50 @@ def _get_cache_dir() -> Path:
     return _CACHE_DIR
 
 
+def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path) -> Optional[Path]:
+    """Best-effort whole-file ffmpeg decode with strict quality validation."""
+    ffmpeg = _find_ffmpeg()
+    if not ffmpeg:
+        return None
+    try:
+        from src.utils.logger import logger
+        result = subprocess.run(
+            [ffmpeg, "-y", "-i", str(input_path),
+             "-ar", "48000", "-sample_fmt", "s16",
+             str(wav_out)],
+            capture_output=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0 or not wav_out.exists():
+            return None
+
+        sz = wav_out.stat().st_size
+        zcr, corr = _wav_noise_signature(wav_out)
+        noisy_signature = (zcr > 0.30 and corr < 0.55)
+        if sz > 96000 and _validate_wav_quality(wav_out) and not noisy_signature:
+            logger.info(
+                "NUS3AUDIO",
+                f"ffmpeg direct fallback accepted ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+            )
+            return wav_out
+
+        logger.warn(
+            "NUS3AUDIO",
+            f"ffmpeg direct fallback rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+        )
+        try:
+            wav_out.unlink()
+        except OSError:
+            pass
+    except Exception as e:
+        try:
+            from src.utils.logger import logger
+            logger.debug("NUS3AUDIO", f"ffmpeg direct fallback failed: {e}")
+        except Exception:
+            pass
+    return None
+
+
 def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]]:
     """
     Extract audio from a NUS3AUDIO file and convert to a playable format.
@@ -1838,38 +1882,10 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
 
     if not audio_entries:
         # Last-resort whole-file fallback for unusual containers.
-        ffmpeg = _find_ffmpeg()
-        if ffmpeg:
-            try:
-                from src.utils.logger import logger
-                wav_out = cache_dir / f"{cache_key}.wav"
-                result = subprocess.run(
-                    [ffmpeg, "-y", "-i", str(nus3audio_path),
-                     "-ar", "48000", "-sample_fmt", "s16",
-                     str(wav_out)],
-                    capture_output=True, timeout=30,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                if result.returncode == 0 and wav_out.exists():
-                    sz = wav_out.stat().st_size
-                    zcr, corr = _wav_noise_signature(wav_out)
-                    noisy_signature = (zcr > 0.30 and corr < 0.55)
-                    if sz > 96000 and _validate_wav_quality(wav_out) and not noisy_signature:
-                        logger.info(
-                            "NUS3AUDIO",
-                            f"ffmpeg direct fallback accepted ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
-                        )
-                        return True, f"Playing: {nus3audio_path.name}", wav_out
-                    logger.warn(
-                        "NUS3AUDIO",
-                        f"ffmpeg direct fallback rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
-                    )
-                    try:
-                        wav_out.unlink()
-                    except OSError:
-                        pass
-            except Exception:
-                pass
+        wav_out = cache_dir / f"{cache_key}.wav"
+        direct = _try_ffmpeg_direct_to_wav(nus3audio_path, wav_out)
+        if direct is not None:
+            return True, f"Playing: {nus3audio_path.name}", direct
         return False, "No audio data found in NUS3AUDIO", None
 
     # Try the first (usually only) audio entry
@@ -1892,41 +1908,10 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
             return result
 
     # Priority 2: whole-file ffmpeg fallback (strictly validated).
-    ffmpeg = _find_ffmpeg()
-    if ffmpeg:
-        try:
-            from src.utils.logger import logger
-            wav_out = cache_dir / f"{cache_key}.wav"
-            result = subprocess.run(
-                [ffmpeg, "-y", "-i", str(nus3audio_path),
-                 "-ar", "48000", "-sample_fmt", "s16",
-                 str(wav_out)],
-                capture_output=True, timeout=30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if result.returncode == 0 and wav_out.exists():
-                sz = wav_out.stat().st_size
-                zcr, corr = _wav_noise_signature(wav_out)
-                # Reject outputs that look like hiss/noise despite passing
-                # basic WAV validity checks.
-                noisy_signature = (zcr > 0.30 and corr < 0.55)
-                if sz > 96000 and _validate_wav_quality(wav_out) and not noisy_signature:
-                    logger.info(
-                        "NUS3AUDIO",
-                        f"ffmpeg direct fallback accepted ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
-                    )
-                    return True, f"Playing: {nus3audio_path.name}", wav_out
-                logger.warn(
-                    "NUS3AUDIO",
-                    f"ffmpeg direct fallback rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
-                )
-                try:
-                    wav_out.unlink()
-                except OSError:
-                    pass
-        except Exception as e:
-            from src.utils.logger import logger
-            logger.debug("NUS3AUDIO", f"ffmpeg direct fallback failed: {e}")
+    wav_out = cache_dir / f"{cache_key}.wav"
+    direct = _try_ffmpeg_direct_to_wav(nus3audio_path, wav_out)
+    if direct is not None:
+        return True, f"Playing: {nus3audio_path.name}", direct
 
     fmt_hex = struct.unpack_from('<I', audio_data, 0)[0]
     fmt_ascii = audio_data[:4].decode('ascii', errors='replace')

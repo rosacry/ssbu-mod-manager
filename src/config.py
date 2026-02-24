@@ -19,6 +19,9 @@ class ConfigManager:
             try:
                 with open(CONFIG_FILE, 'r') as f:
                     data = json.load(f)
+                raw_overrides = data.get("plugin_name_overrides", {})
+                if not isinstance(raw_overrides, dict):
+                    raw_overrides = {}
                 self.settings = AppSettings(
                     eden_sdmc_path=Path(data["eden_sdmc_path"]) if data.get("eden_sdmc_path") else None,
                     mods_path=Path(data["mods_path"]) if data.get("mods_path") else None,
@@ -34,6 +37,11 @@ class ConfigManager:
                     debug_mode=data.get("debug_mode", False),
                     ui_scale=max(0.6, min(2.0, float(data.get("ui_scale", 1.2)))),
                     use_plugin_friendly_names=bool(data.get("use_plugin_friendly_names", True)),
+                    plugin_name_overrides={
+                        str(k): str(v)
+                        for k, v in raw_overrides.items()
+                        if str(v).strip()
+                    },
                 )
             except (json.JSONDecodeError, KeyError, TypeError, OSError,
                     ValueError, UnicodeDecodeError):
@@ -67,6 +75,7 @@ class ConfigManager:
             "debug_mode": self.settings.debug_mode,
             "ui_scale": self.settings.ui_scale,
             "use_plugin_friendly_names": self.settings.use_plugin_friendly_names,
+            "plugin_name_overrides": dict(self.settings.plugin_name_overrides or {}),
         }
 
         try:

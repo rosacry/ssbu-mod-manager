@@ -132,19 +132,9 @@ class DashboardPage(BasePage):
         )
         self.xmsbt_info.pack(fill="x", padx=20, pady=14)
 
-        # Emulator path status
-        path_frame = ctk.CTkFrame(scroll, fg_color="#1a1a30", corner_radius=12)
-        path_frame.pack(fill="x", padx=30, pady=(15, 10))
-
-        self.path_label = ctk.CTkLabel(
-            path_frame, text="\u2022  Emulator: Not configured",
-            font=ctk.CTkFont(size=13), text_color="#7a7a9a", anchor="w",
-        )
-        self.path_label.pack(fill="x", padx=20, pady=14)
-
         # Getting started section (shows when not configured)
         self.getting_started = ctk.CTkFrame(scroll, fg_color="#141430", corner_radius=12)
-        self.getting_started.pack(fill="x", padx=30, pady=(5, 20))
+        self.getting_started.pack(fill="x", padx=30, pady=(15, 20))
 
         gs_inner = ctk.CTkFrame(self.getting_started, fg_color="transparent")
         gs_inner.pack(fill="x", padx=20, pady=15)
@@ -207,18 +197,7 @@ class DashboardPage(BasePage):
         """Quick refresh using cached data."""
         try:
             settings = self.app.config_manager.settings
-            configured = False
-
-            if settings.eden_sdmc_path:
-                emu = settings.emulator or "Emulator"
-                self.path_label.configure(
-                    text=f"\u2022  {emu} is configured and ready",
-                    text_color="#2fa572")
-                configured = True
-            else:
-                self.path_label.configure(
-                    text="\u2022  Emulator: Not configured \u2014 go to Settings to set up",
-                    text_color="#e94560")
+            configured = bool(settings.eden_sdmc_path)
 
             # Show/hide getting started based on config state
             if configured:

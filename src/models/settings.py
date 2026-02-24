@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -19,3 +19,4 @@ class AppSettings:
     debug_mode: bool = False
     ui_scale: float = 1.2  # 100% baseline (matches previous 120% density)
     use_plugin_friendly_names: bool = True
+    plugin_name_overrides: dict[str, str] = field(default_factory=dict)

@@ -7,7 +7,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
 ## Key Features
 
 - Mod management with search, status filter, category grouping, and bulk enable/disable.
-- Plugin management with required-plugin safety checks and optional friendly names.
+- Plugin management with required-plugin safety checks, optional friendly names, and custom title overrides.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
 - Music page with stage playlists, preview playback, and assignment export.
 - Conflict detection/resolution (XMSBT merge flow + locale MSBT fixes).
@@ -61,6 +61,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - `Ctrl +`, `Ctrl -`, and `Ctrl 0` adjust UI zoom.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
+- Custom plugin titles can be renamed per plugin and reset to defaults.
 
 ## Repository Layout
 

@@ -118,6 +118,7 @@ class ConflictsPage(BasePage):
             corner_radius=8, height=34,
         )
 
+        self.empty_state = ctk.CTkFrame(self, fg_color="transparent")
         self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
@@ -127,15 +128,17 @@ class ConflictsPage(BasePage):
         elif self._needs_render:
             self._render()
         else:
-            self.conflict_list.update_idletasks()
+            if self.conflict_list.winfo_manager():
+                self.conflict_list.update_idletasks()
 
     def _show_initial_prompt(self):
         """Show an initial prompt with a scan button instead of auto-scanning."""
-        for w in self.conflict_list.winfo_children():
+        self._show_empty_state()
+        for w in self.empty_state.winfo_children():
             w.destroy()
 
-        prompt_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
-        prompt_frame.pack(fill="x", pady=(40, 24))
+        prompt_frame = ctk.CTkFrame(self.empty_state, fg_color="transparent")
+        prompt_frame.place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(prompt_frame, text="No scan performed yet",
                      font=ctk.CTkFont(size=18, weight="bold"),
@@ -148,17 +151,36 @@ class ConflictsPage(BasePage):
                      justify="center").pack(pady=(0, 20))
 
         scan_prompt_btn = ctk.CTkButton(
-            prompt_frame, text="🔍  Scan for Conflicts", width=220, height=40,
+            prompt_frame, text="\U0001F50D  Scan for Conflicts", width=220, height=40,
             fg_color="#1f538d", hover_color="#163b6a",
             font=ctk.CTkFont(size=14, weight="bold"),
             corner_radius=8, command=self._scan,
         )
         scan_prompt_btn.pack()
-        self.after(10, lambda: self._center_content_in_view(prompt_frame))
 
         self.summary_label.configure(
             text="Click 'Scan for Conflicts' to check for mod file conflicts.",
             text_color="#999999")
+
+    def _show_empty_state(self):
+        """Show centered empty-state content and hide the scroll list."""
+        try:
+            if self.conflict_list.winfo_manager():
+                self.conflict_list.pack_forget()
+        except Exception:
+            pass
+        if not self.empty_state.winfo_manager():
+            self.empty_state.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+
+    def _show_conflict_list(self):
+        """Show the scroll list and hide the centered empty-state area."""
+        try:
+            if self.empty_state.winfo_manager():
+                self.empty_state.pack_forget()
+        except Exception:
+            pass
+        if not self.conflict_list.winfo_manager():
+            self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
     def _center_content_in_view(self, frame):
         """Center an empty-state block in the visible viewport."""
@@ -198,6 +220,7 @@ class ConflictsPage(BasePage):
         self._scanning = True
         current_gen = getattr(self, "_scan_generation", 0)
         self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
+        self._show_conflict_list()
 
         for w in self.conflict_list.winfo_children():
             w.destroy()
@@ -252,6 +275,7 @@ class ConflictsPage(BasePage):
         self._scanning = False
         self._scanned = True
         self._needs_render = False
+        self._show_conflict_list()
         self.summary_label.configure(
             text=f"Scan failed: {error_msg}", text_color="#e94560")
 
@@ -280,6 +304,7 @@ class ConflictsPage(BasePage):
 
     def _render(self):
         self._needs_render = False
+        self._show_conflict_list()
 
         for w in self.conflict_list.winfo_children():
             w.destroy()

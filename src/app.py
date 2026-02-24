@@ -45,15 +45,18 @@ class ModManagerApp(ctk.CTk):
         super().__init__()
         _dbg("super().__init__() OK")
 
-        # Keep the window hidden until startup is fully complete so users
-        # never see an intermediate partial frame.
+        # Keep the window hidden until startup is complete so users never
+        # see intermediate layout states. Prefer alpha hiding to avoid the
+        # withdrawn->deiconify border flash seen on some Windows systems.
         self._startup_hidden_withdraw = False
+        self._startup_hidden_alpha = False
         try:
-            self.withdraw()
-            self._startup_hidden_withdraw = True
+            self.attributes("-alpha", 0.0)
+            self._startup_hidden_alpha = True
         except Exception:
             try:
-                self.attributes('-alpha', 0.0)
+                self.withdraw()
+                self._startup_hidden_withdraw = True
             except Exception:
                 pass
 
@@ -73,10 +76,12 @@ class ModManagerApp(ctk.CTk):
         self._is_maximized = False
         self._zoom_indicator_id = None
         self._zoom_apply_after_id = None
-        self._pending_scale = None
+        self._zoom_persist_after_id = None
+        self._pending_scale_apply = None
+        self._pending_scale_save = None
         self._scroll_debug_keys = set()
         self._scroll_refresh_after_id = None
-        self._scroll_refresh_widget = None
+        self._scroll_refresh_widgets = set()
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -205,8 +210,8 @@ class ModManagerApp(ctk.CTk):
         # Handle window close properly
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Resize debounce for smoother resizing
-        self.bind("<Configure>", self._on_configure)
+        # Resize handler intentionally not bound. Keeping this hot path free
+        # avoids extra jitter while users drag-resize the main window.
 
         # Zoom / scaling keybindings (Ctrl+Plus, Ctrl+Minus, Ctrl+0)
         saved_scale = float(getattr(settings, "ui_scale", self._DEFAULT_VISUAL_SCALE))
@@ -288,7 +293,8 @@ class ModManagerApp(ctk.CTk):
         # Avoid aggressive focus_force() during startup; it can trigger
         # unstable behavior on some Windows setups.
         self.after(10, self.lift)
-        self.after(120, lambda: self._ensure_window_visible(attempt=1))
+        if self._startup_hidden_withdraw:
+            self.after(120, lambda: self._ensure_window_visible(attempt=1))
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
 
         logger.info("App", "Application startup complete")
@@ -340,7 +346,7 @@ class ModManagerApp(ctk.CTk):
         self.geometry(f"{scaled_w}x{scaled_h}")
         self.minsize(min_w, min_h)
 
-    def _apply_scale(self, scale: float, save: bool = True):
+    def _apply_scale(self, scale: float, save: bool = False):
         """Apply UI scaling factor and optionally persist it."""
         scale = max(self._MIN_SCALE, min(self._MAX_SCALE, float(scale)))
         self._current_scale = scale
@@ -351,9 +357,7 @@ class ModManagerApp(ctk.CTk):
         min_h = min(int(self._MIN_HEIGHT * scale), screen_h - 80)
         self.minsize(min_w, min_h)
         if save:
-            settings = self.config_manager.settings
-            settings.ui_scale = scale
-            self.config_manager.save(settings)
+            self._persist_scale(scale)
         zoom_percent = self._scale_to_display_percent(scale)
         logger.info("App", f"UI scale set to {zoom_percent}%")
         # Show brief zoom indicator in status bar
@@ -368,12 +372,18 @@ class ModManagerApp(ctk.CTk):
 
     def _zoom_in(self):
         """Increase visual zoom by 10% (relative to the 100%=old120 baseline)."""
-        pct = self._scale_to_display_percent(self._current_scale)
+        base_scale = self._pending_scale_apply
+        if base_scale is None:
+            base_scale = self._current_scale
+        pct = self._scale_to_display_percent(base_scale)
         self._queue_scale_change(self._display_percent_to_scale(pct + 10))
 
     def _zoom_out(self):
         """Decrease visual zoom by 10%."""
-        pct = self._scale_to_display_percent(self._current_scale)
+        base_scale = self._pending_scale_apply
+        if base_scale is None:
+            base_scale = self._current_scale
+        pct = self._scale_to_display_percent(base_scale)
         self._queue_scale_change(self._display_percent_to_scale(pct - 10))
 
     def _zoom_reset(self):
@@ -383,24 +393,57 @@ class ModManagerApp(ctk.CTk):
     def _queue_scale_change(self, scale: float):
         """Debounce scale changes so rapid key repeats don't stutter."""
         scale = max(self._MIN_SCALE, min(self._MAX_SCALE, float(scale)))
-        if abs(scale - self._current_scale) < 1e-6:
+        effective = self._pending_scale_apply
+        if effective is None:
+            effective = self._current_scale
+        if abs(scale - effective) < 1e-6:
             return
-        self._pending_scale = scale
+        self._pending_scale_apply = scale
         if self._zoom_apply_after_id:
             try:
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(24, self._flush_pending_scale)
+        self._zoom_apply_after_id = self.after(60, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
         self._zoom_apply_after_id = None
-        if self._pending_scale is None:
+        if self._pending_scale_apply is None:
             return
-        pending = self._pending_scale
-        self._pending_scale = None
-        self._apply_scale(pending)
+        pending = self._pending_scale_apply
+        self._pending_scale_apply = None
+        self._apply_scale(pending, save=False)
+        self._schedule_scale_persist(pending)
+
+    def _schedule_scale_persist(self, scale: float):
+        """Persist zoom level lazily so key repeats don't hammer disk writes."""
+        self._pending_scale_save = max(self._MIN_SCALE, min(self._MAX_SCALE, float(scale)))
+        if self._zoom_persist_after_id:
+            try:
+                self.after_cancel(self._zoom_persist_after_id)
+            except Exception:
+                pass
+        self._zoom_persist_after_id = self.after(400, self._flush_scale_persist)
+
+    def _flush_scale_persist(self):
+        self._zoom_persist_after_id = None
+        scale = self._pending_scale_save
+        if scale is None:
+            scale = self._current_scale
+        self._pending_scale_save = None
+        self._persist_scale(scale)
+
+    def _persist_scale(self, scale: float):
+        """Write UI scale to config only when it actually changed."""
+        try:
+            settings = self.config_manager.settings
+            if abs(float(getattr(settings, "ui_scale", self._DEFAULT_VISUAL_SCALE)) - float(scale)) < 1e-6:
+                return
+            settings.ui_scale = float(scale)
+            self.config_manager.save(settings)
+        except Exception:
+            pass
 
     def _scale_to_display_percent(self, scale: float) -> int:
         """Map internal scale to UI-visible zoom percent."""
@@ -447,17 +490,43 @@ class ModManagerApp(ctk.CTk):
 
     # --- Global fast scroll --------------------------------------------------
 
-    _SCROLL_SPEED = 5                   # Listbox/Text scroll multiplier
-    _CANVAS_SCROLL_SPEED = 18           # Default CTkScrollableFrame canvas speed
-    _LONGFORM_SCROLL_SPEED = 18         # Long-form text/list widgets
-    _LONGFORM_CANVAS_SCROLL_SPEED = 64  # Online Guide/Migration canvas boost
+    _SCROLL_SPEED = 4                    # Listbox/Text scroll multiplier
+    _CANVAS_SCROLL_PIXELS = 120          # Default canvas movement per wheel tick
+    _LONGFORM_SCROLL_SPEED = 10          # Long-form text/list widgets
+    _LONGFORM_CANVAS_SCROLL_PIXELS = 220 # Online Guide/Migration canvas boost
 
     @staticmethod
-    def _canvas_can_scroll_vertically(canvas) -> bool:
-        """Return True only for canvases that currently have vertical range."""
+    def _widget_can_scroll_vertically(widget) -> bool:
+        """Return True only for widgets that currently have vertical range."""
+        try:
+            y0, y1 = widget.yview()
+            return (y1 - y0) < 0.999999
+        except Exception:
+            return False
+
+    @staticmethod
+    def _scroll_canvas_pixels(canvas, delta_pixels: float) -> bool:
+        """Scroll a canvas by pixel distance for consistent speed across pages."""
         try:
             y0, y1 = canvas.yview()
-            return (y1 - y0) < 0.999999
+            if (y1 - y0) >= 0.999999:
+                return False
+            scrollregion = canvas.cget("scrollregion")
+            total_h = 0.0
+            if scrollregion:
+                parts = [float(p) for p in str(scrollregion).split()]
+                if len(parts) == 4:
+                    total_h = max(0.0, parts[3] - parts[1])
+            if total_h <= 1.0:
+                bbox = canvas.bbox("all")
+                if bbox:
+                    total_h = max(0.0, float(bbox[3] - bbox[1]))
+            view_h = max(1.0, float(canvas.winfo_height()))
+            scroll_h = max(1.0, total_h - view_h)
+            current_px = float(y0) * scroll_h
+            target_px = max(0.0, min(scroll_h, current_px + float(delta_pixels)))
+            canvas.yview_moveto(target_px / scroll_h)
+            return True
         except Exception:
             return False
 
@@ -554,24 +623,28 @@ class ModManagerApp(ctk.CTk):
             if w.__class__.__name__ in ("OnlineCompatPage", "MigrationPage"):
                 in_longform_page = True
             if isinstance(w, tk.Listbox):
-                scrollable = w
-                break
+                if self._widget_can_scroll_vertically(w):
+                    scrollable = w
+                    break
             if isinstance(w, tk.Text):
-                scrollable = w
-                break
+                if self._widget_can_scroll_vertically(w):
+                    scrollable = w
+                    break
             # CTkScrollableFrame - its internal canvas is NOT in the
             # ancestor chain of child widgets, so we must detect the
             # frame itself and grab its _parent_canvas.
             if isinstance(w, ctk.CTkScrollableFrame):
                 try:
-                    scrollable = w._parent_canvas
-                    break
+                    parent_canvas = w._parent_canvas
+                    if self._widget_can_scroll_vertically(parent_canvas):
+                        scrollable = parent_canvas
+                        break
                 except AttributeError:
                     pass
             if isinstance(w, tk.Canvas):
                 # Skip decorative CTk canvases (labels/buttons) and only use
                 # canvases that actually have a vertical scroll range.
-                if self._canvas_can_scroll_vertically(w):
+                if self._widget_can_scroll_vertically(w):
                     scrollable = w
                     break
             try:
@@ -594,9 +667,9 @@ class ModManagerApp(ctk.CTk):
                 pass
             longform = in_longform_page or page_id in ("online_compat", "migration")
             if isinstance(scrollable, tk.Canvas):
-                speed = self._CANVAS_SCROLL_SPEED
+                speed = self._CANVAS_SCROLL_PIXELS
                 if longform:
-                    speed = self._LONGFORM_CANVAS_SCROLL_SPEED
+                    speed = self._LONGFORM_CANVAS_SCROLL_PIXELS
             else:
                 speed = self._SCROLL_SPEED
                 if longform:
@@ -607,7 +680,12 @@ class ModManagerApp(ctk.CTk):
                     self._scroll_debug_keys.add(key)
                     logger.debug("App", f"Long-form scroll boost active ({key})")
             delta = direction * speed * ticks
-            scrollable.yview_scroll(delta, "units")
+            if isinstance(scrollable, tk.Canvas):
+                moved = self._scroll_canvas_pixels(scrollable, delta)
+                if not moved:
+                    scrollable.yview_scroll(int(delta), "units")
+            else:
+                scrollable.yview_scroll(int(delta), "units")
             self._schedule_scroll_refresh(scrollable)
         except tk.TclError:
             pass
@@ -616,21 +694,26 @@ class ModManagerApp(ctk.CTk):
     def _schedule_scroll_refresh(self, widget):
         """Throttle redraws while wheel-scrolling to avoid transient text artifacts."""
         try:
-            self._scroll_refresh_widget = widget
+            self._scroll_refresh_widgets.add(widget)
             if self._scroll_refresh_after_id:
                 return
-            self._scroll_refresh_after_id = self.after(16, self._flush_scroll_refresh)
+            self._scroll_refresh_after_id = self.after(10, self._flush_scroll_refresh)
         except Exception:
             pass
 
     def _flush_scroll_refresh(self):
         self._scroll_refresh_after_id = None
-        widget = self._scroll_refresh_widget
-        self._scroll_refresh_widget = None
-        if widget is None:
+        widgets = list(self._scroll_refresh_widgets)
+        self._scroll_refresh_widgets.clear()
+        if not widgets:
             return
+        for widget in widgets:
+            try:
+                widget.update_idletasks()
+            except Exception:
+                pass
         try:
-            widget.update_idletasks()
+            self.update_idletasks()
         except Exception:
             pass
 
@@ -749,25 +832,11 @@ class ModManagerApp(ctk.CTk):
 
         self._last_width = w
         self._last_height = h
-
-        # Debounce reflow work during drag-resize.
-        if self._resize_after_id:
-            self.after_cancel(self._resize_after_id)
-        try:
-            self._resize_after_id = self.after(80, self._finalize_resize)
-        except Exception:
-            pass
+        # Keep resize handling lightweight to reduce drag stutter.
 
     def _finalize_resize(self):
         """Finalize layout after resize settles."""
         self._resize_after_id = None
-        try:
-            page_id = getattr(self.main_window, "current_page", None)
-            page = self.main_window.pages.get(page_id) if page_id else None
-            if page is not None and hasattr(page, "_patch_all_scroll_speeds"):
-                page._patch_all_scroll_speeds()
-        except Exception:
-            pass
 
     def _on_close(self):
         """Clean shutdown - prompt for unsaved changes, stop threads and audio."""
@@ -819,6 +888,11 @@ class ModManagerApp(ctk.CTk):
         try:
             if self._zoom_apply_after_id:
                 self.after_cancel(self._zoom_apply_after_id)
+        except Exception:
+            pass
+        try:
+            if self._zoom_persist_after_id:
+                self.after_cancel(self._zoom_persist_after_id)
         except Exception:
             pass
         try:
