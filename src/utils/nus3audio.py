@@ -204,8 +204,60 @@ def _wav_duration_seconds(wav_path: Path) -> float:
         return 0.0
 
 
+def _wav_stereo_metrics(wav_path: Path) -> tuple[float, float]:
+    """Estimate stereo coherence from WAV PCM data.
+
+    Returns (left_right_correlation, diff_rms_ratio). For normal stereo music,
+    correlation is typically positive and diff_rms_ratio is usually <= ~1.
+    Corrupted decodes often show low correlation with an excessively large
+    L-R diff energy ratio.
+    """
+    try:
+        with open(wav_path, 'rb') as f:
+            header = f.read(44)
+            if len(header) < 44 or header[:4] != b'RIFF':
+                return 0.0, 1.0
+            channels = int(struct.unpack_from('<H', header, 22)[0])
+            if channels != 2:
+                return 1.0, 0.0
+            pcm = f.read(48000 * 4 * 12)  # ~12s at 48kHz stereo s16
+
+        import array
+        samples = array.array('h')
+        samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
+        if len(samples) < 4000:
+            return 0.0, 1.0
+
+        left = samples[0::2]
+        right = samples[1::2]
+        n = min(len(left), len(right), 120000)
+        if n < 2000:
+            return 0.0, 1.0
+        left = left[:n]
+        right = right[:n]
+
+        mean_l = sum(left) / n
+        mean_r = sum(right) / n
+        var_l = sum((x - mean_l) ** 2 for x in left) / n
+        var_r = sum((x - mean_r) ** 2 for x in right) / n
+        cov = sum((left[i] - mean_l) * (right[i] - mean_r) for i in range(n)) / n
+        corr = cov / ((var_l * var_r) ** 0.5 + 1e-9)
+
+        rms_l = (sum(x * x for x in left) / n) ** 0.5
+        rms_r = (sum(x * x for x in right) / n) ** 0.5
+        diff = [left[i] - right[i] for i in range(n)]
+        rms_d = (sum(x * x for x in diff) / n) ** 0.5
+        diff_ratio = rms_d / (((rms_l + rms_r) / 2.0) + 1e-9)
+
+        return float(corr), float(diff_ratio)
+    except Exception:
+        return 0.0, 1.0
+
+
 def _score_opus_candidate(base_score: float, duration_s: float,
-                          encoded_size_bytes: int) -> tuple[float, float]:
+                          encoded_size_bytes: int,
+                          stereo_corr: Optional[float] = None,
+                          stereo_diff_ratio: Optional[float] = None) -> tuple[float, float]:
     """Adjust raw PCM quality score using encoded-size plausibility.
 
     Wrong offsets can decode to very short/noisy audio that still gets a
@@ -248,6 +300,25 @@ def _score_opus_candidate(base_score: float, duration_s: float,
         score -= 2.0
     elif duration_s < min_expected_duration * 0.6:
         score -= 1.0
+
+    # Stereo coherence heuristic: corrupted frame extraction often yields
+    # very low L/R correlation and excessive L-R diff energy.
+    if stereo_corr is not None and stereo_diff_ratio is not None:
+        if stereo_diff_ratio > 1.25:
+            score -= 1.8
+        elif stereo_diff_ratio > 1.05:
+            score -= 1.2
+        elif stereo_diff_ratio > 0.90:
+            score -= 0.7
+        elif stereo_diff_ratio < 0.35 and stereo_corr > 0.92:
+            score += 0.25
+
+        if stereo_corr < 0.20:
+            score -= 1.0
+        elif stereo_corr < 0.35:
+            score -= 0.6
+        elif stereo_corr > 0.90 and stereo_diff_ratio < 0.45:
+            score += 0.2
 
     return score, bitrate_kbps
 
@@ -1578,7 +1649,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r3"
+_DECODER_CACHE_REV = "r4"
 
 
 def _get_cache_dir() -> Path:
@@ -1741,6 +1812,8 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
             best_score = -1.0
             best_duration = 0.0
             best_bitrate = 0.0
+            best_stereo_corr = None
+            best_stereo_diff_ratio = None
             best_wav: Optional[Path] = None
             best_label = "unknown"
 
@@ -1755,8 +1828,14 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     if wav_path and wav_path.exists():
                         raw_score, out_channels = _score_wav_quality(wav_path)
                         duration_s = _wav_duration_seconds(wav_path)
+                        stereo_corr = None
+                        stereo_diff_ratio = None
+                        if out_channels == 2:
+                            stereo_corr, stereo_diff_ratio = _wav_stereo_metrics(wav_path)
                         score, bitrate_kbps = _score_opus_candidate(
-                            raw_score, duration_s, len(audio_data)
+                            raw_score, duration_s, len(audio_data),
+                            stereo_corr=stereo_corr,
+                            stereo_diff_ratio=stereo_diff_ratio,
                         )
                         if (score > best_score + 1e-6 or
                                 (abs(score - best_score) <= 0.05 and
@@ -1764,6 +1843,8 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                             best_score = score
                             best_duration = duration_s
                             best_bitrate = bitrate_kbps
+                            best_stereo_corr = stereo_corr
+                            best_stereo_diff_ratio = stereo_diff_ratio
                             best_wav = wav_path
                             best_label = f"{ch_label}/{out_channels}ch"
                 except Exception as e:
@@ -1782,13 +1863,24 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                         "NUS3AUDIO",
                         f"LOPUS best decode {best_label} score={best_score:.2f} "
                         f"duration={best_duration:.2f}s bitrate={best_bitrate:.1f}kbps"
+                        + (
+                            f" corr={best_stereo_corr:.3f} lr_ratio={best_stereo_diff_ratio:.3f}"
+                            if best_stereo_corr is not None and best_stereo_diff_ratio is not None
+                            else ""
+                        )
                     )
                 else:
                     logger.warn(
                         "NUS3AUDIO",
                         f"LOPUS decode below quality threshold ({best_label}, "
                         f"score={best_score:.2f}, duration={best_duration:.2f}s, "
-                        f"bitrate={best_bitrate:.1f}kbps)"
+                        f"bitrate={best_bitrate:.1f}kbps"
+                        + (
+                            f", corr={best_stereo_corr:.3f}, lr_ratio={best_stereo_diff_ratio:.3f}"
+                            if best_stereo_corr is not None and best_stereo_diff_ratio is not None
+                            else ""
+                        )
+                        + ")"
                     )
                 return True, f"Playing: {display_name}", best_wav
 
@@ -1830,19 +1922,29 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         best_score = -1.0
         best_duration = 0.0
         best_bitrate = 0.0
+        best_stereo_corr = None
+        best_stereo_diff_ratio = None
         best_wav: Optional[Path] = None
         best_label = "unknown"
 
         def _capture_best(ogg_data: bytes, label: str) -> None:
-            nonlocal best_score, best_duration, best_bitrate, best_wav, best_label
+            nonlocal best_score, best_duration, best_bitrate
+            nonlocal best_stereo_corr, best_stereo_diff_ratio
+            nonlocal best_wav, best_label
             ogg_path = cache_dir / f"{cache_key}_{label}.ogg"
             ogg_path.write_bytes(ogg_data)
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
             if wav_path and wav_path.exists():
                 raw_score, out_channels = _score_wav_quality(wav_path)
                 duration_s = _wav_duration_seconds(wav_path)
+                stereo_corr = None
+                stereo_diff_ratio = None
+                if out_channels == 2:
+                    stereo_corr, stereo_diff_ratio = _wav_stereo_metrics(wav_path)
                 score, bitrate_kbps = _score_opus_candidate(
-                    raw_score, duration_s, len(audio_data)
+                    raw_score, duration_s, len(audio_data),
+                    stereo_corr=stereo_corr,
+                    stereo_diff_ratio=stereo_diff_ratio,
                 )
                 if (score > best_score + 1e-6 or
                         (abs(score - best_score) <= 0.05 and
@@ -1850,6 +1952,8 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     best_score = score
                     best_duration = duration_s
                     best_bitrate = bitrate_kbps
+                    best_stereo_corr = stereo_corr
+                    best_stereo_diff_ratio = stereo_diff_ratio
                     best_wav = wav_path
                     best_label = f"{label}/{out_channels}ch"
 
@@ -1884,13 +1988,24 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     "NUS3AUDIO",
                     f"OPUS best decode {best_label} score={best_score:.2f} "
                     f"duration={best_duration:.2f}s bitrate={best_bitrate:.1f}kbps"
+                    + (
+                        f" corr={best_stereo_corr:.3f} lr_ratio={best_stereo_diff_ratio:.3f}"
+                        if best_stereo_corr is not None and best_stereo_diff_ratio is not None
+                        else ""
+                    )
                 )
             else:
                 logger.warn(
                     "NUS3AUDIO",
                     f"OPUS decode below quality threshold ({best_label}, "
                     f"score={best_score:.2f}, duration={best_duration:.2f}s, "
-                    f"bitrate={best_bitrate:.1f}kbps)"
+                    f"bitrate={best_bitrate:.1f}kbps"
+                    + (
+                        f", corr={best_stereo_corr:.3f}, lr_ratio={best_stereo_diff_ratio:.3f}"
+                        if best_stereo_corr is not None and best_stereo_diff_ratio is not None
+                        else ""
+                    )
+                    + ")"
                 )
             return True, f"Playing: {display_name}", best_wav
 

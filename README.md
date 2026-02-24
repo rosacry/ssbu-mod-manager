@@ -276,6 +276,12 @@ MIT
 
 ## Changelog
 
+### v3.1.6
+- **Fix: Online Guide/Migration still feeling slow** - Added a dedicated boosted canvas wheel multiplier for these two long-form pages so they now scroll significantly faster than standard pages
+- **Fix: OPUS preview still choosing distorted candidates** - Added stereo-coherence heuristics (left/right correlation + L-R diff energy ratio) to OPUS/LOPUS candidate scoring so noisy container decodes are penalized even when raw PCM amplitude looks "good"
+- **Improvement: decode diagnostics** - OPUS/LOPUS best-decode logs now include stereo coherence metrics (`corr`, `lr_ratio`) to make future audio triage deterministic
+- **Fix: stale decode cache after scoring changes** - Bumped decoder cache revision to `r4` so old WAV picks are automatically invalidated
+
 ### v3.1.5
 - **Fix: Online Guide/Migration fast scrolling not applying** - Root-caused a DPI/scaling issue where global wheel routing relied on `winfo_containing(x_root, y_root)` and could return `None`, so accelerated scrolling was skipped. Global handler now uses `event.widget` as primary source and only uses `winfo_containing` as optional refinement
 - **Fix: Wrong canvas selected for wheel scroll** - Global wheel routing now ignores decorative CTk canvases (label/button draw canvases) and only targets canvases that actually have vertical scroll range, so long-form guide pages consistently scroll at accelerated speed
