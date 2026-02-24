@@ -248,6 +248,8 @@ class SettingsPage(BasePage):
         self.auto_detect_var.set(True)
         self.backup_var.set(True)
         self.sdmc_status.configure(text="Reset to defaults", text_color="#888888")
+        # Sync logger state with the reset debug_mode (False)
+        logger.enabled = False
         self.app._update_managers()
         self._auto_save_active = True
         logger.info("Settings", "Settings reset to defaults")

@@ -24,7 +24,7 @@ class ConfigManager:
                     mods_path=Path(data["mods_path"]) if data.get("mods_path") else None,
                     plugins_path=Path(data["plugins_path"]) if data.get("plugins_path") else None,
                     css_mod_folder=Path(data["css_mod_folder"]) if data.get("css_mod_folder") else None,
-                    mod_disable_method=data.get("mod_disable_method", "rename"),
+                    mod_disable_method=data.get("mod_disable_method", "move"),
                     theme=data.get("theme", "Dark"),
                     window_geometry=data.get("window_geometry", "1400x900"),
                     last_opened_page=data.get("last_opened_page", "dashboard"),

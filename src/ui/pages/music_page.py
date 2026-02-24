@@ -268,6 +268,9 @@ class MusicPage(BasePage):
             self._scan_tracks()
         else:
             self._populate_stages()
+            # Re-render the playlist if a stage was previously selected
+            if self._selected_stage:
+                self._render_playlist()
         # Sync play button state with actual audio player
         self._sync_play_state()
 
@@ -689,6 +692,20 @@ class MusicPage(BasePage):
             audio_player.stop()
             self._is_playing = False
 
+        # Cancel any stale poll / seek-bar loops from previous playback
+        if hasattr(self, '_poll_after_id') and self._poll_after_id:
+            try:
+                self.after_cancel(self._poll_after_id)
+            except Exception:
+                pass
+            self._poll_after_id = None
+        if hasattr(self, '_seek_after_id') and self._seek_after_id:
+            try:
+                self.after_cancel(self._seek_after_id)
+            except Exception:
+                pass
+            self._seek_after_id = None
+
         # Cancel any in-flight play request by bumping the generation counter
         if not hasattr(self, '_play_generation'):
             self._play_generation = 0
@@ -733,19 +750,29 @@ class MusicPage(BasePage):
 
     def _poll_playback_end(self):
         """Periodically check if playback ended so the button resets."""
+        self._poll_after_id = None
         if not self._is_playing:
             return
         if not audio_player.is_playing:
             self._is_playing = False
             self.play_toggle_btn.configure(
-                text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
+                text="\u25b6  Play", fg_color="#2fa572", hover_color="#106a43")
             self.player_status.configure(text="")
             return
-        self.after(500, self._poll_playback_end)
+        self._poll_after_id = self.after(500, self._poll_playback_end)
 
     def _stop_playback(self):
         audio_player.stop()
         self._is_playing = False
+        # Cancel stale timer loops
+        for attr in ('_poll_after_id', '_seek_after_id'):
+            aid = getattr(self, attr, None)
+            if aid:
+                try:
+                    self.after_cancel(aid)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
         self.play_toggle_btn.configure(
             text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
         self.player_status.configure(text="Stopped", text_color="#888888")
@@ -774,6 +801,7 @@ class MusicPage(BasePage):
 
     def _update_seek_bar(self):
         """Periodically update the seek slider to reflect playback position."""
+        self._seek_after_id = None
         if not self._is_playing or self._seek_dragging:
             return
         dur = audio_player.get_duration()
@@ -783,7 +811,7 @@ class MusicPage(BasePage):
             self.seek_slider.set(pct)
             self.seek_label.configure(text=self._fmt_time(int(pos)))
             self.seek_duration_label.configure(text=self._fmt_time(int(dur)))
-        self.after(500, self._update_seek_bar)
+        self._seek_after_id = self.after(500, self._update_seek_bar)
 
     @staticmethod
     def _fmt_time(seconds: int) -> str:

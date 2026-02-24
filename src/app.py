@@ -60,13 +60,17 @@ class ModManagerApp(ctk.CTk):
         # doesn't see a half-built frame.  withdraw()/deiconify() is
         # unreliable on some Windows configurations (the window stays
         # hidden even after deiconify), so we use alpha instead.
+        # Also place the window far off-screen as a belt-and-suspenders
+        # measure — on some DPI configurations alpha=0 alone can still
+        # produce a brief flash.
         self.attributes('-alpha', 0)
 
         self.title("SSBU Mod Manager")
 
-        # Apply geometry immediately so the window starts at the correct
-        # size instead of briefly showing at the Tk default (200x200).
-        self.geometry(f"{self._BASE_WIDTH}x{self._BASE_HEIGHT}")
+        # Apply geometry immediately at the FINAL scaled size and park
+        # the window off-screen.  This avoids the user ever seeing the
+        # window at 1400x900 before it snaps to the scaled size.
+        self.geometry(f"{self._BASE_WIDTH}x{self._BASE_HEIGHT}+10000+10000")
         self.minsize(self._MIN_WIDTH, self._MIN_HEIGHT)
 
         # Shutdown flag for background threads
@@ -256,6 +260,21 @@ class ModManagerApp(ctk.CTk):
         self.report_callback_exception = self._on_tk_error
 
         self.update_idletasks()
+
+        # Centre the window on screen BEFORE making it visible.  The
+        # window was parked off-screen during init to avoid any flash.
+        try:
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+            win_w = self.winfo_width()
+            win_h = self.winfo_height()
+            x = max(0, (screen_w - win_w) // 2)
+            y = max(0, (screen_h - win_h) // 2)
+            self.geometry(f"+{x}+{y}")
+            self.update_idletasks()
+        except Exception:
+            pass
+
         _dbg("update_idletasks done, showing window...")
         self.attributes('-alpha', 1)
         self.lift()

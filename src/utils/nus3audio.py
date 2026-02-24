@@ -290,8 +290,14 @@ def _auto_detect_slot_frames(data: bytes, start: int) -> Optional[list[bytes]]:
     return None
 
 
-def _lopus_to_ogg(lopus_data: bytes) -> bytes:
-    """Convert Nintendo LOPUS data to standard OGG Opus."""
+def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> bytes:
+    """Convert Nintendo LOPUS data to standard OGG Opus.
+
+    Args:
+        lopus_data: Raw LOPUS data bytes.
+        force_channels: If set, override the channel count from the header.
+            Useful for retrying when the header's channel field is wrong.
+    """
     if len(lopus_data) < 30:
         raise ValueError(f"LOPUS data too short ({len(lopus_data)} bytes, need at least 30)")
 
@@ -431,7 +437,7 @@ def _lopus_to_ogg(lopus_data: bytes) -> bytes:
     if not best_frames:
         raise ValueError("No Opus frames extracted from LOPUS data")
 
-    channel_count = best_channel_count
+    channel_count = force_channels if force_channels is not None else best_channel_count
 
     # Build OGG Opus file
     serial = 0x53534255  # "SSBU"
@@ -1595,16 +1601,42 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
     if len(audio_data) >= 4:
         lopus_magic = struct.unpack_from('<I', audio_data, 0)[0]
         if lopus_magic & 0x80000000:
-            try:
-                ogg_data = _lopus_to_ogg(audio_data)
-                ogg_path = cache_dir / f"{cache_key}.ogg"
-                ogg_path.write_bytes(ogg_data)
-                # pygame/stb_vorbis can't play OGG Opus — convert to WAV via ffmpeg
-                wav_path = _convert_ogg_opus_to_wav(ogg_path)
-                if wav_path:
-                    return True, f"Playing: {display_name}", wav_path
-                # ffmpeg not available — OGG Opus is unplayable by pygame
-                from src.utils.logger import logger
+            from src.utils.logger import logger
+            ogg_path = cache_dir / f"{cache_key}.ogg"
+            fallback_wav: Optional[Path] = None
+
+            # Try auto-detected channels first, then force mono/stereo.
+            # Mod-created NUS3AUDIO files often have an incorrect channel
+            # count in the header, producing distorted (but recognisable)
+            # audio.  Retrying with the opposite channel count fixes it.
+            for try_channels in [None, 1, 2]:
+                try:
+                    ogg_data = _lopus_to_ogg(audio_data, force_channels=try_channels)
+                    ogg_path.write_bytes(ogg_data)
+                    wav_path = _convert_ogg_opus_to_wav(ogg_path)
+                    if wav_path and wav_path.exists():
+                        if _validate_wav_quality(wav_path):
+                            ch_label = try_channels if try_channels else "auto"
+                            logger.info("NUS3AUDIO",
+                                        f"LOPUS→WAV succeeded (channels={ch_label}, "
+                                        f"size={wav_path.stat().st_size})")
+                            return True, f"Playing: {display_name}", wav_path
+                        # Keep the first non-validated WAV as fallback
+                        if fallback_wav is None:
+                            fallback_wav = wav_path
+                except Exception as e:
+                    ch_label = try_channels if try_channels else "auto"
+                    logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
+
+            # If none passed validation but we got a WAV, use it
+            # (distorted audio is better than no audio at all)
+            if fallback_wav and fallback_wav.exists():
+                logger.warn("NUS3AUDIO",
+                            "LOPUS WAV failed quality validation; using best attempt")
+                return True, f"Playing: {display_name}", fallback_wav
+
+            # Check if ffmpeg is missing — provide user guidance
+            if not _find_ffmpeg():
                 logger.warn("NUS3AUDIO",
                             "Opus audio requires ffmpeg for playback. "
                             "Install ffmpeg and add it to PATH.")
@@ -1612,10 +1644,9 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     "This track uses Opus audio which requires ffmpeg for playback.\n"
                     "Install ffmpeg and add it to PATH."
                 ), None
-            except Exception as e:
-                from src.utils.logger import logger
-                logger.warn("NUS3AUDIO", f"LOPUS conversion failed: {e}")
-                pass  # Fall through to try other formats
+
+            # All LOPUS attempts failed — fall through to other formats
+            logger.warn("NUS3AUDIO", "All LOPUS conversion attempts failed")
 
     # IDSP (Nintendo DSP ADPCM)
     if audio_data[:4] == b'IDSP':
@@ -1640,27 +1671,50 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
     # OPUS raw container (magic "OPUS" = 0x4F505553)
     # Found in some NUS3AUDIO files where audio data starts with "OPUS" header
     if audio_data[:4] == b'OPUS':
+        from src.utils.logger import logger
+        ogg_path = cache_dir / f"{cache_key}.ogg"
         try:
             ogg_data = _opus_container_to_ogg(audio_data)
-            ogg_path = cache_dir / f"{cache_key}.ogg"
             ogg_path.write_bytes(ogg_data)
-            # pygame/stb_vorbis can't play OGG Opus — convert to WAV via ffmpeg
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
-            if wav_path:
-                return True, f"Playing: {display_name}", wav_path
-            # ffmpeg not available — OGG Opus is unplayable by pygame
-            from src.utils.logger import logger
-            logger.warn("NUS3AUDIO",
-                        "Opus audio requires ffmpeg for playback. "
-                        "Install ffmpeg and add it to PATH.")
+            if wav_path and wav_path.exists():
+                if _validate_wav_quality(wav_path):
+                    logger.info("NUS3AUDIO", "OPUS container→WAV succeeded")
+                    return True, f"Playing: {display_name}", wav_path
+                # WAV produced but failed validation — keep as fallback,
+                # then try with different channel counts below.
+                opus_fallback_wav = wav_path
+            else:
+                opus_fallback_wav = None
+        except Exception as e:
+            logger.debug("NUS3AUDIO", f"OPUS container conversion: {e}")
+            opus_fallback_wav = None
+
+        # Retry: some OPUS containers wrap LOPUS data with wrong channel
+        # count.  Try forcing 1 or 2 channels.
+        for try_ch in [1, 2]:
+            try:
+                ogg_data = _lopus_to_ogg(audio_data[4:], force_channels=try_ch)
+                ogg_path.write_bytes(ogg_data)
+                wav_path = _convert_ogg_opus_to_wav(ogg_path)
+                if wav_path and _validate_wav_quality(wav_path):
+                    logger.info("NUS3AUDIO",
+                                f"OPUS fallback LOPUS→WAV OK (ch={try_ch})")
+                    return True, f"Playing: {display_name}", wav_path
+            except Exception:
+                pass
+
+        if opus_fallback_wav and opus_fallback_wav.exists():
+            logger.warn("NUS3AUDIO", "OPUS WAV failed validation, using best attempt")
+            return True, f"Playing: {display_name}", opus_fallback_wav
+
+        if not _find_ffmpeg():
             return False, (
                 "This track uses Opus audio which requires ffmpeg for playback.\n"
                 "Install ffmpeg and add it to PATH."
             ), None
-        except Exception as e:
-            from src.utils.logger import logger
-            logger.warn("NUS3AUDIO", f"OPUS container conversion failed: {e}")
-            # Fall through to ffmpeg raw fallback
+
+        logger.warn("NUS3AUDIO", "All OPUS conversion attempts failed")
 
     # --- ffmpeg raw fallback ---
     # If all custom parsers failed, write the raw audio data to a temp

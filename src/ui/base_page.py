@@ -79,23 +79,38 @@ class BasePage(ctk.CTkFrame):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
         self.app = app
-        # Schedule patching of all scrollable frames after build
+        # Schedule patching of standalone scrollable widgets after build.
+        # CTkScrollableFrame scrolling is handled globally by
+        # ModManagerApp._global_fast_scroll (bind_all), so we only patch
+        # tk.Listbox / tk.Text / tk.Canvas here to override their slower
+        # class-level default scrolling.
         self.after(50, self._patch_all_scroll_speeds)
 
     def _patch_all_scroll_speeds(self):
-        """Find and patch all scrollable widgets for faster scrolling."""
+        """Find and patch standalone scrollable widgets for faster scrolling.
+
+        CTkScrollableFrame is intentionally SKIPPED — its scrolling is
+        handled by the application-wide bind_all("<MouseWheel>") handler
+        in ModManagerApp._global_fast_scroll.  Adding per-widget bindings
+        on CTkScrollableFrame children that return ``"break"`` would block
+        the bind_all handler from ever firing, completely breaking scroll.
+        """
         self._recursive_patch_scroll(self)
 
     def _recursive_patch_scroll(self, widget):
-        """Recursively patch scroll speed on all scrollable widgets.
+        """Recursively patch scroll speed on standalone scrollable widgets.
 
-        Handles CTkScrollableFrame, tk.Listbox, tk.Canvas, tk.Text,
-        and PanedWindow children (which winfo_children() does not
-        normally traverse).
+        Skips CTkScrollableFrame subtrees entirely — those are handled
+        by the global bind_all handler.  Patches tk.Listbox, tk.Canvas,
+        and tk.Text widgets that live *outside* a CTkScrollableFrame.
         """
+        # CTkScrollableFrame is fully handled by the global handler.
+        # Do NOT add per-widget bindings on it or its children — a
+        # handler that returns "break" blocks bind_all from firing.
         if isinstance(widget, ctk.CTkScrollableFrame):
-            _patch_scrollable_frame_speed(widget)
-        elif isinstance(widget, tk.Listbox):
+            return
+
+        if isinstance(widget, tk.Listbox):
             patch_listbox_scroll_speed(widget)
         elif isinstance(widget, tk.Text):
             _patch_text_scroll_speed(widget)
@@ -122,9 +137,8 @@ class BasePage(ctk.CTkFrame):
             pass
 
     def on_show(self):
-        """Called when the page is navigated to. Override to refresh data.
-        Re-patches scroll speeds to catch any dynamically created widgets."""
-        self.after(100, self._patch_all_scroll_speeds)
+        """Called when the page is navigated to. Override to refresh data."""
+        pass
 
     def on_hide(self):
         """Called when navigating away from this page."""

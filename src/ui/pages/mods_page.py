@@ -86,7 +86,12 @@ class ModsPage(BasePage):
         filter_frame.pack(fill="x", padx=30, pady=(0, 6))
 
         self.search_var = tk.StringVar()
-        self.search_var.trace("w", lambda *a: self._render_mods())
+        self._search_after_id = None
+        def _debounced_search(*_a):
+            if self._search_after_id:
+                self.after_cancel(self._search_after_id)
+            self._search_after_id = self.after(150, self._render_mods)
+        self.search_var.trace("w", _debounced_search)
         search_entry = ctk.CTkEntry(filter_frame, placeholder_text="Search mods...",
                                     textvariable=self.search_var, height=34,
                                     corner_radius=8)
@@ -174,6 +179,7 @@ class ModsPage(BasePage):
             self._canvas.yview_scroll(int(-5 * (event.delta / 120)), "units")
         except tk.TclError:
             pass
+        return "break"
 
     def _bind_mousewheel(self):
         """Bind mousewheel to canvas and all children recursively."""

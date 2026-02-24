@@ -275,6 +275,18 @@ MIT
 
 ## Changelog
 
+### v3.1.0
+- **Fix: Scroll speed on Online Guide and Migration** — Root-caused and fixed the actual scroll issue: `BasePage._patch_scrollable_frame_speed()` was binding every child widget inside CTkScrollableFrame with `return "break"` handlers that blocked the global `bind_all("<MouseWheel>")` handler from ever firing. Changed `_recursive_patch_scroll()` to skip CTkScrollableFrame subtrees entirely (scrolling is handled by the global handler), so all pages now scroll at 5× speed
+- **Fix: Window startup flash** — Window is now positioned off-screen (+10000,+10000) AND set to alpha=0 during initialization. Before revealing, the window is centred on-screen and then made visible. This eliminates the "fractional view" flash on DPI-scaled or multi-monitor setups where alpha=0 alone wasn't sufficient
+- **Fix: NUS3AUDIO distortion** — Added WAV quality validation after LOPUS→OGG Opus→WAV conversion. When the resulting audio fails validation, the converter now retries with different channel counts (mono/stereo), since mod-created NUS3AUDIO files often have incorrect channel headers. Falls back to best-effort playback (distorted is better than nothing)
+- **Fix: Double scrolling on Mods page** — `_on_mousewheel()` now returns `"break"` to prevent both the per-widget handler AND the global handler from scrolling simultaneously
+- **Fix: Search jank on Mods page** — Added 150ms debounce to the search input. Previously every keystroke triggered a full re-render (destroy all widgets → recreate → update_idletasks → re-bind)
+- **Fix: Ctrl+Z/Y in text entries** — Keyboard shortcuts for undo/redo/save now check the focused widget type. Pressing Ctrl+Z in the search box or SDMC path entry now performs native text undo instead of app-level undo
+- **Fix: Music page accumulating timers** — Poll and seek-bar update loops now cancel previous instances before starting new ones. Previously, playing N tracks would leave N concurrent timer loops running
+- **Fix: Music playlist empty after navigation** — Navigating away from and back to the Music page now re-renders the playlist if a stage was previously selected
+- **Fix: Settings reset doesn't sync logger** — Resetting settings now immediately sets `logger.enabled = False` instead of leaving debug logging active until restart
+- **Fix: Config default mismatch** — Changed `mod_disable_method` fallback from `"rename"` to `"move"` to match the actual implementation
+
 ### v3.0.0
 - **Fix: Dashboard text conflict detection** — Dashboard now properly detects locale MSBT files (e.g. `msg_bgm+us_en.msbt`) from mods like Sonic Extended Tracklist. Previously only the Conflicts page detected these; the dashboard would report "0 Text Conflicts" even when locale MSBTs existed. The "Fix Text Conflicts" quick action now handles both XMSBT merge conflicts and locale MSBT renames in one click
 - **Fix: NUS3AUDIO playback distortion** — Rewrote LOPUS frame extraction with auto-detection of slot sizes instead of relying on header fields that differ between LOPUS versions (v1-v4). Tries multiple slot size candidates (LE/BE/CBR) and picks the one producing the most valid Opus frames. Added WAV quality validation for ffmpeg direct decode to reject distorted output and fall through to manual extraction

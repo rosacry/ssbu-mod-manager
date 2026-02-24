@@ -82,13 +82,24 @@ class MainWindow(ctk.CTkFrame):
         )
         self.discard_btn.pack(side="right", padx=(0, 4))
 
-        # Keyboard shortcuts
-        parent.bind("<Control-z>", lambda e: self._undo())
-        parent.bind("<Control-Z>", lambda e: self._undo())
-        parent.bind("<Control-y>", lambda e: self._redo())
-        parent.bind("<Control-Y>", lambda e: self._redo())
-        parent.bind("<Control-s>", lambda e: self._save())
-        parent.bind("<Control-S>", lambda e: self._save())
+        # Keyboard shortcuts — skip when focus is in a text input widget
+        # so Ctrl+Z/Y/S perform their native text-editing functions instead.
+        def _skip_if_text(func):
+            def wrapper(event):
+                try:
+                    wc = event.widget.winfo_class()
+                    if wc in ("Entry", "Text", "TEntry", "Spinbox", "TSpinbox"):
+                        return  # let native text undo/redo/save handle it
+                except Exception:
+                    pass
+                return func()
+            return wrapper
+        parent.bind("<Control-z>", _skip_if_text(self._undo))
+        parent.bind("<Control-Z>", _skip_if_text(self._undo))
+        parent.bind("<Control-y>", _skip_if_text(self._redo))
+        parent.bind("<Control-Y>", _skip_if_text(self._redo))
+        parent.bind("<Control-s>", _skip_if_text(self._save))
+        parent.bind("<Control-S>", _skip_if_text(self._save))
 
         # Listen for action history changes
         action_history.add_listener(self._update_undo_redo)
