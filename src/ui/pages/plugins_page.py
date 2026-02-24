@@ -590,18 +590,22 @@ class PluginsPage(BasePage):
             corner_radius=10,
             border_width=1,
             border_color="#304378",
+            width=500,
+            height=290,
         )
 
         def _place_shell(_event=None):
             try:
                 overlay.update_idletasks()
-                width = min(560, max(460, overlay.winfo_width() - 50))
+                width = min(560, max(360, overlay.winfo_width() - 50))
                 height = 290
                 x = max(20, (overlay.winfo_width() - width) // 2)
                 y = max(20, (overlay.winfo_height() - height) // 2)
-                shell.place(x=x, y=y, width=width, height=height)
+                shell.configure(width=width, height=height)
+                shell.place(x=x, y=y)
             except Exception:
-                shell.place(x=60, y=60, width=500, height=290)
+                shell.configure(width=500, height=290)
+                shell.place(x=60, y=60)
 
         overlay.bind("<Configure>", _place_shell, add="+")
         _place_shell()
