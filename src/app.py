@@ -56,21 +56,20 @@ class ModManagerApp(ctk.CTk):
         super().__init__()
         _dbg("super().__init__() OK")
 
-        # Make the window fully transparent during init so the user
-        # doesn't see a half-built frame.  withdraw()/deiconify() is
-        # unreliable on some Windows configurations (the window stays
-        # hidden even after deiconify), so we use alpha instead.
-        # Also place the window far off-screen as a belt-and-suspenders
-        # measure — on some DPI configurations alpha=0 alone can still
-        # produce a brief flash.
-        self.attributes('-alpha', 0)
+        # Keep the window hidden until startup is fully complete so users
+        # never see an intermediate partial frame.
+        self._startup_hidden_withdraw = False
+        try:
+            self.withdraw()
+            self._startup_hidden_withdraw = True
+        except Exception:
+            self.attributes('-alpha', 0)
 
         self.title("SSBU Mod Manager")
 
-        # Apply geometry immediately at the FINAL scaled size and park
-        # the window off-screen.  This avoids the user ever seeing the
-        # window at 1400x900 before it snaps to the scaled size.
-        self.geometry(f"{self._BASE_WIDTH}x{self._BASE_HEIGHT}+10000+10000")
+        # Apply a base geometry immediately; final scaled size/position
+        # is set before the window is shown.
+        self.geometry(f"{self._BASE_WIDTH}x{self._BASE_HEIGHT}")
         self.minsize(self._MIN_WIDTH, self._MIN_HEIGHT)
 
         # Shutdown flag for background threads
@@ -236,8 +235,8 @@ class ModManagerApp(ctk.CTk):
 
         _dbg("binding scroll...")
         # Global fast-scroll: intercept ALL MouseWheel events application-wide
-        # and scroll the nearest scrollable ancestor 5× faster.
-        # Do NOT use add="+" — we must be the sole bind_all handler so that
+        # and scroll the nearest scrollable ancestor 5x faster.
+        # Do NOT use add="+" - we must be the sole bind_all handler so that
         # CTkScrollableFrame's Enter/Leave re-bind_all calls cannot silently
         # replace us with a no-op.
         self.bind_all("<MouseWheel>", self._global_fast_scroll)
@@ -245,14 +244,14 @@ class ModManagerApp(ctk.CTk):
         # Prevent CTkScrollableFrame from overriding our global scroll
         # handler.  CTkScrollableFrame's <Enter>/<Leave> handlers call
         # bind_all/unbind_all which replaces our handler.  Monkey-patch
-        # the class to disable this behaviour — our global handler
+        # the class to disable this behavior - our global handler
         # already handles all scroll events uniformly.
         try:
             self._neutralize_ctk_scroll_management()
         except Exception as e:
             logger.warn("App", f"Failed to neutralize CTk scroll management: {e}")
 
-        # All UI is built and scaled — show the window now.
+        # All UI is built and scaled - show the window now.
         # update_idletasks() forces Tk to process pending geometry
         # changes so the user never sees a half-built frame.
         # Install the global Tk error handler BEFORE deiconify so any
@@ -270,13 +269,20 @@ class ModManagerApp(ctk.CTk):
             win_h = self.winfo_height()
             x = max(0, (screen_w - win_w) // 2)
             y = max(0, (screen_h - win_h) // 2)
-            self.geometry(f"+{x}+{y}")
+            self.geometry(f"{win_w}x{win_h}+{x}+{y}")
             self.update_idletasks()
         except Exception:
             pass
 
         _dbg("update_idletasks done, showing window...")
-        self.attributes('-alpha', 1)
+        if self._startup_hidden_withdraw:
+            try:
+                self.deiconify()
+                self.state("normal")
+            except Exception:
+                self.attributes('-alpha', 1)
+        else:
+            self.attributes('-alpha', 1)
         self.lift()
         self.focus_force()
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
@@ -289,7 +295,7 @@ class ModManagerApp(ctk.CTk):
     def _on_tk_error(exc_type, exc_value, exc_tb):
         """Log Tk callback exceptions instead of letting them crash the app.
 
-        This handler MUST NOT raise — if it does, the error propagates
+        This handler MUST NOT raise - if it does, the error propagates
         back into Tk's C code and may cause a hard crash.
         """
         try:
@@ -411,7 +417,7 @@ class ModManagerApp(ctk.CTk):
             self._zoom_reset()
             return "break"
 
-    # ─── Global fast scroll ───────────────────────────────────────────
+    # --- Global fast scroll --------------------------------------------------
 
     _SCROLL_SPEED = 5  # Multiplier for mouse wheel scrolling
 
@@ -470,13 +476,13 @@ class ModManagerApp(ctk.CTk):
             pass
 
     def _global_fast_scroll(self, event):
-        """Intercept every MouseWheel event and scroll 5× faster.
+        """Intercept every MouseWheel event and scroll 5x faster.
 
         Walks up the widget tree from the widget under the mouse cursor
         to find the nearest scrollable ancestor (Canvas inside a
         CTkScrollableFrame, Listbox, or Text) and scrolls it.
 
-        This handler MUST NOT raise — it is called for every single
+        This handler MUST NOT raise - it is called for every single
         mouse-wheel tick via bind_all, so an uncaught exception here
         would either kill the mainloop or cause a Tk/C-level crash.
         """
@@ -503,7 +509,7 @@ class ModManagerApp(ctk.CTk):
             if isinstance(w, tk.Text):
                 scrollable = w
                 break
-            # CTkScrollableFrame — its internal canvas is NOT in the
+            # CTkScrollableFrame - its internal canvas is NOT in the
             # ancestor chain of child widgets, so we must detect the
             # frame itself and grab its _parent_canvas.
             if isinstance(w, ctk.CTkScrollableFrame):
@@ -530,13 +536,17 @@ class ModManagerApp(ctk.CTk):
             return
 
         try:
-            delta = int(-self._SCROLL_SPEED * (event.delta / 120))
+            if event.delta == 0:
+                return "break"
+            direction = -1 if event.delta > 0 else 1
+            ticks = max(1, int(round(abs(event.delta) / 120)))
+            delta = direction * self._SCROLL_SPEED * ticks
             scrollable.yview_scroll(delta, "units")
         except tk.TclError:
             pass
         return "break"
 
-    # ─── Window events ────────────────────────────────────────────────
+    # --- Window events -------------------------------------------------------
 
     def _on_configure(self, event):
         """Handle window resize events smoothly."""
@@ -598,11 +608,11 @@ class ModManagerApp(ctk.CTk):
                 "Unsaved Changes",
                 "You have unsaved changes.\n\n"
                 "Would you like to close anyway?\n\n"
-                "• Yes — Close without saving\n"
-                "• No / Cancel — Go back to the application"
+                "- Yes - Close without saving\n"
+                "- No / Cancel - Go back to the application"
             )
             if response is None or response is False:
-                # User cancelled or said No — don't close
+                # User cancelled or said No - don't close
                 return
 
         self._shutting_down = True
@@ -726,3 +736,4 @@ class ModManagerApp(ctk.CTk):
         except Exception as e:
             logger.warn("App", f"Status bar update failed: {e}")
             self.main_window.update_status("Ready")
+

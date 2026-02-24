@@ -9,7 +9,7 @@ import threading
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from pathlib import Path
-from src.ui.base_page import BasePage
+from src.ui.base_page import BasePage, _patch_scrollable_frame_speed
 from src.paths import auto_detect_all_emulators, EMULATOR_PATHS
 from src.core.emulator_migrator import (
     scan_emulator_data, create_migration_plan, execute_migration,
@@ -375,6 +375,8 @@ class MigrationPage(BasePage):
     def on_show(self):
         """Refresh detected emulators when page is shown (async to avoid lag)."""
         super().on_show()
+        if hasattr(self, "_scroll"):
+            self.after(80, lambda: _patch_scrollable_frame_speed(self._scroll, speed=8))
         self._on_source_changed(self.source_var.get())
         # Refresh detected emulators in background thread to avoid UI lag
         if not getattr(self, '_detected_loaded', False):
@@ -405,6 +407,7 @@ class MigrationPage(BasePage):
                     self.after(0, lambda: self._render_detected(results))
                     # Re-patch scroll speeds after dynamic content is created
                     self.after(200, self._patch_all_scroll_speeds)
+                    self.after(220, lambda: _patch_scrollable_frame_speed(self._scroll, speed=8))
                 except Exception:
                     pass
 

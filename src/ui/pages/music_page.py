@@ -17,6 +17,8 @@ class MusicPage(BasePage):
         super().__init__(parent, app, **kwargs)
         self._selected_stage = None
         self._loaded = False
+        self._scan_in_progress = False
+        self._pending_rescan = False
         self._all_tracks = []
         self._track_id_map = {}
         self._stage_ids = []
@@ -315,15 +317,23 @@ class MusicPage(BasePage):
         self.after(100, self._animate_spinner)
 
     def _force_scan(self):
+        if self._scan_in_progress:
+            self._pending_rescan = True
+            self.loading_label.configure(text="Rescan queued...")
+            return
         self._loaded = False
         self._scan_tracks()
 
     def _scan_tracks(self):
+        if self._scan_in_progress:
+            return
         settings = self.app.config_manager.settings
         if not settings.mods_path or not settings.mods_path.exists():
             self.track_count_label.configure(text="No mods path configured")
             return
 
+        self._scan_in_progress = True
+        self._pending_rescan = False
         self._start_spinner("Scanning tracks")
         logger.info("Music", f"Scanning for tracks in: {settings.mods_path}")
 
@@ -335,18 +345,32 @@ class MusicPage(BasePage):
                 logger.info("Music", f"Found {len(tracks)} tracks")
                 if not self.app.shutting_down:
                     try:
-                        self.after(0, lambda: self._on_tracks_loaded(tracks))
+                        self.app.after(0, lambda t=tracks: self._on_tracks_loaded(t))
                     except Exception:
                         pass
             except Exception as e:
                 logger.error("Music", f"Track scan failed: {e}")
                 if not self.app.shutting_down:
                     try:
-                        self.after(0, lambda: self._on_scan_error(str(e)))
+                        self.app.after(0, lambda err=str(e): self._on_scan_error(err))
+                    except Exception:
+                        pass
+            finally:
+                if not self.app.shutting_down:
+                    try:
+                        self.app.after(0, self._on_scan_finished)
                     except Exception:
                         pass
 
         threading.Thread(target=scan, daemon=True).start()
+
+    def _on_scan_finished(self):
+        """Mark scan complete and run queued rescan requests."""
+        self._scan_in_progress = False
+        if self._pending_rescan:
+            self._pending_rescan = False
+            self._loaded = False
+            self._scan_tracks()
 
     def _on_scan_error(self, error_msg: str):
         """Handle track scan failure on the main thread."""

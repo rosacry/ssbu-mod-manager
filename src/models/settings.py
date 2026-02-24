@@ -18,3 +18,4 @@ class AppSettings:
     emulator: str = ""  # Empty = auto-detect
     debug_mode: bool = False
     ui_scale: float = 1.0  # Zoom level (0.6 to 2.0)
+    use_plugin_friendly_names: bool = True

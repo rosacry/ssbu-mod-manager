@@ -101,14 +101,6 @@ def main():
     except BaseException:
         _write_debug("EXCEPTION in main():")
         _write_debug(traceback.format_exc())
-    except SystemExit as e:
-        _write_debug(f"SystemExit raised (code={e.code})")
-        _write_debug(traceback.format_exc())
-    except KeyboardInterrupt:
-        _write_debug("KeyboardInterrupt")
-    except BaseException:
-        _write_debug("EXCEPTION in main():")
-        _write_debug(traceback.format_exc())
 
         # Show a messagebox so the user sees the error
         try:

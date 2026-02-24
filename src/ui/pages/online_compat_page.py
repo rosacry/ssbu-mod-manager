@@ -16,7 +16,7 @@ import threading
 import customtkinter as ctk
 from pathlib import Path
 from tkinter import messagebox
-from src.ui.base_page import BasePage
+from src.ui.base_page import BasePage, _patch_scrollable_frame_speed
 from src.models.mod import Mod, ModStatus
 from src.utils.logger import logger
 
@@ -857,6 +857,8 @@ class OnlineCompatPage(BasePage):
     def on_show(self):
         """Auto-analyze on first visit, but don't block UI."""
         super().on_show()
+        if hasattr(self, "_scroll"):
+            self.after(80, lambda: _patch_scrollable_frame_speed(self._scroll, speed=8))
 
     def _analyze_mods(self):
         """Analyze all enabled mods and categorize them."""
@@ -970,6 +972,8 @@ class OnlineCompatPage(BasePage):
         self._show_share_summary(categorized, enabled)
         self._analyzed = True
         logger.info("OnlineCompat", f"Analyzed {len(enabled)} mods for online compatibility")
+        if hasattr(self, "_scroll"):
+            self.after(120, lambda: _patch_scrollable_frame_speed(self._scroll, speed=8))
 
     def _show_share_summary(self, categorized: dict, enabled: list):
         """Show a text summary that can be copied to share with friends."""

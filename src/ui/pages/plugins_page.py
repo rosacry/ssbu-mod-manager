@@ -51,6 +51,18 @@ class PluginsPage(BasePage):
                                         text_color="#888888", anchor="w")
         self.count_label.pack(fill="x", padx=32, pady=(0, 6))
 
+        settings = self.app.config_manager.settings
+        self._friendly_names_var = ctk.BooleanVar(
+            value=getattr(settings, "use_plugin_friendly_names", True)
+        )
+        ctk.CTkCheckBox(
+            self,
+            text="Use friendly plugin names",
+            variable=self._friendly_names_var,
+            command=self._toggle_friendly_names,
+            font=ctk.CTkFont(size=12),
+        ).pack(fill="x", padx=32, pady=(0, 8))
+
         # Scrollable plugin list
         self.plugin_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.plugin_list.pack(fill="both", expand=True, padx=25, pady=(0, 10))
@@ -77,6 +89,7 @@ class PluginsPage(BasePage):
 
     def _refresh(self):
         settings = self.app.config_manager.settings
+        self._friendly_names_var.set(getattr(settings, "use_plugin_friendly_names", True))
         if not settings.plugins_path or not settings.plugins_path.exists():
             self.count_label.configure(text="No plugins path configured. Go to Settings first.")
             return
@@ -109,6 +122,7 @@ class PluginsPage(BasePage):
         """Render a single plugin as a compact row with accent bar."""
         is_enabled = plugin.status == PluginStatus.ENABLED
         is_required = plugin.known_info and plugin.known_info.required
+        use_friendly_names = self._friendly_names_var.get()
 
         row = ctk.CTkFrame(self.plugin_list, fg_color="#1c1c34", corner_radius=6,
                            height=44)
@@ -136,14 +150,14 @@ class PluginsPage(BasePage):
             switch.deselect()
 
         # Plugin info - name + filename + description in single label
-        name = plugin.display_name
-        desc = plugin.description
+        name = plugin.display_name if use_friendly_names else plugin.filename
+        desc = plugin.description if use_friendly_names else ""
         fname = plugin.filename
         name_color = "#d0d0e8" if is_enabled else "#454560"
 
         display_text = name
         # Show actual filename if it differs from display name
-        if fname and fname != name:
+        if use_friendly_names and fname and fname != name:
             display_text += f"  ({fname})"
         if desc and desc != name:
             display_text += f"  \u2014  {desc}"
@@ -175,7 +189,7 @@ class PluginsPage(BasePage):
                 if plugin.known_info and plugin.known_info.required:
                     confirm = messagebox.askyesno(
                         "Warning",
-                        f"{plugin.display_name} is marked as REQUIRED.\n\n"
+                        f"{self._plugin_label(plugin)} is marked as REQUIRED.\n\n"
                         "Disabling it may prevent mods from loading.\n\n"
                         "Are you sure?",
                     )
@@ -184,10 +198,10 @@ class PluginsPage(BasePage):
                         self._refresh()
                         return
                 self.app.plugin_manager.disable_plugin(plugin)
-                logger.info("Plugins", f"Disabled: {plugin.display_name}")
+                logger.info("Plugins", f"Disabled: {self._plugin_label(plugin)}")
             else:
                 self.app.plugin_manager.enable_plugin(plugin)
-                logger.info("Plugins", f"Enabled: {plugin.display_name}")
+                logger.info("Plugins", f"Enabled: {self._plugin_label(plugin)}")
             self._loaded = False
             self._refresh()
         except Exception as e:
@@ -227,7 +241,7 @@ class PluginsPage(BasePage):
         required = [p for p in enabled if p.known_info and p.known_info.required]
         skip_msg = ""
         if required:
-            names = ", ".join(p.display_name for p in required)
+            names = ", ".join(self._plugin_label(p) for p in required)
             skip_msg = f"\n\nRequired plugins will be skipped: {names}"
         confirm = messagebox.askyesno(
             "Disable All Plugins",
@@ -248,3 +262,15 @@ class PluginsPage(BasePage):
         settings = self.app.config_manager.settings
         if settings.plugins_path and settings.plugins_path.exists():
             open_folder(settings.plugins_path)
+
+    def _toggle_friendly_names(self):
+        settings = self.app.config_manager.settings
+        settings.use_plugin_friendly_names = self._friendly_names_var.get()
+        self.app.config_manager.save(settings)
+        self._loaded = False
+        self._refresh()
+
+    def _plugin_label(self, plugin) -> str:
+        if self._friendly_names_var.get():
+            return plugin.display_name
+        return plugin.filename

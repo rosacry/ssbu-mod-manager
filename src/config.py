@@ -33,6 +33,7 @@ class ConfigManager:
                     emulator=data.get("emulator", ""),
                     debug_mode=data.get("debug_mode", False),
                     ui_scale=max(0.6, min(2.0, float(data.get("ui_scale", 1.0)))),
+                    use_plugin_friendly_names=bool(data.get("use_plugin_friendly_names", True)),
                 )
             except (json.JSONDecodeError, KeyError, TypeError, OSError,
                     ValueError, UnicodeDecodeError):
@@ -65,6 +66,7 @@ class ConfigManager:
             "emulator": self.settings.emulator,
             "debug_mode": self.settings.debug_mode,
             "ui_scale": self.settings.ui_scale,
+            "use_plugin_friendly_names": self.settings.use_plugin_friendly_names,
         }
 
         try:

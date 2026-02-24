@@ -45,7 +45,7 @@ def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
     """Convert an OGG Opus file to WAV using ffmpeg.
 
     pygame's SDL_mixer uses stb_vorbis for .ogg files, which only
-    supports Vorbis — not Opus. ffmpeg can decode Opus to WAV.
+    supports Vorbis, not Opus. ffmpeg can decode Opus to WAV.
     Returns path to WAV file, or None if conversion failed.
     """
     ffmpeg = _find_ffmpeg()
@@ -122,11 +122,73 @@ def _validate_wav_quality(wav_path: Path) -> bool:
         clipping = sum(1 for s in samples[:2000]
                        if abs(s) > 32000)
         if clipping > len(samples[:2000]) * 0.8:
-            return False  # Extreme values — likely noise
+            return False  # Extreme values - likely noise
 
         return True
     except Exception:
         return False
+
+
+def _score_wav_quality(wav_path: Path) -> tuple[float, int]:
+    """Return a rough quality score for a decoded WAV candidate.
+
+    Higher score generally means less clipped/noisy output.
+    Returns (score, channel_count).
+    """
+    try:
+        with open(wav_path, 'rb') as f:
+            header = f.read(44)
+            if len(header) < 44 or header[:4] != b'RIFF':
+                return -1.0, 0
+            channels = int(struct.unpack_from('<H', header, 22)[0])
+            pcm = f.read(120000)
+        if len(pcm) < 4000:
+            return -1.0, channels
+
+        import array
+        samples = array.array('h')
+        samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
+        if len(samples) < 200:
+            return -1.0, channels
+
+        view = samples[:min(len(samples), 12000)]
+        n = len(view)
+        if n < 200:
+            return -1.0, channels
+
+        non_zero = sum(1 for s in view if s != 0)
+        clipping = sum(1 for s in view if abs(s) >= 32000)
+        peak = max(abs(s) for s in view)
+        rms = (sum(s * s for s in view) / n) ** 0.5
+        zero_crossings = 0
+        for i in range(1, n):
+            a = view[i - 1]
+            b = view[i]
+            if (a < 0 <= b) or (a > 0 >= b):
+                zero_crossings += 1
+
+        non_zero_ratio = non_zero / n
+        clipping_ratio = clipping / n
+        peak_norm = peak / 32768.0
+        rms_norm = rms / 32768.0
+        zcr = zero_crossings / max(1, n - 1)
+
+        score = 0.0
+        score += min(1.2, non_zero_ratio * 1.5)
+        score += min(2.0, rms_norm * 7.0)
+        score += min(1.2, peak_norm * 1.8)
+        score += max(0.0, 1.0 - clipping_ratio * 6.0)
+        if clipping_ratio > 0.2:
+            score -= 1.5
+        if zcr > 0.42:
+            score -= 1.0
+        if zcr < 0.001:
+            score -= 1.0
+        if channels == 2:
+            score += 0.25
+        return score, channels
+    except Exception:
+        return -1.0, 0
 
 
 def _build_crc_table():
@@ -348,7 +410,7 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                     pre_skip = ps
                     break
     else:
-        # Unknown version — try v3/v4 layout first
+        # Unknown version  try v3/v4 layout first
         if len(lopus_data) > 0x17:
             ch = struct.unpack_from('<I', lopus_data, 0x10)[0]
             fs = struct.unpack_from('<I', lopus_data, 0x14)[0]
@@ -453,7 +515,7 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
     tags_segs = _segment_table_for_packet(len(tags_data))
     pages.append(_make_ogg_page(tags_data, serial, 1, 0, 0x00, tags_segs))
 
-    # Data pages — pack multiple frames per page
+    # Data pages  pack multiple frames per page
     # Determine samples_per_frame from first frame's TOC byte
     samples_per_frame = 960  # default 20 ms at 48 kHz
     if best_frames and len(best_frames[0]) >= 1:
@@ -834,7 +896,7 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
         0x08: u32 total_samples (BE)
         0x0C: u32 channels (BE)
         0x10: u32 sample_rate (BE)
-        0x20: u32 data_offset (BE) — typically 0x30–0x40
+        0x20: u32 data_offset (BE) - typically 0x30-0x40
         0x24: u32 data_size (BE)
       At data_offset: LOPUS sub-header (LE) with frame data using
         either big-endian or little-endian u32 frame sizes in fixed
@@ -870,7 +932,7 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                     and 1 <= container_channels <= 8
                     and 8000 <= container_sample_rate <= 192000
                     and container_data_offset + container_data_size <= len(audio_data) + 64):
-                # Header looks valid — save for fallback strategies
+                # Header looks valid  save for fallback strategies
                 parsed_channels = container_channels
                 parsed_sample_rate = container_sample_rate
                 parsed_data_offset = container_data_offset
@@ -884,7 +946,7 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                     if sub_magic & 0x80000000:
                         # _lopus_to_ogg has correct version-specific header
                         # parsing for all LOPUS variants (v1-v4).  Try it
-                        # FIRST — the manual slot extraction below uses
+                        # FIRST  the manual slot extraction below uses
                         # hard-coded offsets that are wrong for some versions.
                         try:
                             return _lopus_to_ogg(inner)
@@ -1160,7 +1222,7 @@ def _validate_opus_frames(frames: list[bytes], min_consistent: int = 5) -> bool:
     Checks:
     * The majority of frames start with a byte whose top-5-bit config
       field is consistent (same Opus mode throughout the track).
-    * Frame sizes are in a reasonable range (2–2000 bytes).
+    * Frame sizes are in a reasonable range (2-2000 bytes).
     * At least 70% of sampled frames share the dominant config.
     """
     if not frames:
@@ -1365,7 +1427,7 @@ def _opus_toc_samples(toc_byte: int) -> int:
     the sample count is per-sub-frame, but in SSBU LOPUS each packet
     is code-0 so this is fine.
 
-    Reference: RFC 6716 §3.1
+    Reference: RFC 6716 Section 3.1
     """
     config = (toc_byte >> 3) & 0x1F
     # Frame durations at 48 kHz for each config range
@@ -1481,7 +1543,7 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
             except OSError:
                 sz = 0
             if ext == '.wav' and sz < 1000:
-                # Bad / partial WAV — delete and re-convert
+                # Bad / partial WAV  delete and re-convert
                 try:
                     cached.unlink()
                 except OSError:
@@ -1497,7 +1559,7 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
                         wav_path = _convert_ogg_opus_to_wav(cached)
                         if wav_path and wav_path.exists():
                             return True, f"Playing: {nus3audio_path.name}", wav_path
-                        # ffmpeg not available — skip this cached OGG
+                        # ffmpeg not available  skip this cached OGG
                         continue
                 except OSError:
                     pass
@@ -1513,7 +1575,7 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     if len(data) < 8 or data[:4] != b'NUS3':
         return False, "Not a valid NUS3AUDIO file", None
 
-    # ── Priority 1: let ffmpeg decode the whole NUS3AUDIO file ──
+    # Priority 1: let ffmpeg decode the whole NUS3AUDIO file
     # Modern ffmpeg (5.0+) may have native NUS3AUDIO demuxer support,
     # producing clean PCM output.  However, many ffmpeg builds do NOT
     # demux NUS3AUDIO correctly (they may produce silence, noise, or
@@ -1533,14 +1595,14 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
             if result.returncode == 0 and wav_out.exists():
                 sz = wav_out.stat().st_size
                 # Validate: WAV header (44 bytes) + at least 0.5s of audio
-                # at 48kHz stereo 16-bit = 44 + 96000 ≈ 96044 bytes.
+                # at 48kHz stereo 16-bit = 44 + 96000  96044 bytes.
                 # Also check PCM content for basic audio quality.
                 if sz > 96000 and _validate_wav_quality(wav_out):
                     from src.utils.logger import logger
                     logger.info("NUS3AUDIO",
                                 f"ffmpeg decoded NUS3AUDIO directly ({sz} bytes)")
                     return True, f"Playing: {nus3audio_path.name}", wav_out
-                # Bad output — ffmpeg couldn't properly decode; clean up
+                # Bad output  ffmpeg couldn't properly decode; clean up
                 try:
                     wav_out.unlink()
                 except OSError:
@@ -1549,7 +1611,7 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
             from src.utils.logger import logger
             logger.debug("NUS3AUDIO", f"ffmpeg direct decode failed: {e}")
 
-    # ── Priority 2: manual extraction + per-format conversion ──
+    # Priority 2: manual extraction + per-format conversion
     sections = _find_sections(data)
 
     # Extract audio entries using ADOF if available
@@ -1597,55 +1659,62 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         out.write_bytes(audio_data)
         return True, f"Playing: {display_name}", out
 
-    # LOPUS (Nintendo Opus) — magic starts with 0x80000001..0x80000004
+    # LOPUS (Nintendo Opus)
     if len(audio_data) >= 4:
         lopus_magic = struct.unpack_from('<I', audio_data, 0)[0]
         if lopus_magic & 0x80000000:
             from src.utils.logger import logger
-            ogg_path = cache_dir / f"{cache_key}.ogg"
-            fallback_wav: Optional[Path] = None
+            best_score = -1.0
+            best_wav: Optional[Path] = None
+            best_label = "unknown"
 
-            # Try auto-detected channels first, then force mono/stereo.
-            # Mod-created NUS3AUDIO files often have an incorrect channel
-            # count in the header, producing distorted (but recognisable)
-            # audio.  Retrying with the opposite channel count fixes it.
-            for try_channels in [None, 1, 2]:
+            # Try auto-detected channels first, then forced stereo/mono.
+            for try_channels in [None, 2, 1]:
+                ch_label = str(try_channels) if try_channels is not None else "auto"
                 try:
                     ogg_data = _lopus_to_ogg(audio_data, force_channels=try_channels)
+                    ogg_path = cache_dir / f"{cache_key}_lopus_{ch_label}.ogg"
                     ogg_path.write_bytes(ogg_data)
                     wav_path = _convert_ogg_opus_to_wav(ogg_path)
                     if wav_path and wav_path.exists():
-                        if _validate_wav_quality(wav_path):
-                            ch_label = try_channels if try_channels else "auto"
-                            logger.info("NUS3AUDIO",
-                                        f"LOPUS→WAV succeeded (channels={ch_label}, "
-                                        f"size={wav_path.stat().st_size})")
-                            return True, f"Playing: {display_name}", wav_path
-                        # Keep the first non-validated WAV as fallback
-                        if fallback_wav is None:
-                            fallback_wav = wav_path
+                        score, out_channels = _score_wav_quality(wav_path)
+                        if score > best_score:
+                            best_score = score
+                            best_wav = wav_path
+                            best_label = f"{ch_label}/{out_channels}ch"
                 except Exception as e:
-                    ch_label = try_channels if try_channels else "auto"
                     logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
 
-            # If none passed validation but we got a WAV, use it
-            # (distorted audio is better than no audio at all)
-            if fallback_wav and fallback_wav.exists():
-                logger.warn("NUS3AUDIO",
-                            "LOPUS WAV failed quality validation; using best attempt")
-                return True, f"Playing: {display_name}", fallback_wav
+            if best_wav and best_wav.exists():
+                canonical = cache_dir / f"{cache_key}.wav"
+                if best_wav != canonical:
+                    try:
+                        shutil.copyfile(best_wav, canonical)
+                        best_wav = canonical
+                    except OSError:
+                        pass
+                if _validate_wav_quality(best_wav):
+                    logger.info(
+                        "NUS3AUDIO",
+                        f"LOPUS best decode {best_label} score={best_score:.2f}"
+                    )
+                else:
+                    logger.warn(
+                        "NUS3AUDIO",
+                        f"LOPUS decode below quality threshold ({best_label}, score={best_score:.2f})"
+                    )
+                return True, f"Playing: {display_name}", best_wav
 
-            # Check if ffmpeg is missing — provide user guidance
             if not _find_ffmpeg():
-                logger.warn("NUS3AUDIO",
-                            "Opus audio requires ffmpeg for playback. "
-                            "Install ffmpeg and add it to PATH.")
+                logger.warn(
+                    "NUS3AUDIO",
+                    "Opus audio requires ffmpeg for playback. Install ffmpeg and add it to PATH."
+                )
                 return False, (
                     "This track uses Opus audio which requires ffmpeg for playback.\n"
                     "Install ffmpeg and add it to PATH."
                 ), None
 
-            # All LOPUS attempts failed — fall through to other formats
             logger.warn("NUS3AUDIO", "All LOPUS conversion attempts failed")
 
     # IDSP (Nintendo DSP ADPCM)
@@ -1668,45 +1737,62 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         except Exception as e:
             return False, f"BWAV conversion failed: {e}", None
 
-    # OPUS raw container (magic "OPUS" = 0x4F505553)
-    # Found in some NUS3AUDIO files where audio data starts with "OPUS" header
+    # OPUS raw container
     if audio_data[:4] == b'OPUS':
         from src.utils.logger import logger
-        ogg_path = cache_dir / f"{cache_key}.ogg"
-        try:
-            ogg_data = _opus_container_to_ogg(audio_data)
+        best_score = -1.0
+        best_wav: Optional[Path] = None
+        best_label = "unknown"
+
+        def _capture_best(ogg_data: bytes, label: str) -> None:
+            nonlocal best_score, best_wav, best_label
+            ogg_path = cache_dir / f"{cache_key}_{label}.ogg"
             ogg_path.write_bytes(ogg_data)
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
             if wav_path and wav_path.exists():
-                if _validate_wav_quality(wav_path):
-                    logger.info("NUS3AUDIO", "OPUS container→WAV succeeded")
-                    return True, f"Playing: {display_name}", wav_path
-                # WAV produced but failed validation — keep as fallback,
-                # then try with different channel counts below.
-                opus_fallback_wav = wav_path
-            else:
-                opus_fallback_wav = None
+                score, out_channels = _score_wav_quality(wav_path)
+                if score > best_score:
+                    best_score = score
+                    best_wav = wav_path
+                    best_label = f"{label}/{out_channels}ch"
+
+        # Main OPUS container path.
+        try:
+            _capture_best(_opus_container_to_ogg(audio_data), "opus_container")
         except Exception as e:
             logger.debug("NUS3AUDIO", f"OPUS container conversion: {e}")
-            opus_fallback_wav = None
 
-        # Retry: some OPUS containers wrap LOPUS data with wrong channel
-        # count.  Try forcing 1 or 2 channels.
-        for try_ch in [1, 2]:
-            try:
-                ogg_data = _lopus_to_ogg(audio_data[4:], force_channels=try_ch)
-                ogg_path.write_bytes(ogg_data)
-                wav_path = _convert_ogg_opus_to_wav(ogg_path)
-                if wav_path and _validate_wav_quality(wav_path):
-                    logger.info("NUS3AUDIO",
-                                f"OPUS fallback LOPUS→WAV OK (ch={try_ch})")
-                    return True, f"Playing: {display_name}", wav_path
-            except Exception:
-                pass
+        # Fallback: try interpreting payload offsets as LOPUS and vary channels.
+        for try_ch in [None, 2, 1]:
+            ch_label = str(try_ch) if try_ch is not None else "auto"
+            for payload_off in (4, 0x20, 0x30, 0x40):
+                if len(audio_data) <= payload_off + 8:
+                    continue
+                try:
+                    ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=try_ch)
+                    _capture_best(ogg_data, f"opus_lopus_{ch_label}_off{payload_off}")
+                except Exception:
+                    pass
 
-        if opus_fallback_wav and opus_fallback_wav.exists():
-            logger.warn("NUS3AUDIO", "OPUS WAV failed validation, using best attempt")
-            return True, f"Playing: {display_name}", opus_fallback_wav
+        if best_wav and best_wav.exists():
+            canonical = cache_dir / f"{cache_key}.wav"
+            if best_wav != canonical:
+                try:
+                    shutil.copyfile(best_wav, canonical)
+                    best_wav = canonical
+                except OSError:
+                    pass
+            if _validate_wav_quality(best_wav):
+                logger.info(
+                    "NUS3AUDIO",
+                    f"OPUS best decode {best_label} score={best_score:.2f}"
+                )
+            else:
+                logger.warn(
+                    "NUS3AUDIO",
+                    f"OPUS decode below quality threshold ({best_label}, score={best_score:.2f})"
+                )
+            return True, f"Playing: {display_name}", best_wav
 
         if not _find_ffmpeg():
             return False, (
@@ -1717,8 +1803,6 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         logger.warn("NUS3AUDIO", "All OPUS conversion attempts failed")
 
     # --- ffmpeg raw fallback ---
-    # If all custom parsers failed, write the raw audio data to a temp
-    # file and let ffmpeg try to detect the format and decode it.
     ffmpeg = _find_ffmpeg()
     if ffmpeg:
         try:
@@ -1737,7 +1821,6 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                 except OSError:
                     pass
                 return True, f"Playing: {display_name}", wav_out
-            # Clean up failed attempt
             try:
                 raw_path.unlink()
             except OSError:
@@ -1751,8 +1834,7 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         out.write_bytes(audio_data)
         return True, f"Playing: {display_name}", out
 
-    return False, f"Unsupported audio format", None
-
+    return False, "Unsupported audio format", None
 
 def cleanup_cache():
     """Remove all cached audio files."""
@@ -1765,3 +1847,4 @@ def cleanup_cache():
                 pass
     except Exception:
         pass
+
