@@ -2,6 +2,8 @@
 import sys
 import os
 import traceback
+import atexit
+import threading
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +20,27 @@ try:
     sys.stdout = _crash_fh          # also capture print() calls
 except OSError:
     _crash_fh = None
+
+# Enable faulthandler so C-level crashes (SIGSEGV, SIGABRT, etc.)
+# dump a Python traceback to crash.log instead of dying silently.
+try:
+    import faulthandler
+    if _crash_fh:
+        faulthandler.enable(file=_crash_fh, all_threads=True)
+    else:
+        faulthandler.enable(all_threads=True)
+except Exception:
+    pass
+
+# Catch unhandled exceptions in background threads
+def _thread_excepthook(args):
+    _write_debug(f"UNCAUGHT THREAD EXCEPTION in {args.thread}:")
+    _write_debug("".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)))
+
+try:
+    threading.excepthook = _thread_excepthook
+except AttributeError:
+    pass  # Python < 3.8
 
 
 def _write_debug(msg):
@@ -40,16 +63,14 @@ def main():
         _write_debug("app created, entering mainloop...")
         app.mainloop()
         _write_debug("mainloop exited normally")
-    except Exception:
+    except SystemExit as e:
+        _write_debug(f"SystemExit raised (code={e.code})")
+        _write_debug(traceback.format_exc())
+    except KeyboardInterrupt:
+        _write_debug("KeyboardInterrupt")
+    except BaseException:
         _write_debug("EXCEPTION in main():")
         _write_debug(traceback.format_exc())
-
-        # Also write a dedicated crash log
-        try:
-            with open(_crash_path, "a", encoding="utf-8") as f:
-                traceback.print_exc(file=f)
-        except OSError:
-            pass
 
         # Show a messagebox so the user sees the error
         try:
@@ -66,7 +87,8 @@ def main():
             root.destroy()
         except Exception:
             pass
-        raise
+    finally:
+        _write_debug("main() exiting")
 
 
 if __name__ == "__main__":

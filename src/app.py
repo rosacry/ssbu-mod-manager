@@ -249,30 +249,39 @@ class ModManagerApp(ctk.CTk):
         # All UI is built and scaled — show the window now.
         # update_idletasks() forces Tk to process pending geometry
         # changes so the user never sees a half-built frame.
+        # Install the global Tk error handler BEFORE deiconify so any
+        # exceptions triggered by showing the window are captured.
+        self.report_callback_exception = self._on_tk_error
+
         self.update_idletasks()
         self.deiconify()
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
-
-        # Install a global Tk error handler so exceptions in after()
-        # callbacks, event handlers, etc. are logged instead of silently
-        # killing the application.
-        self.report_callback_exception = self._on_tk_error
         _dbg("__init__ complete")
 
     @staticmethod
     def _on_tk_error(exc_type, exc_value, exc_tb):
-        """Log Tk callback exceptions instead of letting them crash the app."""
-        import traceback
-        msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-        logger.error("TkCallback", msg)
-        # Also write to stderr / crash.log so it survives even if the
-        # window is killed before logs are inspected.
+        """Log Tk callback exceptions instead of letting them crash the app.
+
+        This handler MUST NOT raise — if it does, the error propagates
+        back into Tk's C code and may cause a hard crash.
+        """
+        try:
+            import traceback
+            msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        except Exception:
+            msg = f"{exc_type}: {exc_value}"
+        # Write to stderr / crash.log first (most reliable)
         import sys
         try:
             sys.stderr.write(f"[TkCallback] {msg}\n")
             sys.stderr.flush()
+        except Exception:
+            pass
+        # Then try the in-app logger (less critical)
+        try:
+            logger.error("TkCallback", msg)
         except Exception:
             pass
 
@@ -346,15 +355,22 @@ class ModManagerApp(ctk.CTk):
             self._apply_scale(1.0)
 
     def _on_keypress_zoom(self, event):
-        """Low-level key handler for zoom shortcuts on Windows."""
+        """Low-level key handler for zoom shortcuts on Windows.
+
+        This is a bind_all handler, so it MUST NOT raise.
+        """
+        try:
+            return self._on_keypress_zoom_impl(event)
+        except Exception:
+            pass
+
+    def _on_keypress_zoom_impl(self, event):
+        """Inner zoom handler (may raise)."""
         # Check if Ctrl is held (state bit 0x4 on Windows)
         if not (event.state & 0x4):
             return
         # Skip zoom when focus is in a text input widget
-        try:
-            widget_class = event.widget.winfo_class()
-        except Exception:
-            return
+        widget_class = event.widget.winfo_class()
         if widget_class in ("Entry", "Text", "TEntry", "Spinbox", "TSpinbox"):
             return
         # Avoid double-handling if explicit bindings already caught it
@@ -434,14 +450,22 @@ class ModManagerApp(ctk.CTk):
         Walks up the widget tree from the widget under the mouse cursor
         to find the nearest scrollable ancestor (Canvas inside a
         CTkScrollableFrame, Listbox, or Text) and scrolls it.
+
+        This handler MUST NOT raise — it is called for every single
+        mouse-wheel tick via bind_all, so an uncaught exception here
+        would either kill the mainloop or cause a Tk/C-level crash.
         """
-        import tkinter as tk
         try:
-            # Find the widget directly under the mouse pointer
-            widget = event.widget.winfo_containing(event.x_root, event.y_root)
-            if widget is None:
-                return
+            return self._global_fast_scroll_impl(event)
         except Exception:
+            pass
+
+    def _global_fast_scroll_impl(self, event):
+        """Inner implementation of fast scroll (may raise)."""
+        import tkinter as tk
+        # Find the widget directly under the mouse pointer
+        widget = event.widget.winfo_containing(event.x_root, event.y_root)
+        if widget is None:
             return
 
         # Walk up the hierarchy looking for a scrollable widget
@@ -491,6 +515,12 @@ class ModManagerApp(ctk.CTk):
 
     def _on_configure(self, event):
         """Handle window resize events smoothly."""
+        try:
+            self._on_configure_impl(event)
+        except Exception:
+            pass
+
+    def _on_configure_impl(self, event):
         if event.widget != self or self._shutting_down:
             return
 
