@@ -254,7 +254,9 @@ class ModManagerApp(ctk.CTk):
         self.report_callback_exception = self._on_tk_error
 
         self.update_idletasks()
+        _dbg("update_idletasks done, calling deiconify...")
         self.deiconify()
+        _dbg(f"deiconify done, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")

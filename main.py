@@ -42,6 +42,35 @@ try:
 except AttributeError:
     pass  # Python < 3.8
 
+# Register an atexit handler — this fires during normal interpreter
+# shutdown.  If the process is killed externally (e.g. TerminateProcess
+# by antivirus) this will NOT run, which is itself diagnostic.
+def _at_exit():
+    try:
+        if _crash_fh and not _crash_fh.closed:
+            _crash_fh.write("[atexit] interpreter shutting down\n")
+            _crash_fh.flush()
+    except Exception:
+        pass
+
+atexit.register(_at_exit)
+
+# Trap SIGTERM so we can log it if the OS asks us to terminate.
+import signal
+def _on_sigterm(signum, frame):
+    try:
+        if _crash_fh and not _crash_fh.closed:
+            _crash_fh.write(f"[SIGNAL] Received signal {signum} — process being terminated\n")
+            _crash_fh.flush()
+    except Exception:
+        pass
+    raise SystemExit(128 + signum)
+
+try:
+    signal.signal(signal.SIGTERM, _on_sigterm)
+except (OSError, ValueError):
+    pass
+
 
 def _write_debug(msg):
     """Write a debug line to crash.log and flush immediately."""
@@ -61,6 +90,30 @@ def main():
         _write_debug("import OK, creating app...")
         app = ModManagerApp()
         _write_debug("app created, entering mainloop...")
+
+        # Start a heartbeat: write a timestamp to crash.log every 2s
+        # so we can tell exactly when the process stops.
+        _heartbeat_count = [0]
+        def _heartbeat():
+            if app._shutting_down:
+                return
+            _heartbeat_count[0] += 1
+            _write_debug(f"[heartbeat] tick {_heartbeat_count[0]}")
+            try:
+                app.after(2000, _heartbeat)
+            except Exception:
+                pass
+        app.after(2000, _heartbeat)
+
+        # Verify window visibility
+        try:
+            state = app.wm_state()
+            geom = app.winfo_geometry()
+            mapped = app.winfo_ismapped()
+            _write_debug(f"[window] state={state} geometry={geom} mapped={mapped}")
+        except Exception as e:
+            _write_debug(f"[window] query failed: {e}")
+
         app.mainloop()
         _write_debug("mainloop exited normally")
     except SystemExit as e:
