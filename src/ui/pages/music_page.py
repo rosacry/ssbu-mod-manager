@@ -25,6 +25,12 @@ class MusicPage(BasePage):
         self._is_playing = False
         self._spinner_index = 0
         self._spinner_active = False
+        self._track_filter_after_id = None
+        self._stage_filter_after_id = None
+        self._volume_after_id = None
+        self._pending_volume_value = 0.7
+        self._track_data_revision = 0
+        self._last_track_render_signature = None
         self._build_ui()
 
     def _build_ui(self):
@@ -76,7 +82,7 @@ class MusicPage(BasePage):
                      ).pack(fill="x", padx=10, pady=(10, 5))
 
         self.stage_search_var = tk.StringVar()
-        self.stage_search_var.trace("w", self._filter_stages)
+        self.stage_search_var.trace("w", self._on_stage_filter_input)
         ctk.CTkEntry(left, placeholder_text="Search stages...",
                      textvariable=self.stage_search_var, height=30,
                      corner_radius=6).pack(fill="x", padx=10, pady=5)
@@ -85,7 +91,7 @@ class MusicPage(BasePage):
         self.competitive_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             left, text="Competitive only", variable=self.competitive_var,
-            command=self._filter_stages, font=ctk.CTkFont(size=11),
+            command=self._schedule_stage_filter, font=ctk.CTkFont(size=11),
         ).pack(fill="x", padx=12, pady=(2, 4))
 
         # Stage list with scrollbar
@@ -175,7 +181,7 @@ class MusicPage(BasePage):
         self.track_count_label.pack(side="right")
 
         self.track_search_var = tk.StringVar()
-        self.track_search_var.trace("w", self._filter_tracks)
+        self.track_search_var.trace("w", self._on_track_filter_input)
         ctk.CTkEntry(right, placeholder_text="Search tracks...",
                      textvariable=self.track_search_var, height=30,
                      corner_radius=6).pack(fill="x", padx=10, pady=5)
@@ -235,6 +241,7 @@ class MusicPage(BasePage):
         )
         self.volume_slider.set(70)
         self.volume_slider.pack(side="left", padx=(0, 6))
+        self.volume_slider.bind("<ButtonRelease-1>", self._on_volume_release)
 
         # Seek timeline
         self.seek_label = ctk.CTkLabel(player_inner, text="0:00",
@@ -280,6 +287,14 @@ class MusicPage(BasePage):
 
     def on_hide(self):
         """Clean up playlist widgets for smoother page transitions."""
+        for attr in ("_track_filter_after_id", "_stage_filter_after_id", "_volume_after_id"):
+            aid = getattr(self, attr, None)
+            if aid:
+                try:
+                    self.after_cancel(aid)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
         for w in self.playlist_frame.winfo_children():
             w.destroy()
 
@@ -384,6 +399,8 @@ class MusicPage(BasePage):
     def _on_tracks_loaded(self, tracks):
         self._loaded = True
         self._all_tracks = tracks
+        self._track_data_revision += 1
+        self._last_track_render_signature = None
         try:
             self._stop_spinner()
             self.track_count_label.configure(text=f"{len(tracks)} tracks")
@@ -445,7 +462,22 @@ class MusicPage(BasePage):
         for stage in other_stages:
             _insert_stage(stage)
 
-    def _filter_stages(self, *args):
+    def _on_stage_filter_input(self, *_args):
+        self._schedule_stage_filter()
+
+    def _schedule_stage_filter(self):
+        if self._stage_filter_after_id:
+            try:
+                self.after_cancel(self._stage_filter_after_id)
+            except Exception:
+                pass
+        self._stage_filter_after_id = self.after(120, self._apply_stage_filter)
+
+    def _apply_stage_filter(self):
+        self._stage_filter_after_id = None
+        self._filter_stages()
+
+    def _filter_stages(self):
         search = self.stage_search_var.get().lower()
         stages = self.app.music_manager.get_stage_list()
         self.stage_listbox.delete(0, tk.END)
@@ -554,10 +586,15 @@ class MusicPage(BasePage):
 
     def _render_available_tracks(self):
         """Populate the listbox with available tracks."""
+        search = self.track_search_var.get().lower()
+        render_signature = (self._track_data_revision, search)
+        if render_signature == self._last_track_render_signature:
+            return
+        self._last_track_render_signature = render_signature
+
         self.track_listbox.delete(0, tk.END)
         self._track_id_map.clear()
 
-        search = self.track_search_var.get().lower()
         tracks = self._all_tracks or self.app.music_manager.get_all_available_tracks()
 
         filtered = []
@@ -578,7 +615,22 @@ class MusicPage(BasePage):
 
         logger.debug("Music", f"Populated {len(filtered)} tracks in listbox")
 
-    def _filter_tracks(self, *args):
+    def _on_track_filter_input(self, *_args):
+        self._schedule_track_filter()
+
+    def _schedule_track_filter(self):
+        if self._track_filter_after_id:
+            try:
+                self.after_cancel(self._track_filter_after_id)
+            except Exception:
+                pass
+        self._track_filter_after_id = self.after(120, self._apply_track_filter)
+
+    def _apply_track_filter(self):
+        self._track_filter_after_id = None
+        self._filter_tracks()
+
+    def _filter_tracks(self):
         self._render_available_tracks()
 
     def _get_selected_track(self):
@@ -811,7 +863,26 @@ class MusicPage(BasePage):
         self.after(2000, lambda: self.player_status.configure(text=""))
 
     def _on_volume_change(self, value):
-        audio_player.set_volume(value / 100.0)
+        self._pending_volume_value = max(0.0, min(1.0, float(value) / 100.0))
+        if self._volume_after_id:
+            try:
+                self.after_cancel(self._volume_after_id)
+            except Exception:
+                pass
+        self._volume_after_id = self.after(120, self._apply_pending_volume)
+
+    def _on_volume_release(self, _event):
+        if self._volume_after_id:
+            try:
+                self.after_cancel(self._volume_after_id)
+            except Exception:
+                pass
+            self._volume_after_id = None
+        self._apply_pending_volume()
+
+    def _apply_pending_volume(self):
+        self._volume_after_id = None
+        audio_player.set_volume(self._pending_volume_value)
 
     def _on_seek_drag(self, value):
         """Called continuously as the seek slider is dragged."""

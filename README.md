@@ -276,6 +276,12 @@ MIT
 
 ## Changelog
 
+### v3.1.15
+- **Improvement: ffplay control spam reduction** - Debounced Music page volume slider updates and flushes on release, reducing repeated ffplay restarts during drag operations while preserving accurate final volume
+- **Improvement: backend restart guardrails** - Audio player now ignores duplicate volume-step updates and tiny no-op seeks, reducing unnecessary process restarts and log noise
+- **Improvement: Music search/filter responsiveness** - Added debounced stage/track filtering and idempotent track-list render signature checks to cut rapid listbox repopulation churn during typing
+- **Tests: OPUS CBR trailer regression coverage** - Added unit tests for the CBR per-slot trailer trimming logic to lock in the global distortion fix behavior
+
 ### v3.1.14
 - **Fix: root-cause OPUS/LOPUS global distortion** - Corrected CBR frame extraction for SSBU custom tracks that store an 8-byte per-slot trailer; decoder now strips trailer metadata before Opus decode instead of feeding those bytes as audio payload
 - **Diagnostics: improved waveform quality after trailer trim** - On previously problematic tracks, candidate metrics shifted from noisy signatures (high `zcr`, weak stereo correlation) to clean signatures (lower `zcr`, stronger correlation) with identical durations/bitrates

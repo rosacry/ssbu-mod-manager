@@ -406,7 +406,12 @@ class AudioPlayer:
 
     def set_volume(self, volume: float):
         """Set volume (0.0 to 1.0)."""
-        self._volume = max(0.0, min(1.0, volume))
+        new_volume = max(0.0, min(1.0, volume))
+        old_step = int(round(self._volume * 100.0))
+        new_step = int(round(new_volume * 100.0))
+        self._volume = new_volume
+        if new_step == old_step:
+            return
         if self._backend == "ffplay" and self._playing and self._current_file and not self._ffplay_paused:
             # ffplay has no runtime volume IPC, so restart at current position.
             pos = self.get_position()
@@ -486,6 +491,8 @@ class AudioPlayer:
                 self._ffplay_offset = pos
                 return
             if self._playing:
+                if abs(self.get_position() - pos) < 0.05:
+                    return
                 self._play_file_ffplay(self._current_file, start=pos)
             return
         if not _pygame_initialized or not _pygame_available or not self._playing:
