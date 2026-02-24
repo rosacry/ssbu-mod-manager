@@ -457,10 +457,18 @@ class ModsPage(BasePage):
             )
 
         menu.update_idletasks()
-        menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
+        menu_w = max(frame.winfo_reqwidth(), 220)
+        menu_h = max(frame.winfo_reqheight(), 30)
+        x, y = self._clamp_popup_to_screen(event.x_root + 4, event.y_root + 2, menu_w, menu_h)
+        menu.geometry(f"{menu_w}x{menu_h}+{x}+{y}")
         menu.deiconify()
         menu.lift()
+        try:
+            menu.focus_force()
+        except Exception:
+            pass
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
+        menu.bind("<FocusOut>", lambda _e: self.after(10, self._close_context_menu), add="+")
         self._context_menu = menu
         return "break"
 
@@ -504,7 +512,7 @@ class ModsPage(BasePage):
 
     def _invoke_context_action(self, callback):
         self._close_context_menu()
-        self.after(0, callback)
+        callback()
 
     def _close_context_menu(self):
         menu = self._context_menu
@@ -583,10 +591,6 @@ class ModsPage(BasePage):
             dialog.transient(self.winfo_toplevel())
         except Exception:
             pass
-        try:
-            dialog.attributes("-topmost", True)
-        except Exception:
-            pass
 
         shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
                              border_width=1, border_color="#304378")
@@ -662,6 +666,20 @@ class ModsPage(BasePage):
         except Exception:
             x, y = 200, 200
         dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+    @staticmethod
+    def _clamp_popup_to_screen(x: int, y: int, width: int, height: int):
+        try:
+            root = tk._default_root
+            if root is None:
+                return x, y
+            sw = max(640, root.winfo_screenwidth())
+            sh = max(480, root.winfo_screenheight())
+            cx = min(max(6, int(x)), max(6, sw - int(width) - 6))
+            cy = min(max(6, int(y)), max(6, sh - int(height) - 6))
+            return cx, cy
+        except Exception:
+            return x, y
 
     def _reset_single_custom_mod_name(self, mod):
         settings = self.app.config_manager.settings

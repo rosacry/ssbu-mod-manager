@@ -417,54 +417,59 @@ class PluginsPage(BasePage):
         if not (self._friendly_names_var.get() or self._show_descriptions_var.get()):
             return None
         self._close_context_menu()
+        menu = ctk.CTkToplevel(self)
+        menu.withdraw()
+        menu.overrideredirect(True)
+        menu.attributes("-topmost", True)
+        menu.configure(fg_color="#101427")
 
-        menu = ctk.CTkFrame(
-            self,
+        frame = ctk.CTkFrame(
+            menu,
             fg_color="#171a31",
             border_width=1,
             border_color="#2f3f6a",
             corner_radius=8,
         )
+        frame.pack(fill="both", expand=True)
 
         self._add_context_item(
-            menu,
+            frame,
             "Rename Plugin Name",
             lambda p=plugin: self._rename_plugin_title(p),
         )
         self._add_context_item(
-            menu,
+            frame,
             "Rename Plugin Description",
             lambda p=plugin: self._rename_plugin_description(p),
         )
 
         if self._has_custom_plugin_name(plugin):
             self._add_context_item(
-                menu,
+                frame,
                 "Reset Plugin Name",
                 lambda p=plugin: self._reset_single_custom_name(p),
             )
 
         if self._has_custom_plugin_description(plugin):
             self._add_context_item(
-                menu,
+                frame,
                 "Reset Plugin Description",
                 lambda p=plugin: self._reset_single_custom_description(p),
             )
 
         menu.update_idletasks()
-        try:
-            local_x = (event.x_root - self.winfo_rootx()) + 4
-            local_y = (event.y_root - self.winfo_rooty()) + 2
-            max_x = max(6, self.winfo_width() - menu.winfo_reqwidth() - 6)
-            max_y = max(6, self.winfo_height() - menu.winfo_reqheight() - 6)
-            local_x = min(max(6, local_x), max_x)
-            local_y = min(max(6, local_y), max_y)
-        except Exception:
-            local_x, local_y = 12, 12
-
-        menu.place(x=local_x, y=local_y)
+        menu_w = max(frame.winfo_reqwidth(), 220)
+        menu_h = max(frame.winfo_reqheight(), 30)
+        x, y = self._clamp_popup_to_screen(event.x_root + 4, event.y_root + 2, menu_w, menu_h)
+        menu.geometry(f"{menu_w}x{menu_h}+{x}+{y}")
+        menu.deiconify()
         menu.lift()
+        try:
+            menu.focus_force()
+        except Exception:
+            pass
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
+        menu.bind("<FocusOut>", lambda _e: self.after(10, self._close_context_menu), add="+")
         self._context_menu = menu
         return "break"
 
@@ -508,17 +513,13 @@ class PluginsPage(BasePage):
 
     def _invoke_context_action(self, callback):
         self._close_context_menu()
-        self.after(0, callback)
+        callback()
 
     def _close_context_menu(self):
         menu = self._context_menu
         self._context_menu = None
         if menu is None:
             return
-        try:
-            menu.place_forget()
-        except Exception:
-            pass
         try:
             menu.destroy()
         except Exception:
@@ -578,37 +579,24 @@ class PluginsPage(BasePage):
 
     def _show_text_entry_dialog(self, title: str, subtitle: str, initial_value: str):
         result = {"value": None}
-        done = tk.BooleanVar(value=False)
-
-        overlay = ctk.CTkFrame(self, fg_color="#0a0f22", corner_radius=0)
-        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
-        overlay.lift()
+        dialog = ctk.CTkToplevel(self)
+        dialog.withdraw()
+        dialog.title(title)
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#0f1327")
+        try:
+            dialog.transient(self.winfo_toplevel())
+        except Exception:
+            pass
 
         shell = ctk.CTkFrame(
-            overlay,
+            dialog,
             fg_color="#151b36",
             corner_radius=10,
             border_width=1,
             border_color="#304378",
-            width=500,
-            height=290,
         )
-
-        def _place_shell(_event=None):
-            try:
-                overlay.update_idletasks()
-                width = min(560, max(360, overlay.winfo_width() - 50))
-                height = 290
-                x = max(20, (overlay.winfo_width() - width) // 2)
-                y = max(20, (overlay.winfo_height() - height) // 2)
-                shell.configure(width=width, height=height)
-                shell.place(x=x, y=y)
-            except Exception:
-                shell.configure(width=500, height=290)
-                shell.place(x=60, y=60)
-
-        overlay.bind("<Configure>", _place_shell, add="+")
-        _place_shell()
+        shell.pack(fill="both", expand=True, padx=10, pady=10)
 
         ctk.CTkLabel(
             shell,
@@ -635,10 +623,12 @@ class PluginsPage(BasePage):
         btn_row.pack(fill="x", padx=14, pady=(0, 12))
 
         def close_with(value=None):
-            if done.get():
-                return
             result["value"] = value
-            done.set(True)
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
 
         ctk.CTkButton(
             btn_row,
@@ -660,24 +650,42 @@ class PluginsPage(BasePage):
             command=lambda: close_with(entry.get()),
         ).pack(side="right", padx=(0, 8))
 
-        overlay.bind("<Escape>", lambda _e: close_with(None), add="+")
-        overlay.bind("<Return>", lambda _e: close_with(entry.get()), add="+")
+        dialog.bind("<Escape>", lambda _e: close_with(None))
+        dialog.bind("<Return>", lambda _e: close_with(entry.get()))
+        self._center_dialog(dialog, width=500, height=290)
 
+        dialog.deiconify()
+        dialog.lift()
         try:
-            overlay.grab_set()
+            dialog.grab_set()
         except Exception:
             pass
         entry.focus_set()
-        self.wait_variable(done)
-        try:
-            overlay.grab_release()
-        except Exception:
-            pass
-        try:
-            overlay.destroy()
-        except Exception:
-            pass
+        self.wait_window(dialog)
         return result["value"]
+
+    def _center_dialog(self, dialog, width: int, height: int):
+        try:
+            self.update_idletasks()
+            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
+            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
+        except Exception:
+            x, y = 200, 200
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+    @staticmethod
+    def _clamp_popup_to_screen(x: int, y: int, width: int, height: int):
+        try:
+            root = tk._default_root
+            if root is None:
+                return x, y
+            sw = max(640, root.winfo_screenwidth())
+            sh = max(480, root.winfo_screenheight())
+            cx = min(max(6, int(x)), max(6, sw - int(width) - 6))
+            cy = min(max(6, int(y)), max(6, sh - int(height) - 6))
+            return cx, cy
+        except Exception:
+            return x, y
 
     def _reset_single_custom_name(self, plugin):
         settings = self.app.config_manager.settings
