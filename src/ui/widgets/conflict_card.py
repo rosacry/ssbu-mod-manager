@@ -93,7 +93,7 @@ class ConflictCard(ctk.CTkFrame):
                 )
                 merge_btn.pack(side="left", padx=(0, 5))
 
-            if on_keep:
+            if on_keep and len(conflict.mods_involved) > 1:
                 for mod_name in conflict.mods_involved:
                     keep_btn = ctk.CTkButton(
                         btn_frame, text=f"Keep {mod_name[:20]}", width=130,

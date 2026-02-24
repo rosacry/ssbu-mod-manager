@@ -10,6 +10,13 @@ from src.utils.logger import logger
 
 # Explanations for conflict types
 CONFLICT_EXPLANATIONS = {
+    ".nestedmod": (
+        "Folder Structure Conflicts",
+        "A mod folder contains an extra wrapper subfolder. ARCropolis may not load "
+        "the mod correctly until its actual content folders (fighter/ui/sound/etc.) "
+        "are moved up one level. Use Mods > Fix Nesting to repair it.",
+        False,
+    ),
     ".xmsbt": (
         "Text Conflicts (XMSBT)",
         "Multiple mods change the same text file. This causes one mod's text "
@@ -119,8 +126,13 @@ class ConflictsPage(BasePage):
             corner_radius=8, height=34,
         )
 
-        self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        self.content_host = ctk.CTkFrame(self, fg_color="transparent")
+        self.content_host.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+
+        self.empty_state_host = ctk.CTkFrame(self.content_host, fg_color="transparent")
+
+        self.conflict_list = ctk.CTkScrollableFrame(self.content_host, fg_color="transparent")
+        self.conflict_list.pack(fill="both", expand=True)
         self.bind("<Configure>", self._on_page_configure, add="+")
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
@@ -145,11 +157,14 @@ class ConflictsPage(BasePage):
             text_color="#999999")
         self.auto_resolve_btn.pack_forget()
         self.fix_locale_btn.pack_forget()
+        self._show_empty_state_host()
+        for w in self.empty_state_host.winfo_children():
+            w.destroy()
         for w in self.conflict_list.winfo_children():
             w.destroy()
 
-        self._initial_prompt_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
-        self._initial_prompt_frame.pack(fill="x", pady=(0, 24))
+        self._initial_prompt_frame = ctk.CTkFrame(self.empty_state_host, fg_color="transparent")
+        self._initial_prompt_frame.pack(expand=True)
         ctk.CTkLabel(self._initial_prompt_frame, text="No scan performed yet",
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#cccccc").pack(pady=(0, 8))
@@ -169,7 +184,6 @@ class ConflictsPage(BasePage):
         scan_prompt_btn.pack()
 
         self._initial_prompt_visible = True
-        self.after(0, self._reposition_initial_prompt)
 
     def _hide_initial_prompt(self):
         self._initial_prompt_visible = False
@@ -179,6 +193,29 @@ class ConflictsPage(BasePage):
             except Exception:
                 pass
             self._initial_prompt_frame = None
+        try:
+            for w in self.empty_state_host.winfo_children():
+                w.destroy()
+        except Exception:
+            pass
+
+    def _show_empty_state_host(self):
+        try:
+            if self.conflict_list.winfo_manager():
+                self.conflict_list.pack_forget()
+            if not self.empty_state_host.winfo_manager():
+                self.empty_state_host.pack(fill="both", expand=True)
+        except Exception:
+            pass
+
+    def _show_conflict_list(self):
+        try:
+            if self.empty_state_host.winfo_manager():
+                self.empty_state_host.pack_forget()
+            if not self.conflict_list.winfo_manager():
+                self.conflict_list.pack(fill="both", expand=True)
+        except Exception:
+            pass
 
     def _set_rescan_visible(self, visible: bool):
         try:
@@ -198,7 +235,7 @@ class ConflictsPage(BasePage):
             pass
 
     def _on_page_configure(self, _event=None):
-        self.after(0, self._reposition_initial_prompt)
+        return
 
     def _reposition_initial_prompt(self):
         """Keep the initial prompt centered in the visible scroll viewport."""
@@ -251,6 +288,7 @@ class ConflictsPage(BasePage):
         current_gen = getattr(self, "_scan_generation", 0)
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
+        self._show_conflict_list()
         self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
 
         for w in self.conflict_list.winfo_children():
@@ -308,6 +346,7 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
+        self._show_conflict_list()
         self.summary_label.configure(
             text=f"Scan failed: {error_msg}", text_color="#e94560")
 
@@ -338,6 +377,7 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
+        self._show_conflict_list()
 
         for w in self.conflict_list.winfo_children():
             w.destroy()

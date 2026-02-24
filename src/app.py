@@ -415,7 +415,7 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(180, self._flush_pending_scale)
+        self._zoom_apply_after_id = self.after(220, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -527,7 +527,7 @@ class ModManagerApp(ctk.CTk):
                 return
             self._suppress_scroll_refresh_until = max(
                 self._suppress_scroll_refresh_until,
-                time.monotonic() + 0.12,
+                time.monotonic() + 0.20,
             )
         except Exception:
             pass
@@ -580,6 +580,7 @@ class ModManagerApp(ctk.CTk):
             return
 
         original_clicked = _ctk_scrollbar.CTkScrollbar._clicked
+        original_create_bindings = _ctk_scrollbar.CTkScrollbar._create_bindings
 
         def _clicked_preserve_offset(scrollbar, event):
             try:
@@ -595,8 +596,11 @@ class ModManagerApp(ctk.CTk):
                     )
 
                 value = max(0.0, min(1.0, float(value)))
-                length = max(0.0, float(scrollbar._end_value - scrollbar._start_value))
-                length = min(length, 1.0)
+                raw_length = max(0.0, min(1.0, float(scrollbar._end_value - scrollbar._start_value)))
+                corr_start, corr_end = scrollbar._get_scrollbar_values_for_minimum_pixel_size()
+                corr_start = max(0.0, min(1.0, float(corr_start)))
+                corr_end = max(0.0, min(1.0, float(corr_end)))
+                corr_length = max(0.0, min(1.0, corr_end - corr_start))
 
                 event_type = getattr(event, "type", None)
                 event_type_s = str(event_type).lower()
@@ -605,19 +609,39 @@ class ModManagerApp(ctk.CTk):
                     or event_type_s == "4"
                     or "buttonpress" in event_type_s
                 )
+                is_motion = (
+                    event_type == 6
+                    or event_type_s == "6"
+                    or "motion" in event_type_s
+                )
 
                 if is_press:
-                    if scrollbar._start_value <= value <= scrollbar._end_value:
+                    if corr_start <= value <= corr_end:
                         # Clicked inside thumb: preserve relative click offset.
-                        scrollbar._drag_anchor = value - scrollbar._start_value
+                        scrollbar._drag_anchor_corrected = value - corr_start
                     else:
                         # Clicked outside thumb: keep prior "jump toward click" behavior.
-                        scrollbar._drag_anchor = length / 2.0
+                        scrollbar._drag_anchor_corrected = corr_length / 2.0
+                elif is_motion and getattr(scrollbar, "_drag_anchor_corrected", None) is None:
+                    # If the press event was missed (e.g. thumb tag hit), infer anchor
+                    # from current visual thumb position before first drag step.
+                    if corr_start <= value <= corr_end:
+                        scrollbar._drag_anchor_corrected = value - corr_start
+                    else:
+                        scrollbar._drag_anchor_corrected = corr_length / 2.0
 
-                anchor = getattr(scrollbar, "_drag_anchor", length / 2.0)
-                target_start = value - anchor
-                target_start = max(0.0, min(target_start, 1.0 - length))
-                target_end = target_start + length
+                anchor_corr = getattr(scrollbar, "_drag_anchor_corrected", None)
+                if anchor_corr is None:
+                    anchor_corr = corr_length / 2.0
+                anchor_corr = max(0.0, min(float(anchor_corr), corr_length))
+                target_corr_start = value - anchor_corr
+                target_corr_start = max(0.0, min(target_corr_start, 1.0 - corr_length))
+
+                denom_factor = max(1e-6, 1.0 - corr_length)
+                raw_factor = (1.0 - raw_length) / denom_factor
+                target_start = target_corr_start * raw_factor
+                target_start = max(0.0, min(target_start, 1.0 - raw_length))
+                target_end = target_start + raw_length
 
                 scrollbar._start_value = target_start
                 scrollbar._end_value = target_end
@@ -629,7 +653,22 @@ class ModManagerApp(ctk.CTk):
                 # Fall back to stock behavior if anything unexpected happens.
                 return original_clicked(scrollbar, event)
 
+        def _create_bindings_preserve_offset(scrollbar, sequence=None):
+            original_create_bindings(scrollbar, sequence=sequence)
+            try:
+                if not getattr(scrollbar, "_ssbumm_drag_bindings", False):
+                    scrollbar._canvas.bind("<Button-1>", scrollbar._clicked, add="+")
+                    scrollbar._canvas.bind(
+                        "<ButtonRelease-1>",
+                        lambda _e, sb=scrollbar: setattr(sb, "_drag_anchor_corrected", None),
+                        add="+",
+                    )
+                    scrollbar._ssbumm_drag_bindings = True
+            except Exception:
+                pass
+
         _ctk_scrollbar.CTkScrollbar._clicked = _clicked_preserve_offset
+        _ctk_scrollbar.CTkScrollbar._create_bindings = _create_bindings_preserve_offset
         _ctk_scrollbar.CTkScrollbar._ssbumm_drag_patch = True
 
     def _neutralize_ctk_scroll_management(self):
@@ -805,7 +844,7 @@ class ModManagerApp(ctk.CTk):
             self._scroll_refresh_widgets.add(widget)
             if self._scroll_refresh_after_id:
                 return
-            self._scroll_refresh_after_id = self.after(24, self._flush_scroll_refresh)
+            self._scroll_refresh_after_id = self.after(32, self._flush_scroll_refresh)
         except Exception:
             pass
 
@@ -823,7 +862,7 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 8
+            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 12
             if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
                 for widget in widgets:
                     try:

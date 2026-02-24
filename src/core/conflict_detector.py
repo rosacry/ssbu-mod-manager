@@ -2,7 +2,13 @@
 from pathlib import Path
 from src.models.conflict import FileConflict, ConflictSeverity, ConflictGroup
 from src.core.file_scanner import FileScanner
-from src.constants import CONFLICT_EXTENSIONS, MERGEABLE_EXTENSIONS
+from src.constants import MERGEABLE_EXTENSIONS
+
+_SKIP_MOD_FOLDERS = {"_MergedResources", "_MusicConfig", ".disabled", "__pycache__"}
+_MOD_CONTENT_DIRS = {
+    "fighter", "sound", "stage", "ui", "effect", "camera",
+    "assist", "item", "param", "stream",
+}
 
 
 class ConflictDetector:
@@ -32,6 +38,10 @@ class ConflictDetector:
             )
             conflicts.append(conflict)
 
+        # Also surface folder-structure issues that break mod loading
+        # even without overlapping files (e.g. one extra wrapper folder).
+        conflicts.extend(self._detect_structure_conflicts(mods_root))
+
         # Sort by severity (critical first)
         severity_order = {
             ConflictSeverity.CRITICAL: 0,
@@ -39,7 +49,10 @@ class ConflictDetector:
             ConflictSeverity.MEDIUM: 2,
             ConflictSeverity.LOW: 3,
         }
-        conflicts.sort(key=lambda c: severity_order.get(c.severity, 99))
+        conflicts.sort(key=lambda c: (
+            severity_order.get(c.severity, 99),
+            str(c.relative_path).lower(),
+        ))
         return conflicts
 
     def group_conflicts(self, conflicts: list[FileConflict]) -> list[ConflictGroup]:
@@ -94,3 +107,65 @@ class ConflictDetector:
             return ConflictSeverity.LOW
 
         return ConflictSeverity.MEDIUM
+
+    def _detect_structure_conflicts(self, mods_root: Path) -> list[FileConflict]:
+        """Detect nested-mod folder structure issues as conflict entries."""
+        conflicts: list[FileConflict] = []
+        try:
+            folders = sorted(
+                [f for f in mods_root.iterdir() if f.is_dir()],
+                key=lambda p: p.name.lower(),
+            )
+        except (PermissionError, OSError):
+            return conflicts
+
+        for folder in folders:
+            name = folder.name
+            if name.startswith(".") or name in _SKIP_MOD_FOLDERS:
+                continue
+
+            nested_child = self._find_single_nested_content_child(folder)
+            if nested_child is None:
+                continue
+
+            rel = f"structure/{name}.nestedmod"
+            conflicts.append(FileConflict(
+                relative_path=rel,
+                mods_involved=[name],
+                mod_paths=[folder],
+                severity=ConflictSeverity.HIGH,
+                file_type=".nestedmod",
+                is_mergeable=False,
+            ))
+
+        return conflicts
+
+    def _has_direct_mod_content(self, folder: Path) -> bool:
+        """Return True when folder already contains expected SSBU mod roots."""
+        try:
+            for child in folder.iterdir():
+                child_name = child.name.lower()
+                if child.is_dir() and child_name in _MOD_CONTENT_DIRS:
+                    return True
+                if child.is_file() and child_name == "config.json":
+                    return True
+        except (PermissionError, OSError):
+            return False
+        return False
+
+    def _find_single_nested_content_child(self, folder: Path) -> Path | None:
+        """Detect one wrapper directory that contains actual mod content."""
+        if self._has_direct_mod_content(folder):
+            return None
+
+        try:
+            visible_children = [c for c in folder.iterdir() if not c.name.startswith(".")]
+        except (PermissionError, OSError):
+            return None
+
+        subdirs = [c for c in visible_children if c.is_dir()]
+        if len(subdirs) != 1:
+            return None
+
+        nested = subdirs[0]
+        return nested if self._has_direct_mod_content(nested) else None

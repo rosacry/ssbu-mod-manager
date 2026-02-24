@@ -12,6 +12,7 @@ class PluginsPage(BasePage):
         super().__init__(parent, app, **kwargs)
         self._loaded = False
         self._context_menu = None
+        self.bind_all("<Button-1>", self._close_context_menu_on_global_click, add="+")
         self._build_ui()
 
     def _build_ui(self):
@@ -349,7 +350,7 @@ class PluginsPage(BasePage):
 
     def _bind_context_menu_recursive(self, widget, plugin):
         """Attach right-click plugin actions to row and all descendants."""
-        for seq in ("<ButtonRelease-3>", "<Button-3>", "<Button-2>", "<Control-Button-1>"):
+        for seq in ("<ButtonRelease-3>", "<Button-2>", "<Control-Button-1>"):
             try:
                 widget.bind(seq,
                             lambda e, p=plugin: self._show_plugin_context_menu(e, p), add="+")
@@ -383,12 +384,12 @@ class PluginsPage(BasePage):
 
         self._add_context_item(
             frame,
-            "Rename Plugin Name...",
+            "Rename Plugin Name",
             lambda p=plugin: self._rename_plugin_title(p),
         )
         self._add_context_item(
             frame,
-            "Rename Plugin Description...",
+            "Rename Plugin Description",
             lambda p=plugin: self._rename_plugin_description(p),
         )
 
@@ -410,14 +411,32 @@ class PluginsPage(BasePage):
         menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
         menu.deiconify()
         menu.lift()
-        try:
-            menu.focus_force()
-        except Exception:
-            pass
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
-        menu.after(12000, self._close_context_menu)
         self._context_menu = menu
         return "break"
+
+    def _close_context_menu_on_global_click(self, event):
+        """Close plugin context menu when clicking outside it."""
+        menu = self._context_menu
+        if menu is None:
+            return
+        try:
+            if not menu.winfo_exists():
+                self._context_menu = None
+                return
+        except Exception:
+            self._context_menu = None
+            return
+
+        w = getattr(event, "widget", None)
+        while w is not None:
+            if w == menu:
+                return
+            try:
+                w = w.master
+            except Exception:
+                break
+        self._close_context_menu()
 
     def _add_context_item(self, parent, text: str, callback):
         btn = ctk.CTkButton(
@@ -503,6 +522,7 @@ class PluginsPage(BasePage):
     def _show_text_entry_dialog(self, title: str, subtitle: str, initial_value: str):
         result = {"value": None}
         dialog = ctk.CTkToplevel(self)
+        dialog.withdraw()
         dialog.title(title)
         dialog.resizable(False, False)
         dialog.configure(fg_color="#0f1327")
@@ -559,8 +579,10 @@ class PluginsPage(BasePage):
 
         dialog.bind("<Escape>", lambda _e: close_with(None))
         dialog.bind("<Return>", lambda _e: close_with(entry.get()))
-        self._center_dialog(dialog, width=460, height=230)
+        self._center_dialog(dialog, width=500, height=290)
 
+        dialog.deiconify()
+        dialog.lift()
         dialog.grab_set()
         entry.focus_set()
         self.wait_window(dialog)

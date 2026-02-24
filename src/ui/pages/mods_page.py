@@ -42,6 +42,7 @@ class ModsPage(BasePage):
         self._last_scroll_region = (0, 0)
         self._scroll_after_id = None
         self._context_menu = None
+        self.bind_all("<Button-1>", self._close_context_menu_on_global_click, add="+")
         self._build_ui()
 
     def _patch_all_scroll_speeds(self):
@@ -404,7 +405,7 @@ class ModsPage(BasePage):
         return bool(overrides.get(mod.original_name, "").strip())
 
     def _bind_context_menu_recursive(self, widget, mod):
-        for seq in ("<ButtonRelease-3>", "<Button-3>", "<Button-2>", "<Control-Button-1>"):
+        for seq in ("<ButtonRelease-3>", "<Button-2>", "<Control-Button-1>"):
             try:
                 widget.bind(seq,
                             lambda e, m=mod: self._show_mod_context_menu(e, m), add="+")
@@ -449,14 +450,32 @@ class ModsPage(BasePage):
         menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
         menu.deiconify()
         menu.lift()
-        try:
-            menu.focus_force()
-        except Exception:
-            pass
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
-        menu.after(12000, self._close_context_menu)
         self._context_menu = menu
         return "break"
+
+    def _close_context_menu_on_global_click(self, event):
+        """Close mod context menu when clicking outside it."""
+        menu = self._context_menu
+        if menu is None:
+            return
+        try:
+            if not menu.winfo_exists():
+                self._context_menu = None
+                return
+        except Exception:
+            self._context_menu = None
+            return
+
+        w = getattr(event, "widget", None)
+        while w is not None:
+            if w == menu:
+                return
+            try:
+                w = w.master
+            except Exception:
+                break
+        self._close_context_menu()
 
     def _add_context_item(self, parent, text: str, callback):
         btn = ctk.CTkButton(
