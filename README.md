@@ -276,6 +276,11 @@ MIT
 
 ## Changelog
 
+### v3.1.3
+- **Fix: Startup crash hardening** — Removed `pygame` import side-effects from app startup by making audio backend import fully lazy. SDL/pygame now initialize only when audio playback is actually used
+- **Fix: Early startup race reduction** — Delayed the Dashboard's first automatic heavy conflict scan so the UI can fully settle before background scanning begins
+- **Diagnostics: Startup heartbeat logging** — Added 1-second mainloop heartbeat lines in `crash.log` for the first 15 seconds after launch to pinpoint silent native exits
+
 ### v3.1.2
 - **Fix: OPUS/LOPUS music distortion** — Improved LOPUS frame extraction by scanning multiple candidate frame-start offsets (not just the header-size offset) and preferring validated size-prefixed frame layouts over weaker CBR fallback. This resolves tracks that previously played as distorted/noisy audio with faint music underneath
 - **Fix: Stale decoded audio cache** — Added decoder cache revisioning so updated decode logic invalidates old cached WAV output automatically

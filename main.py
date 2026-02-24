@@ -90,6 +90,19 @@ def main():
         _write_debug("import OK, creating app...")
         app = ModManagerApp()
         _write_debug("app created, entering mainloop...")
+        # Startup heartbeat: helps diagnose silent native exits that
+        # happen shortly after entering Tk mainloop.
+        def _heartbeat(t=1):
+            _write_debug(f"[HEARTBEAT] mainloop alive at +{t}s")
+            if t < 15:
+                try:
+                    app.after(1000, lambda: _heartbeat(t + 1))
+                except Exception as hb_err:
+                    _write_debug(f"[HEARTBEAT] scheduling failed: {hb_err}")
+        try:
+            app.after(1000, _heartbeat)
+        except Exception as hb_init_err:
+            _write_debug(f"[HEARTBEAT] init failed: {hb_init_err}")
 
         app.mainloop()
         _write_debug("mainloop exited normally")

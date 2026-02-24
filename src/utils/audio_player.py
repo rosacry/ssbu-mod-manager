@@ -6,11 +6,8 @@ _pygame_available = False
 _pygame_error = ""
 _pygame_initialized = False
 
-# Try to import pygame at module level so it's available as a global name
-try:
-    import pygame as pygame
-except ImportError:
-    pygame = None  # type: ignore
+# Keep pygame import lazy so startup never touches SDL/audio until playback.
+pygame = None  # type: ignore
 
 
 def _ensure_mixer():

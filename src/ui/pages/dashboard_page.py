@@ -16,6 +16,7 @@ class DashboardPage(BasePage):
         self._conflict_cache = None
         self._locale_msbt_cache = None
         self._loading = False
+        self._startup_scan_scheduled = False
         self._spinner_active = False
         self._spinner_index = 0
         self._build_ui()
@@ -189,7 +190,17 @@ class DashboardPage(BasePage):
         logger.debug("Dashboard", "Page shown, refreshing stats")
         self._refresh_stats_fast()
         # Auto-scan conflicts in background if we haven't yet
-        if self._conflict_cache is None:
+        if self._conflict_cache is None and not self._startup_scan_scheduled:
+            # Defer first heavy scan briefly so startup can fully settle.
+            self._startup_scan_scheduled = True
+            self.after(1500, self._startup_refresh)
+
+    def _startup_refresh(self):
+        """Run delayed first refresh after app startup settles."""
+        self._startup_scan_scheduled = False
+        if self.app.shutting_down:
+            return
+        if self._conflict_cache is None and not self._loading:
             self._force_refresh()
 
     def _refresh_stats_fast(self):
