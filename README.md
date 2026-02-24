@@ -276,6 +276,12 @@ MIT
 
 ## Changelog
 
+### v3.1.9
+- **Fix: global decode path stability** - Switched NUS3AUDIO conversion to manual extraction first (whole-file ffmpeg demux now strict fallback only) to avoid environment-dependent ffmpeg direct-demux distortion
+- **Fix: noisy tied-candidate picks** - OPUS/LOPUS near-tie selection now prefers cleaner waveform signatures (`zcr`/correlation) instead of first-seen order
+- **Fix: additional noisy-container wins** - Expanded low-noise override criteria for cases where container decode stays hissy but `lopus_1_off64` has matching timing/bitrate and much cleaner signature
+- **Fix: stale cache after decode-policy change** - Bumped decoder cache revision to `r7` so old cached WAV outputs are invalidated automatically
+
 ### v3.1.8
 - **Fix: OPUS distortion still selected as \"best\"** - Added a narrow low-noise override in OPUS/LOPUS candidate selection that only activates when the top candidate looks hissy (high zero-crossing + weak stereo correlation) and an alternate candidate has matching duration/bitrate with a clearly cleaner signature
 - **Diagnostics: richer OPUS/LOPUS candidate logs** - Candidate debug output now includes `zcr` and stereo correlation so distortion cases can be identified directly from `crash.log`

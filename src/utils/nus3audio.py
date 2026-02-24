@@ -332,7 +332,12 @@ def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
             continue
         if abs(c["bitrate"] - best_br) > max(6.0, best_br * 0.08):
             continue
-        if c["zcr"] > 0.12 or c["corr"] < 0.82:
+        if c["zcr"] > 0.12:
+            continue
+        # Require clearly better stereo coherence, but avoid demanding
+        # near-perfect correlation for tracks that are naturally wide.
+        min_corr = max(0.65, best["corr"] + 0.15)
+        if c["corr"] < min_corr:
             continue
         if c["raw"] < (best_raw - 0.8):
             continue
@@ -1675,7 +1680,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r6"
+_DECODER_CACHE_REV = "r7"
 
 
 def _get_cache_dir() -> Path:
@@ -1746,49 +1751,49 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     if len(data) < 8 or data[:4] != b'NUS3':
         return False, "Not a valid NUS3AUDIO file", None
 
-    # Priority 1: let ffmpeg decode the whole NUS3AUDIO file
-    # Modern ffmpeg (5.0+) may have native NUS3AUDIO demuxer support,
-    # producing clean PCM output.  However, many ffmpeg builds do NOT
-    # demux NUS3AUDIO correctly (they may produce silence, noise, or
-    # distorted audio that still passes a basic size check).  We
-    # validate the WAV output before trusting it.
-    ffmpeg = _find_ffmpeg()
-    if ffmpeg:
-        try:
-            wav_out = cache_dir / f"{cache_key}.wav"
-            result = subprocess.run(
-                [ffmpeg, "-y", "-i", str(nus3audio_path),
-                 "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
-                 str(wav_out)],
-                capture_output=True, timeout=30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if result.returncode == 0 and wav_out.exists():
-                sz = wav_out.stat().st_size
-                # Validate: WAV header (44 bytes) + at least 0.5s of audio
-                # at 48kHz stereo 16-bit = 44 + 96000  96044 bytes.
-                # Also check PCM content for basic audio quality.
-                if sz > 96000 and _validate_wav_quality(wav_out):
-                    from src.utils.logger import logger
-                    logger.info("NUS3AUDIO",
-                                f"ffmpeg decoded NUS3AUDIO directly ({sz} bytes)")
-                    return True, f"Playing: {nus3audio_path.name}", wav_out
-                # Bad output  ffmpeg couldn't properly decode; clean up
-                try:
-                    wav_out.unlink()
-                except OSError:
-                    pass
-        except Exception as e:
-            from src.utils.logger import logger
-            logger.debug("NUS3AUDIO", f"ffmpeg direct decode failed: {e}")
-
-    # Priority 2: manual extraction + per-format conversion
+    # Priority 1: manual extraction + per-format conversion
+    # NOTE: ffmpeg whole-file demux can return distorted output on some
+    # builds while still producing a superficially valid WAV. We decode
+    # manually first to keep behavior deterministic across environments.
     sections = _find_sections(data)
 
     # Extract audio entries using ADOF if available
     audio_entries = _extract_audio_entries(data, sections)
 
     if not audio_entries:
+        # Last-resort whole-file fallback for unusual containers.
+        ffmpeg = _find_ffmpeg()
+        if ffmpeg:
+            try:
+                from src.utils.logger import logger
+                wav_out = cache_dir / f"{cache_key}.wav"
+                result = subprocess.run(
+                    [ffmpeg, "-y", "-i", str(nus3audio_path),
+                     "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
+                     str(wav_out)],
+                    capture_output=True, timeout=30,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if result.returncode == 0 and wav_out.exists():
+                    sz = wav_out.stat().st_size
+                    zcr, corr = _wav_noise_signature(wav_out)
+                    noisy_signature = (zcr > 0.30 and corr < 0.55)
+                    if sz > 96000 and _validate_wav_quality(wav_out) and not noisy_signature:
+                        logger.info(
+                            "NUS3AUDIO",
+                            f"ffmpeg direct fallback accepted ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+                        )
+                        return True, f"Playing: {nus3audio_path.name}", wav_out
+                    logger.warn(
+                        "NUS3AUDIO",
+                        f"ffmpeg direct fallback rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+                    )
+                    try:
+                        wav_out.unlink()
+                    except OSError:
+                        pass
+            except Exception:
+                pass
         return False, "No audio data found in NUS3AUDIO", None
 
     # Try the first (usually only) audio entry
@@ -1809,6 +1814,43 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
         result = _try_convert_audio(entry, cache_dir, f"{cache_key}_{i}", nus3audio_path.name)
         if result[0]:
             return result
+
+    # Priority 2: whole-file ffmpeg fallback (strictly validated).
+    ffmpeg = _find_ffmpeg()
+    if ffmpeg:
+        try:
+            from src.utils.logger import logger
+            wav_out = cache_dir / f"{cache_key}.wav"
+            result = subprocess.run(
+                [ffmpeg, "-y", "-i", str(nus3audio_path),
+                 "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
+                 str(wav_out)],
+                capture_output=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode == 0 and wav_out.exists():
+                sz = wav_out.stat().st_size
+                zcr, corr = _wav_noise_signature(wav_out)
+                # Reject outputs that look like hiss/noise despite passing
+                # basic WAV validity checks.
+                noisy_signature = (zcr > 0.30 and corr < 0.55)
+                if sz > 96000 and _validate_wav_quality(wav_out) and not noisy_signature:
+                    logger.info(
+                        "NUS3AUDIO",
+                        f"ffmpeg direct fallback accepted ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+                    )
+                    return True, f"Playing: {nus3audio_path.name}", wav_out
+                logger.warn(
+                    "NUS3AUDIO",
+                    f"ffmpeg direct fallback rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+                )
+                try:
+                    wav_out.unlink()
+                except OSError:
+                    pass
+        except Exception as e:
+            from src.utils.logger import logger
+            logger.debug("NUS3AUDIO", f"ffmpeg direct fallback failed: {e}")
 
     fmt_hex = struct.unpack_from('<I', audio_data, 0)[0]
     fmt_ascii = audio_data[:4].decode('ascii', errors='replace')
@@ -1868,10 +1910,18 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                             best_idx = len(candidates) - 1
                             continue
                         best = candidates[best_idx]
-                        if (score > best["score"] + 1e-6 or
-                                (abs(score - best["score"]) <= 0.05 and
-                                 duration_s > best["duration"] + 0.5)):
+                        if score > best["score"] + 1e-6:
                             best_idx = len(candidates) - 1
+                        elif abs(score - best["score"]) <= 0.05:
+                            if duration_s > best["duration"] + 0.5:
+                                best_idx = len(candidates) - 1
+                            elif abs(duration_s - best["duration"]) <= 0.5:
+                                # For near-tied candidates, prefer cleaner
+                                # waveform signatures over first-seen order.
+                                if zcr + 0.02 < best["zcr"]:
+                                    best_idx = len(candidates) - 1
+                                elif abs(zcr - best["zcr"]) <= 0.02 and corr > best["corr"] + 0.06:
+                                    best_idx = len(candidates) - 1
                 except Exception as e:
                     logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
 
@@ -1992,10 +2042,18 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     best_idx = len(candidates) - 1
                     return
                 best = candidates[best_idx]
-                if (score > best["score"] + 1e-6 or
-                        (abs(score - best["score"]) <= 0.05 and
-                         duration_s > best["duration"] + 0.5)):
+                if score > best["score"] + 1e-6:
                     best_idx = len(candidates) - 1
+                elif abs(score - best["score"]) <= 0.05:
+                    if duration_s > best["duration"] + 0.5:
+                        best_idx = len(candidates) - 1
+                    elif abs(duration_s - best["duration"]) <= 0.5:
+                        # For near-tied candidates, prefer cleaner
+                        # waveform signatures over first-seen order.
+                        if zcr + 0.02 < best["zcr"]:
+                            best_idx = len(candidates) - 1
+                        elif abs(zcr - best["zcr"]) <= 0.02 and corr > best["corr"] + 0.06:
+                            best_idx = len(candidates) - 1
 
         # Main OPUS container path.
         try:
