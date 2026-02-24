@@ -1,7 +1,6 @@
 """Plugins management page - compact rows with accent bars."""
 import customtkinter as ctk
-import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox
 from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
 from src.utils.logger import logger
@@ -12,6 +11,7 @@ class PluginsPage(BasePage):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
         self._loaded = False
+        self._context_menu = None
         self._build_ui()
 
     def _build_ui(self):
@@ -56,6 +56,9 @@ class PluginsPage(BasePage):
         self._friendly_names_var = ctk.BooleanVar(
             value=getattr(settings, "use_plugin_friendly_names", True)
         )
+        self._show_descriptions_var = ctk.BooleanVar(
+            value=getattr(settings, "show_plugin_descriptions", True)
+        )
         name_controls = ctk.CTkFrame(self, fg_color="transparent")
         name_controls.pack(fill="x", padx=32, pady=(0, 8))
 
@@ -64,6 +67,14 @@ class PluginsPage(BasePage):
             text="Use plugin names",
             variable=self._friendly_names_var,
             command=self._toggle_friendly_names,
+            font=ctk.CTkFont(size=12),
+        ).pack(side="left", padx=(0, 14))
+
+        ctk.CTkCheckBox(
+            name_controls,
+            text="Show descriptions",
+            variable=self._show_descriptions_var,
+            command=self._toggle_show_descriptions,
             font=ctk.CTkFont(size=12),
         ).pack(side="left")
 
@@ -99,6 +110,9 @@ class PluginsPage(BasePage):
         if not self._loaded:
             self._refresh()
 
+    def on_hide(self):
+        self._close_context_menu()
+
     def _force_refresh(self):
         self.app.plugin_manager.invalidate_cache()
         self._loaded = False
@@ -107,6 +121,7 @@ class PluginsPage(BasePage):
     def _refresh(self):
         settings = self.app.config_manager.settings
         self._friendly_names_var.set(getattr(settings, "use_plugin_friendly_names", True))
+        self._show_descriptions_var.set(getattr(settings, "show_plugin_descriptions", True))
         overrides = dict(getattr(settings, "plugin_name_overrides", {}) or {})
         has_overrides = any(v.strip() for v in overrides.values())
         self._reset_names_btn.configure(state="normal" if has_overrides else "disabled")
@@ -118,7 +133,6 @@ class PluginsPage(BasePage):
         plugins = self.app.plugin_manager.list_plugins()
         self._loaded = True
 
-        # Clear old rows
         for widget in self.plugin_list.winfo_children():
             widget.destroy()
 
@@ -139,24 +153,24 @@ class PluginsPage(BasePage):
         logger.info("Plugins", f"Rendered {len(plugins)} plugins")
 
     def _render_plugin_row(self, plugin):
-        """Render a single plugin as a compact row with accent bar."""
+        """Render one plugin row with stable right-side metadata."""
         is_enabled = plugin.status == PluginStatus.ENABLED
-        is_required = plugin.known_info and plugin.known_info.required
+        is_required = bool(plugin.known_info and plugin.known_info.required)
         use_friendly_names = self._friendly_names_var.get()
+        show_descriptions = self._show_descriptions_var.get()
 
+        row_height = 66 if (use_friendly_names and show_descriptions) else 54
         row = ctk.CTkFrame(self.plugin_list, fg_color="#1c1c34", corner_radius=6,
-                           height=44)
-        row.pack(fill="x", pady=1, padx=2)
+                           height=row_height)
+        row.pack(fill="x", pady=2, padx=2)
         row.pack_propagate(False)
 
-        # Colored left accent bar
         accent_color = "#1f538d" if is_enabled else "#3a3a4a"
         if is_required and is_enabled:
             accent_color = "#e94560"
         accent = ctk.CTkFrame(row, width=4, fg_color=accent_color, corner_radius=2)
         accent.pack(side="left", fill="y", padx=(3, 0), pady=4)
 
-        # Toggle switch
         switch = ctk.CTkSwitch(
             row, text="", width=42, height=20,
             command=lambda p=plugin: self._on_toggle(p),
@@ -169,39 +183,53 @@ class PluginsPage(BasePage):
         else:
             switch.deselect()
 
-        # Plugin info - name + filename + description in single label
-        name = self._plugin_display_name(plugin) if use_friendly_names else plugin.filename
-        desc = plugin.description if use_friendly_names else ""
-        fname = plugin.filename
-        name_color = "#d0d0e8" if is_enabled else "#454560"
+        right_col = ctk.CTkFrame(row, fg_color="transparent", width=122)
+        right_col.pack(side="right", fill="y", padx=(6, 10), pady=(7, 7))
+        right_col.pack_propagate(False)
 
-        display_text = name
-        # Show actual filename if it differs from display name
-        if use_friendly_names and fname and fname != name:
-            display_text += f"  ({fname})"
-        if desc and desc != name:
-            display_text += f"  \u2014  {desc}"
-
-        ctk.CTkLabel(
-            row, text=display_text,
-            font=ctk.CTkFont(size=12),
-            text_color=name_color, anchor="w",
-        ).pack(side="left", fill="x", expand=True, padx=(2, 8))
-
-        # Size
-        ctk.CTkLabel(
-            row, text=format_size(plugin.file_size),
-            font=ctk.CTkFont(size=11),
-            text_color="#666666",
-        ).pack(side="right", padx=(0, 10))
-
-        # Required badge
         if is_required:
             ctk.CTkLabel(
-                row, text="REQUIRED",
+                right_col,
+                text="REQUIRED",
                 font=ctk.CTkFont(size=10, weight="bold"),
                 text_color="#e94560",
-            ).pack(side="right", padx=(0, 5))
+                anchor="e",
+            ).pack(anchor="e")
+
+        ctk.CTkLabel(
+            right_col, text=format_size(plugin.file_size),
+            font=ctk.CTkFont(size=11), text_color="#777793", anchor="e",
+        ).pack(anchor="e", pady=(2, 0))
+
+        info_col = ctk.CTkFrame(row, fg_color="transparent")
+        info_col.pack(side="left", fill="both", expand=True, padx=(2, 0), pady=(7, 7))
+
+        name = self._plugin_display_name(plugin) if use_friendly_names else plugin.filename
+        name_color = "#d0d0e8" if is_enabled else "#454560"
+        ctk.CTkLabel(
+            info_col, text=name,
+            font=ctk.CTkFont(size=12, weight="bold" if is_enabled else "normal"),
+            text_color=name_color, anchor="w",
+        ).pack(fill="x")
+
+        detail_parts = []
+        base_filename = self._base_plugin_filename(plugin)
+        if use_friendly_names:
+            if base_filename and base_filename != name:
+                detail_parts.append(base_filename)
+            if show_descriptions:
+                desc = self._plugin_display_description(plugin).strip()
+                if desc and desc != name:
+                    detail_parts.append(desc)
+        detail_text = "  \u2014  ".join(detail_parts)
+        if detail_text:
+            ctk.CTkLabel(
+                info_col, text=detail_text,
+                font=ctk.CTkFont(size=11),
+                text_color="#7a7a9b" if is_enabled else "#44445f",
+                anchor="w",
+                justify="left",
+            ).pack(fill="x", pady=(2, 0))
 
         self._bind_context_menu_recursive(row, plugin)
 
@@ -233,7 +261,6 @@ class PluginsPage(BasePage):
             self._refresh()
 
     def _enable_all(self):
-        """Enable all disabled plugins."""
         plugins = self.app.plugin_manager.list_plugins()
         disabled = [p for p in plugins if p.status == PluginStatus.DISABLED]
         if not disabled:
@@ -254,7 +281,6 @@ class PluginsPage(BasePage):
             messagebox.showerror("Error", f"Failed to enable all plugins: {e}")
 
     def _disable_all(self):
-        """Disable all enabled plugins (skips required ones by default)."""
         plugins = self.app.plugin_manager.list_plugins()
         enabled = [p for p in plugins if p.status == PluginStatus.ENABLED]
         if not enabled:
@@ -292,6 +318,13 @@ class PluginsPage(BasePage):
         self._loaded = False
         self._refresh()
 
+    def _toggle_show_descriptions(self):
+        settings = self.app.config_manager.settings
+        settings.show_plugin_descriptions = self._show_descriptions_var.get()
+        self.app.config_manager.save(settings)
+        self._loaded = False
+        self._refresh()
+
     def _plugin_label(self, plugin) -> str:
         if self._friendly_names_var.get():
             return self._plugin_display_name(plugin)
@@ -312,15 +345,30 @@ class PluginsPage(BasePage):
             return plugin.display_name
         return base
 
+    def _plugin_display_description(self, plugin) -> str:
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "plugin_description_overrides", {}) or {})
+        base = self._base_plugin_filename(plugin)
+        custom = overrides.get(base, "").strip()
+        if custom:
+            return custom
+        return plugin.description
+
     def _has_custom_plugin_name(self, plugin) -> bool:
         settings = self.app.config_manager.settings
         overrides = dict(getattr(settings, "plugin_name_overrides", {}) or {})
         return bool(overrides.get(self._base_plugin_filename(plugin), "").strip())
 
+    def _has_custom_plugin_description(self, plugin) -> bool:
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "plugin_description_overrides", {}) or {})
+        return bool(overrides.get(self._base_plugin_filename(plugin), "").strip())
+
     def _bind_context_menu_recursive(self, widget, plugin):
-        """Attach right-click plugin title actions to row and all children."""
+        """Attach right-click plugin actions to row and all descendants."""
         try:
-            widget.bind("<Button-3>", lambda e, p=plugin: self._show_plugin_context_menu(e, p), add="+")
+            widget.bind("<Button-3>",
+                        lambda e, p=plugin: self._show_plugin_context_menu(e, p), add="+")
         except Exception:
             pass
         try:
@@ -330,24 +378,90 @@ class PluginsPage(BasePage):
             pass
 
     def _show_plugin_context_menu(self, event, plugin):
-        """Show per-plugin context actions when plugin names are enabled."""
         if not self._friendly_names_var.get():
             return None
-        menu = tk.Menu(self, tearoff=0)
-        menu.add_command(
-            label="Rename Plugin Name...",
-            command=lambda p=plugin: self._rename_plugin_title(p),
+        self._close_context_menu()
+
+        menu = ctk.CTkToplevel(self)
+        menu.withdraw()
+        menu.overrideredirect(True)
+        menu.attributes("-topmost", True)
+        menu.configure(fg_color="transparent")
+
+        frame = ctk.CTkFrame(
+            menu,
+            fg_color="#171a31",
+            border_width=1,
+            border_color="#2f3f6a",
+            corner_radius=8,
         )
+        frame.pack(fill="both", expand=True)
+
+        self._add_context_item(
+            frame,
+            "Rename Plugin Name...",
+            lambda p=plugin: self._rename_plugin_title(p),
+        )
+        self._add_context_item(
+            frame,
+            "Rename Plugin Description...",
+            lambda p=plugin: self._rename_plugin_description(p),
+        )
+
         if self._has_custom_plugin_name(plugin):
-            menu.add_command(
-                label="Reset This Plugin Name",
-                command=lambda p=plugin: self._reset_single_custom_name(p),
+            self._add_context_item(
+                frame,
+                "Reset Plugin Name",
+                lambda p=plugin: self._reset_single_custom_name(p),
             )
+
+        if self._has_custom_plugin_description(plugin):
+            self._add_context_item(
+                frame,
+                "Reset Plugin Description",
+                lambda p=plugin: self._reset_single_custom_description(p),
+            )
+
+        menu.update_idletasks()
+        menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
+        menu.deiconify()
         try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+            menu.focus_force()
+        except Exception:
+            pass
+        menu.bind("<FocusOut>", lambda _e: self._close_context_menu(), add="+")
+        menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
+        self._context_menu = menu
         return "break"
+
+    def _add_context_item(self, parent, text: str, callback):
+        btn = ctk.CTkButton(
+            parent,
+            text=text,
+            anchor="w",
+            width=220,
+            height=30,
+            corner_radius=0,
+            fg_color="transparent",
+            hover_color="#24375f",
+            font=ctk.CTkFont(size=12),
+            command=lambda cb=callback: self._invoke_context_action(cb),
+        )
+        btn.pack(fill="x")
+
+    def _invoke_context_action(self, callback):
+        self._close_context_menu()
+        self.after(0, callback)
+
+    def _close_context_menu(self):
+        menu = self._context_menu
+        self._context_menu = None
+        if menu is None:
+            return
+        try:
+            menu.destroy()
+        except Exception:
+            pass
 
     def _rename_plugin_title(self, plugin):
         settings = self.app.config_manager.settings
@@ -356,11 +470,10 @@ class PluginsPage(BasePage):
         default_name = plugin.display_name if plugin.known_info else base
         initial = overrides.get(base, default_name)
 
-        new_name = simpledialog.askstring(
-            "Rename Plugin Title",
-            f"Set a custom plugin title for:\n{base}\n\nLeave blank to restore default.",
-            initialvalue=initial,
-            parent=self,
+        new_name = self._show_text_entry_dialog(
+            title="Rename Plugin Name",
+            subtitle=f"Set a custom plugin title for:\n{base}\n\nLeave blank to restore default.",
+            initial_value=initial,
         )
         if new_name is None:
             return
@@ -376,6 +489,107 @@ class PluginsPage(BasePage):
         self._loaded = False
         self._refresh()
 
+    def _rename_plugin_description(self, plugin):
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "plugin_description_overrides", {}) or {})
+        base = self._base_plugin_filename(plugin)
+        default_desc = plugin.description
+        initial = overrides.get(base, default_desc)
+
+        new_desc = self._show_text_entry_dialog(
+            title="Rename Plugin Description",
+            subtitle=f"Set a custom plugin description for:\n{base}\n\nLeave blank to restore default.",
+            initial_value=initial,
+        )
+        if new_desc is None:
+            return
+
+        cleaned = new_desc.strip()
+        if not cleaned or cleaned == default_desc:
+            overrides.pop(base, None)
+        else:
+            overrides[base] = cleaned
+
+        settings.plugin_description_overrides = overrides
+        self.app.config_manager.save(settings)
+        self._loaded = False
+        self._refresh()
+
+    def _show_text_entry_dialog(self, title: str, subtitle: str, initial_value: str):
+        result = {"value": None}
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(title)
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#0f1327")
+        try:
+            dialog.transient(self.winfo_toplevel())
+        except Exception:
+            pass
+        try:
+            dialog.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
+                             border_width=1, border_color="#304378")
+        shell.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            shell, text=title, anchor="w",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).pack(fill="x", padx=14, pady=(12, 6))
+
+        ctk.CTkLabel(
+            shell, text=subtitle, anchor="w", justify="left",
+            font=ctk.CTkFont(size=12), text_color="#b9bfd8",
+        ).pack(fill="x", padx=14)
+
+        entry = ctk.CTkEntry(shell, height=32)
+        entry.pack(fill="x", padx=14, pady=(12, 12))
+        entry.insert(0, initial_value or "")
+        entry.select_range(0, "end")
+
+        btn_row = ctk.CTkFrame(shell, fg_color="transparent")
+        btn_row.pack(fill="x", padx=14, pady=(0, 12))
+
+        def close_with(value=None):
+            result["value"] = value
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_row, text="Cancel", width=96, height=30,
+            fg_color="#2f3557", hover_color="#3f476f",
+            command=lambda: close_with(None),
+        ).pack(side="right")
+
+        ctk.CTkButton(
+            btn_row, text="Save", width=96, height=30,
+            fg_color="#1f538d", hover_color="#163b6a",
+            command=lambda: close_with(entry.get()),
+        ).pack(side="right", padx=(0, 8))
+
+        dialog.bind("<Escape>", lambda _e: close_with(None))
+        dialog.bind("<Return>", lambda _e: close_with(entry.get()))
+        self._center_dialog(dialog, width=460, height=230)
+
+        dialog.grab_set()
+        entry.focus_set()
+        self.wait_window(dialog)
+        return result["value"]
+
+    def _center_dialog(self, dialog, width: int, height: int):
+        try:
+            self.update_idletasks()
+            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
+            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
+        except Exception:
+            x, y = 200, 200
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
     def _reset_single_custom_name(self, plugin):
         settings = self.app.config_manager.settings
         overrides = dict(getattr(settings, "plugin_name_overrides", {}) or {})
@@ -383,6 +597,17 @@ class PluginsPage(BasePage):
         if base in overrides:
             overrides.pop(base, None)
             settings.plugin_name_overrides = overrides
+            self.app.config_manager.save(settings)
+            self._loaded = False
+            self._refresh()
+
+    def _reset_single_custom_description(self, plugin):
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "plugin_description_overrides", {}) or {})
+        base = self._base_plugin_filename(plugin)
+        if base in overrides:
+            overrides.pop(base, None)
+            settings.plugin_description_overrides = overrides
             self.app.config_manager.save(settings)
             self._loaded = False
             self._refresh()

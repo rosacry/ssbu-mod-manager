@@ -55,6 +55,7 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._scan_generation = 0
         self._initial_prompt_frame = None
+        self._initial_prompt_visible = False
         self._build_ui()
 
     def _build_ui(self):
@@ -65,9 +66,8 @@ class ConflictsPage(BasePage):
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 
-        scan_btn = ctk.CTkButton(header_frame, text="Rescan", width=120,
-                                 command=self._force_scan, corner_radius=8, height=34)
-        scan_btn.pack(side="right")
+        self.scan_btn = ctk.CTkButton(header_frame, text="Rescan", width=120,
+                                      command=self._force_scan, corner_radius=8, height=34)
 
         # Explanation section
         explain_frame = ctk.CTkFrame(self, fg_color="#1e1e38", corner_radius=10)
@@ -90,7 +90,7 @@ class ConflictsPage(BasePage):
                      font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
                      wraplength=900, justify="left").pack(anchor="w", pady=(4, 0))
 
-        self.summary_label = ctk.CTkLabel(self, text="Click 'Rescan' or navigate here to scan for conflicts.",
+        self.summary_label = ctk.CTkLabel(self, text="Click 'Scan for Conflicts' to check for mod file conflicts.",
                                           font=ctk.CTkFont(size=13),
                                           text_color="#999999", anchor="w")
         self.summary_label.pack(fill="x", padx=30, pady=(0, 5))
@@ -119,95 +119,93 @@ class ConflictsPage(BasePage):
             corner_radius=8, height=34,
         )
 
-        self.empty_state = ctk.CTkFrame(self, fg_color="transparent")
-        self.empty_state.bind("<Configure>", self._on_empty_state_configure, add="+")
-        self.bind("<Configure>", self._on_empty_state_configure, add="+")
         self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        self.bind("<Configure>", self._on_page_configure, add="+")
+        self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
-    def on_show(self):
-        if not self._scanned:
-            self._show_initial_prompt()
-        elif self._needs_render:
-            self._render()
-        else:
-            if self.conflict_list.winfo_manager():
-                self.conflict_list.update_idletasks()
-
-    def _show_initial_prompt(self):
-        """Show an initial prompt with a scan button instead of auto-scanning."""
-        self._show_empty_state()
-        for w in self.empty_state.winfo_children():
-            w.destroy()
-
-        prompt_frame = ctk.CTkFrame(self.empty_state, fg_color="transparent")
-        prompt_frame.place(relx=0.5, y=0, anchor="center")
-        self._initial_prompt_frame = prompt_frame
-
-        ctk.CTkLabel(prompt_frame, text="No scan performed yet",
+        self._initial_prompt_frame = ctk.CTkFrame(self, fg_color="transparent")
+        ctk.CTkLabel(self._initial_prompt_frame, text="No scan performed yet",
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#cccccc").pack(pady=(0, 8))
 
-        ctk.CTkLabel(prompt_frame,
+        ctk.CTkLabel(self._initial_prompt_frame,
                      text="Click the button below to scan your mods for file conflicts.\n"
                           "This may take a few seconds depending on how many mods you have installed.",
                      font=ctk.CTkFont(size=13), text_color="#888888",
                      justify="center").pack(pady=(0, 20))
 
         scan_prompt_btn = ctk.CTkButton(
-            prompt_frame, text="\U0001F50D  Scan for Conflicts", width=220, height=40,
+            self._initial_prompt_frame, text="\U0001F50D  Scan for Conflicts", width=220, height=40,
             fg_color="#1f538d", hover_color="#163b6a",
             font=ctk.CTkFont(size=14, weight="bold"),
             corner_radius=8, command=self._scan,
         )
         scan_prompt_btn.pack()
 
+    def on_show(self):
+        if self._scanning:
+            self._set_rescan_visible(True)
+            self._hide_initial_prompt()
+        elif not self._scanned:
+            self._show_initial_prompt()
+        elif self._needs_render:
+            self._render()
+        else:
+            self._set_rescan_visible(True)
+            self._hide_initial_prompt()
+            self.conflict_list.update_idletasks()
+
+    def _show_initial_prompt(self):
+        """Show initial centered scan prompt and keep results list hidden/cleared."""
+        self._set_rescan_visible(False)
         self.summary_label.configure(
             text="Click 'Scan for Conflicts' to check for mod file conflicts.",
             text_color="#999999")
-        self.after(20, self._reposition_initial_prompt)
+        self.auto_resolve_btn.pack_forget()
+        self.restore_btn.pack_forget()
+        self.fix_locale_btn.pack_forget()
+        for w in self.conflict_list.winfo_children():
+            w.destroy()
+        self._initial_prompt_visible = True
+        self.after(0, self._reposition_initial_prompt)
 
-    def _show_empty_state(self):
-        """Show centered empty-state content and hide the scroll list."""
+    def _hide_initial_prompt(self):
+        self._initial_prompt_visible = False
+        if self._initial_prompt_frame is not None:
+            self._initial_prompt_frame.place_forget()
+
+    def _set_rescan_visible(self, visible: bool):
         try:
-            if self.conflict_list.winfo_manager():
-                self.conflict_list.pack_forget()
+            if visible:
+                if not self.scan_btn.winfo_manager():
+                    self.scan_btn.pack(side="right")
+            else:
+                if self.scan_btn.winfo_manager():
+                    self.scan_btn.pack_forget()
         except Exception:
             pass
-        if not self.empty_state.winfo_manager():
-            self.empty_state.pack(fill="both", expand=True, padx=30, pady=(0, 10))
-        self.after(10, self._reposition_initial_prompt)
 
-    def _show_conflict_list(self):
-        """Show the scroll list and hide the centered empty-state area."""
-        self._initial_prompt_frame = None
-        try:
-            if self.empty_state.winfo_manager():
-                self.empty_state.pack_forget()
-        except Exception:
-            pass
-        if not self.conflict_list.winfo_manager():
-            self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
-
-    def _on_empty_state_configure(self, _event=None):
+    def _on_page_configure(self, _event=None):
         self.after(0, self._reposition_initial_prompt)
 
     def _reposition_initial_prompt(self):
-        """Position the initial prompt at the visual center of the full page."""
-        frame = self._initial_prompt_frame
-        if frame is None:
+        """Position the initial prompt around the visual center of page content."""
+        if not self._initial_prompt_visible or self._initial_prompt_frame is None:
             return
         try:
-            if not frame.winfo_exists() or not self.empty_state.winfo_ismapped():
+            frame = self._initial_prompt_frame
+            if not frame.winfo_exists():
                 return
             self.update_idletasks()
             page_h = max(1, int(self.winfo_height()))
-            empty_y = max(0, int(self.empty_state.winfo_y()))
-            empty_h = max(1, int(self.empty_state.winfo_height()))
-            target_y = int((page_h / 2) - empty_y)
+            list_y = max(0, int(self.conflict_list.winfo_y()))
+            list_h = max(1, int(self.conflict_list.winfo_height()))
             frame_h = max(1, int(frame.winfo_reqheight()))
-            margin = max(40, frame_h // 2 + 8)
-            target_y = max(margin, min(empty_h - margin, target_y))
+            # Slightly above the list-center reads closer to true page center.
+            target_y = int(list_y + (list_h * 0.43))
+            margin = max(32, (frame_h // 2) + 6)
+            target_y = max(margin, min(page_h - margin, target_y))
             frame.place_configure(relx=0.5, y=target_y, anchor="center")
         except Exception:
             pass
@@ -229,7 +227,7 @@ class ConflictsPage(BasePage):
             pass
 
     def _force_scan(self):
-        self._scanned = False
+        self._scanned = True
         # Cancel any in-progress scan by bumping generation
         self._scan_generation = getattr(self, "_scan_generation", 0) + 1
         self._scanning = False
@@ -249,8 +247,9 @@ class ConflictsPage(BasePage):
 
         self._scanning = True
         current_gen = getattr(self, "_scan_generation", 0)
+        self._set_rescan_visible(True)
+        self._hide_initial_prompt()
         self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
-        self._show_conflict_list()
 
         for w in self.conflict_list.winfo_children():
             w.destroy()
@@ -305,7 +304,8 @@ class ConflictsPage(BasePage):
         self._scanning = False
         self._scanned = True
         self._needs_render = False
-        self._show_conflict_list()
+        self._set_rescan_visible(True)
+        self._hide_initial_prompt()
         self.summary_label.configure(
             text=f"Scan failed: {error_msg}", text_color="#e94560")
 
@@ -334,7 +334,8 @@ class ConflictsPage(BasePage):
 
     def _render(self):
         self._needs_render = False
-        self._show_conflict_list()
+        self._set_rescan_visible(True)
+        self._hide_initial_prompt()
 
         for w in self.conflict_list.winfo_children():
             w.destroy()
@@ -484,6 +485,12 @@ class ConflictsPage(BasePage):
                              anchor="w").pack(side="left", padx=(10, 0))
 
         self.conflict_list.update_idletasks()
+        try:
+            canvas = getattr(self.conflict_list, "_parent_canvas", None)
+            if canvas is not None:
+                canvas.yview_moveto(0.0)
+        except Exception:
+            pass
         # Re-patch scroll speed after rendering new widgets
         self.after(100, self._patch_all_scroll_speeds)
 

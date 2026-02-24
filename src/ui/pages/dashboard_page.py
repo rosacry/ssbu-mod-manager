@@ -117,11 +117,6 @@ class DashboardPage(BasePage):
                                  fg_color="#2a2a44", hover_color="#3a3a55", **btn_style)
         open_btn.pack(side="left", padx=(0, 8))
 
-        music_btn = ctk.CTkButton(actions_frame, text="\u266b  Music",
-                                  command=lambda: self.app.navigate("music"), width=100,
-                                  fg_color="#2a2a44", hover_color="#3a3a55", **btn_style)
-        music_btn.pack(side="left")
-
         # Conflict info banner
         self.info_frame = ctk.CTkFrame(scroll, fg_color="#1e1e30", corner_radius=12)
         self.info_frame.pack(fill="x", padx=30, pady=(15, 0))

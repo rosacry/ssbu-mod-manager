@@ -83,6 +83,7 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_after_id = None
         self._scroll_refresh_widgets = set()
         self._scroll_refresh_full_counter = 0
+        self._pointer_left_down = False
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -235,6 +236,8 @@ class ModManagerApp(ctk.CTk):
         self.bind("<Control-KP_Add>", lambda e: (self._zoom_in(), "break")[-1])
         self.bind("<Control-KP_Subtract>", lambda e: (self._zoom_out(), "break")[-1])
         self.bind("<Control-KP_0>", lambda e: (self._zoom_reset(), "break")[-1])
+        self.bind_all("<ButtonPress-1>", lambda _e: self._set_left_button_down(True), add="+")
+        self.bind_all("<ButtonRelease-1>", lambda _e: self._set_left_button_down(False), add="+")
 
         _dbg("binding scroll...")
         # Global fast-scroll: intercept ALL MouseWheel events application-wide
@@ -402,7 +405,7 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(90, self._flush_pending_scale)
+        self._zoom_apply_after_id = self.after(130, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -490,9 +493,12 @@ class ModManagerApp(ctk.CTk):
 
     _SCROLL_SPEED = 3                    # Listbox/Text scroll multiplier
     _CANVAS_SCROLL_PIXELS = 92           # Default canvas movement per wheel tick
-    _MODS_CANVAS_SCROLL_PIXELS = 76      # Keep Mods aligned with Plugins pace
+    _MODS_CANVAS_SCROLL_PIXELS = 60      # Keep Mods aligned with Plugins pace
     _LONGFORM_SCROLL_SPEED = 6           # Long-form text/list widgets
-    _LONGFORM_CANVAS_SCROLL_PIXELS = 140 # Online Guide/Migration boost
+    _LONGFORM_CANVAS_SCROLL_PIXELS = 120 # Online Guide/Migration boost
+
+    def _set_left_button_down(self, pressed: bool):
+        self._pointer_left_down = bool(pressed)
 
     @staticmethod
     def _widget_can_scroll_vertically(widget) -> bool:
@@ -698,7 +704,7 @@ class ModManagerApp(ctk.CTk):
             self._scroll_refresh_widgets.add(widget)
             if self._scroll_refresh_after_id:
                 return
-            self._scroll_refresh_after_id = self.after(10, self._flush_scroll_refresh)
+            self._scroll_refresh_after_id = self.after(12, self._flush_scroll_refresh)
         except Exception:
             pass
 
@@ -714,11 +720,14 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 4
-            if self._scroll_refresh_full_counter == 0:
-                self.update()
-            else:
-                self.update_idletasks()
+            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 3
+            if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
+                for widget in widgets:
+                    try:
+                        widget.update()
+                    except Exception:
+                        pass
+            self.update_idletasks()
         except Exception:
             pass
 

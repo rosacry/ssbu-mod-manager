@@ -41,6 +41,7 @@ class ModsPage(BasePage):
         self._rendered_widgets = {}  # index -> widget
         self._last_scroll_region = (0, 0)
         self._scroll_after_id = None
+        self._context_menu = None
         self._build_ui()
 
     def _patch_all_scroll_speeds(self):
@@ -184,7 +185,7 @@ class ModsPage(BasePage):
             self._refresh()
 
     def on_hide(self):
-        pass
+        self._close_context_menu()
 
     def _force_refresh(self):
         self.app.mod_manager.invalidate_cache()
@@ -210,7 +211,11 @@ class ModsPage(BasePage):
         filtered = []
         for mod in self._all_mods:
             if search:
-                name_match = search in mod.original_name.lower()
+                display_name = self._mod_display_name(mod)
+                name_match = (
+                    search in mod.original_name.lower()
+                    or search in display_name.lower()
+                )
                 cat_match = any(search in c.lower() for c in mod.metadata.categories)
                 if not name_match and not cat_match:
                     continue
@@ -363,12 +368,8 @@ class ModsPage(BasePage):
             switch.deselect()
 
         # Name + categories label
-        name = mod.original_name
+        name = self._mod_display_name(mod)
         cats = mod.metadata.categories[:3]
-        if cats:
-            cat_suffix = "  \u00b7  " + " \u00b7 ".join(cats)
-        else:
-            cat_suffix = ""
 
         name_color = "#d0d0e8" if is_enabled else "#454560"
         cat_color = "#6a6a88" if is_enabled else "#3a3a50"
@@ -386,6 +387,260 @@ class ModsPage(BasePage):
                 font=("Segoe UI", 10), fg=cat_color, bg="#1c1c34", anchor="w",
             )
             cat_label.pack(side="left", padx=(8, 0))
+
+        self._bind_context_menu_recursive(row, mod)
+
+    def _mod_display_name(self, mod) -> str:
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "mod_name_overrides", {}) or {})
+        custom = overrides.get(mod.original_name, "").strip()
+        if custom:
+            return custom
+        return mod.original_name
+
+    def _has_custom_mod_name(self, mod) -> bool:
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "mod_name_overrides", {}) or {})
+        return bool(overrides.get(mod.original_name, "").strip())
+
+    def _bind_context_menu_recursive(self, widget, mod):
+        try:
+            widget.bind("<Button-3>",
+                        lambda e, m=mod: self._show_mod_context_menu(e, m), add="+")
+        except Exception:
+            pass
+        try:
+            for child in widget.winfo_children():
+                self._bind_context_menu_recursive(child, mod)
+        except Exception:
+            pass
+
+    def _show_mod_context_menu(self, event, mod):
+        self._close_context_menu()
+        menu = ctk.CTkToplevel(self)
+        menu.withdraw()
+        menu.overrideredirect(True)
+        menu.attributes("-topmost", True)
+        menu.configure(fg_color="transparent")
+
+        frame = ctk.CTkFrame(
+            menu,
+            fg_color="#171a31",
+            border_width=1,
+            border_color="#2f3f6a",
+            corner_radius=8,
+        )
+        frame.pack(fill="both", expand=True)
+
+        self._add_context_item(
+            frame,
+            "Rename Mod...",
+            lambda m=mod: self._rename_mod(m),
+        )
+        if self._has_custom_mod_name(mod):
+            self._add_context_item(
+                frame,
+                "Reset Custom Name",
+                lambda m=mod: self._reset_single_custom_mod_name(m),
+            )
+
+        menu.update_idletasks()
+        menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
+        menu.deiconify()
+        try:
+            menu.focus_force()
+        except Exception:
+            pass
+        menu.bind("<FocusOut>", lambda _e: self._close_context_menu(), add="+")
+        menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
+        self._context_menu = menu
+        return "break"
+
+    def _add_context_item(self, parent, text: str, callback):
+        btn = ctk.CTkButton(
+            parent,
+            text=text,
+            anchor="w",
+            width=220,
+            height=30,
+            corner_radius=0,
+            fg_color="transparent",
+            hover_color="#24375f",
+            font=ctk.CTkFont(size=12),
+            command=lambda cb=callback: self._invoke_context_action(cb),
+        )
+        btn.pack(fill="x")
+
+    def _invoke_context_action(self, callback):
+        self._close_context_menu()
+        self.after(0, callback)
+
+    def _close_context_menu(self):
+        menu = self._context_menu
+        self._context_menu = None
+        if menu is None:
+            return
+        try:
+            menu.destroy()
+        except Exception:
+            pass
+
+    def _rename_mod(self, mod):
+        current_name = mod.original_name
+        default_display = self._mod_display_name(mod)
+        result = self._show_rename_mod_dialog(default_display)
+        if result is None:
+            return
+        new_name, rename_folder = result
+        cleaned = new_name.strip()
+        if not cleaned:
+            messagebox.showerror("Invalid Name", "Mod name cannot be empty.")
+            return
+        if any(ch in cleaned for ch in ('\\', '/', ':', '*', '?', '"', '<', '>', '|')):
+            messagebox.showerror(
+                "Invalid Name",
+                "Mod name contains characters that are not valid for a folder name.",
+            )
+            return
+        if cleaned in (".", ".."):
+            messagebox.showerror("Invalid Name", "Choose a different mod name.")
+            return
+
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "mod_name_overrides", {}) or {})
+
+        if rename_folder:
+            target = mod.path.parent / cleaned
+            if target.exists() and target != mod.path:
+                messagebox.showerror(
+                    "Rename Failed",
+                    f"A folder named '{cleaned}' already exists.",
+                )
+                return
+            try:
+                if target != mod.path:
+                    mod.path.rename(target)
+                overrides.pop(current_name, None)
+                settings.mod_name_overrides = overrides
+                self.app.config_manager.save(settings)
+                self.app.mod_manager.invalidate_cache()
+                self._loaded = False
+                self._refresh()
+                logger.info("Mods", f"Renamed folder: {current_name} -> {cleaned}")
+            except Exception as e:
+                logger.error("Mods", f"Rename folder failed: {e}")
+                messagebox.showerror("Error", f"Failed to rename mod folder: {e}")
+            return
+
+        if cleaned == current_name:
+            overrides.pop(current_name, None)
+        else:
+            overrides[current_name] = cleaned
+
+        settings.mod_name_overrides = overrides
+        self.app.config_manager.save(settings)
+        self._loaded = False
+        self._refresh()
+
+    def _show_rename_mod_dialog(self, initial_value: str):
+        result = {"value": None, "rename_folder": False}
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Rename Mod")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#0f1327")
+        try:
+            dialog.transient(self.winfo_toplevel())
+        except Exception:
+            pass
+        try:
+            dialog.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
+                             border_width=1, border_color="#304378")
+        shell.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            shell, text="Rename Mod", anchor="w",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).pack(fill="x", padx=14, pady=(12, 6))
+
+        ctk.CTkLabel(
+            shell,
+            text="Set a new mod name.\n"
+                 "Unchecked: rename in this app only.\n"
+                 "Checked: also rename the actual mod folder.",
+            anchor="w", justify="left",
+            font=ctk.CTkFont(size=12), text_color="#b9bfd8",
+        ).pack(fill="x", padx=14)
+
+        entry = ctk.CTkEntry(shell, height=32)
+        entry.pack(fill="x", padx=14, pady=(12, 8))
+        entry.insert(0, initial_value or "")
+        entry.select_range(0, "end")
+
+        rename_folder_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            shell,
+            text="Rename actual mod folder too",
+            variable=rename_folder_var,
+            font=ctk.CTkFont(size=12),
+        ).pack(anchor="w", padx=14, pady=(0, 12))
+
+        btn_row = ctk.CTkFrame(shell, fg_color="transparent")
+        btn_row.pack(fill="x", padx=14, pady=(0, 12))
+
+        def close_with(value=None):
+            result["value"] = value
+            result["rename_folder"] = bool(rename_folder_var.get())
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_row, text="Cancel", width=96, height=30,
+            fg_color="#2f3557", hover_color="#3f476f",
+            command=lambda: close_with(None),
+        ).pack(side="right")
+
+        ctk.CTkButton(
+            btn_row, text="Save", width=96, height=30,
+            fg_color="#1f538d", hover_color="#163b6a",
+            command=lambda: close_with(entry.get()),
+        ).pack(side="right", padx=(0, 8))
+
+        dialog.bind("<Escape>", lambda _e: close_with(None))
+        dialog.bind("<Return>", lambda _e: close_with(entry.get()))
+        self._center_dialog(dialog, width=460, height=270)
+
+        dialog.grab_set()
+        entry.focus_set()
+        self.wait_window(dialog)
+        if result["value"] is None:
+            return None
+        return result["value"], result["rename_folder"]
+
+    def _center_dialog(self, dialog, width: int, height: int):
+        try:
+            self.update_idletasks()
+            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
+            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
+        except Exception:
+            x, y = 200, 200
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _reset_single_custom_mod_name(self, mod):
+        settings = self.app.config_manager.settings
+        overrides = dict(getattr(settings, "mod_name_overrides", {}) or {})
+        if mod.original_name in overrides:
+            overrides.pop(mod.original_name, None)
+            settings.mod_name_overrides = overrides
+            self.app.config_manager.save(settings)
+            self._loaded = False
+            self._refresh()
 
     def _on_toggle(self, mod):
         try:

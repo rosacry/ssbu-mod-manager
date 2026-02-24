@@ -22,6 +22,12 @@ class ConfigManager:
                 raw_overrides = data.get("plugin_name_overrides", {})
                 if not isinstance(raw_overrides, dict):
                     raw_overrides = {}
+                raw_desc_overrides = data.get("plugin_description_overrides", {})
+                if not isinstance(raw_desc_overrides, dict):
+                    raw_desc_overrides = {}
+                raw_mod_overrides = data.get("mod_name_overrides", {})
+                if not isinstance(raw_mod_overrides, dict):
+                    raw_mod_overrides = {}
                 self.settings = AppSettings(
                     eden_sdmc_path=Path(data["eden_sdmc_path"]) if data.get("eden_sdmc_path") else None,
                     mods_path=Path(data["mods_path"]) if data.get("mods_path") else None,
@@ -40,6 +46,17 @@ class ConfigManager:
                     plugin_name_overrides={
                         str(k): str(v)
                         for k, v in raw_overrides.items()
+                        if str(v).strip()
+                    },
+                    plugin_description_overrides={
+                        str(k): str(v)
+                        for k, v in raw_desc_overrides.items()
+                        if str(v).strip()
+                    },
+                    show_plugin_descriptions=bool(data.get("show_plugin_descriptions", True)),
+                    mod_name_overrides={
+                        str(k): str(v)
+                        for k, v in raw_mod_overrides.items()
                         if str(v).strip()
                     },
                 )
@@ -76,6 +93,9 @@ class ConfigManager:
             "ui_scale": self.settings.ui_scale,
             "use_plugin_friendly_names": self.settings.use_plugin_friendly_names,
             "plugin_name_overrides": dict(self.settings.plugin_name_overrides or {}),
+            "plugin_description_overrides": dict(self.settings.plugin_description_overrides or {}),
+            "show_plugin_descriptions": bool(self.settings.show_plugin_descriptions),
+            "mod_name_overrides": dict(self.settings.mod_name_overrides or {}),
         }
 
         try:
