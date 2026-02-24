@@ -1,5 +1,6 @@
 """Main application class - wires all managers and UI together."""
 import customtkinter as ctk
+import re
 from pathlib import Path
 from tkinter import messagebox
 
@@ -266,10 +267,8 @@ class ModManagerApp(ctk.CTk):
         # Centre the window on screen BEFORE making it visible.  The
         # window was parked off-screen during init to avoid any flash.
         try:
-            screen_w = self.winfo_screenwidth()
-            screen_h = self.winfo_screenheight()
-            win_w = self.winfo_width()
-            win_h = self.winfo_height()
+            screen_w, screen_h = self._get_primary_screen_size()
+            win_w, win_h = self._get_current_geometry_size()
             x = max(0, (screen_w - win_w) // 2)
             y = max(0, (screen_h - win_h) // 2)
             self.geometry(f"{win_w}x{win_h}+{x}+{y}")
@@ -282,12 +281,21 @@ class ModManagerApp(ctk.CTk):
             try:
                 self.deiconify()
             except Exception:
-                self.attributes('-alpha', 1)
-        else:
-            self.attributes('-alpha', 1)
+                pass
+        # Always force normal + visible regardless of which hide strategy
+        # was used during startup.
+        try:
+            self.state("normal")
+        except Exception:
+            pass
+        try:
+            self.attributes('-alpha', 1.0)
+        except Exception:
+            pass
         # Avoid aggressive focus_force() during startup; it can trigger
         # unstable behavior on some Windows setups.
         self.after(10, self.lift)
+        self.after(120, lambda: self._ensure_window_visible(attempt=1))
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
 
         logger.info("App", "Application startup complete")
@@ -322,11 +330,7 @@ class ModManagerApp(ctk.CTk):
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
         # Get screen dimensions to cap window size
-        try:
-            screen_w = self.winfo_screenwidth()
-            screen_h = self.winfo_screenheight()
-        except Exception:
-            screen_w, screen_h = 1920, 1080
+        screen_w, screen_h = self._get_primary_screen_size()
 
         # Scale the base dimensions
         scaled_w = int(self._BASE_WIDTH * scale)
@@ -348,11 +352,7 @@ class ModManagerApp(ctk.CTk):
         self._current_scale = scale
         ctk.set_widget_scaling(scale)
         # Update minimum window size for new scale
-        try:
-            screen_w = self.winfo_screenwidth()
-            screen_h = self.winfo_screenheight()
-        except Exception:
-            screen_w, screen_h = 1920, 1080
+        screen_w, screen_h = self._get_primary_screen_size()
         min_w = min(int(self._MIN_WIDTH * scale), screen_w - 40)
         min_h = min(int(self._MIN_HEIGHT * scale), screen_h - 80)
         self.minsize(min_w, min_h)
@@ -550,6 +550,102 @@ class ModManagerApp(ctk.CTk):
         except tk.TclError:
             pass
         return "break"
+
+    # --- Startup window recovery ---------------------------------------------
+
+    def _get_primary_screen_size(self) -> tuple[int, int]:
+        """Return primary monitor dimensions (Windows) with Tk fallback."""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            # SM_CXSCREEN=0, SM_CYSCREEN=1 (primary monitor size)
+            w = int(user32.GetSystemMetrics(0))
+            h = int(user32.GetSystemMetrics(1))
+            if w > 200 and h > 200:
+                return w, h
+        except Exception:
+            pass
+        try:
+            return int(self.winfo_screenwidth()), int(self.winfo_screenheight())
+        except Exception:
+            return 1920, 1080
+
+    def _get_current_geometry_size(self) -> tuple[int, int]:
+        """Best-effort read of current geometry width/height."""
+        try:
+            g = self.geometry()
+            m = re.match(r"(\d+)x(\d+)", g)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+        except Exception:
+            pass
+        try:
+            w = int(self.winfo_width())
+            h = int(self.winfo_height())
+            if w > 50 and h > 50:
+                return w, h
+        except Exception:
+            pass
+        # Fallback to expected scaled base size
+        scale = getattr(self, "_current_scale", 1.0)
+        sw, sh = self._get_primary_screen_size()
+        w = min(int(self._BASE_WIDTH * scale), sw - 40)
+        h = min(int(self._BASE_HEIGHT * scale), sh - 80)
+        return max(600, w), max(450, h)
+
+    def _ensure_window_visible(self, attempt: int = 1):
+        """Recover from startup cases where the window ends up hidden/minimized."""
+        if self._shutting_down:
+            return
+        try:
+            state = self.wm_state()
+        except Exception:
+            state = "unknown"
+        try:
+            mapped = bool(self.winfo_ismapped())
+        except Exception:
+            mapped = False
+        try:
+            viewable = bool(self.winfo_viewable())
+        except Exception:
+            viewable = mapped
+
+        needs_recover = (state in ("withdrawn", "iconic")) or (not mapped) or (not viewable)
+        if needs_recover:
+            try:
+                self.deiconify()
+            except Exception:
+                pass
+            try:
+                self.state("normal")
+            except Exception:
+                pass
+            try:
+                self.attributes("-alpha", 1.0)
+            except Exception:
+                pass
+            try:
+                sw, sh = self._get_primary_screen_size()
+                ww, wh = self._get_current_geometry_size()
+                x = max(0, (sw - ww) // 2)
+                y = max(0, (sh - wh) // 2)
+                self.geometry(f"{ww}x{wh}+{x}+{y}")
+            except Exception:
+                pass
+            try:
+                self.lift()
+            except Exception:
+                pass
+            logger.warn(
+                "App",
+                f"Startup visibility recovery attempt={attempt} state={state} mapped={int(mapped)} viewable={int(viewable)}",
+            )
+
+        if attempt < 12:
+            try:
+                self.after(250, lambda: self._ensure_window_visible(attempt + 1))
+            except Exception:
+                pass
 
     # --- Window events -------------------------------------------------------
 

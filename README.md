@@ -276,6 +276,11 @@ MIT
 
 ## Changelog
 
+### v3.1.4
+- **Fix: Hidden/invisible startup window** — Strengthened startup show logic to always force `deiconify + state(normal) + alpha(1.0)` after initialization and added a short visibility watchdog that retries recovery if the window ends up hidden/minimized
+- **Fix: Bad startup positioning on some multi-monitor setups** — Startup centering now uses primary monitor metrics instead of virtual desktop size, reducing bottom-right/off-screen placement
+- **Diagnostics: Rich heartbeat logging** — `crash.log` heartbeat now includes `state`, `mapped`, `viewable`, and geometry every second (up to 60s) to distinguish real crashes from alive-but-hidden windows
+
 ### v3.1.3
 - **Fix: Startup crash hardening** — Removed `pygame` import side-effects from app startup by making audio backend import fully lazy. SDL/pygame now initialize only when audio playback is actually used
 - **Fix: Early startup race reduction** — Delayed the Dashboard's first automatic heavy conflict scan so the UI can fully settle before background scanning begins

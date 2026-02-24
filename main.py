@@ -93,8 +93,27 @@ def main():
         # Startup heartbeat: helps diagnose silent native exits that
         # happen shortly after entering Tk mainloop.
         def _heartbeat(t=1):
-            _write_debug(f"[HEARTBEAT] mainloop alive at +{t}s")
-            if t < 15:
+            try:
+                hb_state = app.wm_state()
+            except Exception:
+                hb_state = "unknown"
+            try:
+                hb_mapped = int(bool(app.winfo_ismapped()))
+            except Exception:
+                hb_mapped = -1
+            try:
+                hb_viewable = int(bool(app.winfo_viewable()))
+            except Exception:
+                hb_viewable = -1
+            try:
+                hb_geom = app.geometry()
+            except Exception:
+                hb_geom = "n/a"
+            _write_debug(
+                f"[HEARTBEAT] +{t}s state={hb_state} mapped={hb_mapped} "
+                f"viewable={hb_viewable} geom={hb_geom}"
+            )
+            if t < 60:
                 try:
                     app.after(1000, lambda: _heartbeat(t + 1))
                 except Exception as hb_err:
