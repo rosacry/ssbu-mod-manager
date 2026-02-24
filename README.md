@@ -276,6 +276,12 @@ MIT
 
 ## Changelog
 
+### v3.1.13
+- **Fix: OPUS/LOPUS forced-mono mis-picks** - Candidate selection is now channel-aware and forced mono is only used as a strict last resort (when auto/stereo candidates fail), preventing global fallback to `lopus_1` paths on tracks that decode correctly in stereo
+- **Fix: channel masking during candidate scoring** - Removed forced stereo downmix (`-ac 2`) from ffmpeg decode-to-WAV paths so candidate analysis preserves real channel layouts instead of making mono fallbacks look artificially "clean"
+- **Fix: unsafe low-noise override behavior** - Low-noise override now only compares candidates with matching output channel counts, blocking cross-channel switches that could worsen audible artifacts
+- **Fix: stale decode cache after channel-selection changes** - Bumped decoder cache revision to `r9` so prior cached WAV outputs are invalidated automatically
+
 ### v3.1.12
 - **Fix: persistent distortion despite correct decode selection** - Added ffplay playback backend and made it the preferred path when available, bypassing SDL/pygame mixer output issues on systems where decoded audio still sounded distorted
 - **Feature: backend auto-selection** - Audio preview now uses `ffplay` if present; otherwise it falls back to pygame mixer

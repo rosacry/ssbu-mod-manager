@@ -59,7 +59,7 @@ def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
     try:
         result = subprocess.run(
             [ffmpeg, "-y", "-i", str(ogg_path), "-ar", "48000",
-             "-ac", "2", "-sample_fmt", "s16", str(wav_path)],
+             "-sample_fmt", "s16", str(wav_path)],
             capture_output=True, timeout=30,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -236,7 +236,7 @@ def _wav_noise_signature(wav_path: Path) -> tuple[float, float]:
         zcr = zero_crossings / max(1, n - 1)
 
         if channels != 2:
-            return zcr, 1.0
+            return zcr, 0.0
 
         left = view[0::2]
         right = view[1::2]
@@ -304,6 +304,43 @@ def _score_opus_candidate(base_score: float, duration_s: float,
     return score, bitrate_kbps
 
 
+def _select_best_candidate_index(candidates: list[dict]) -> int:
+    """Select the best decode candidate with conservative channel handling."""
+    if not candidates:
+        return -1
+
+    stereo_available = any(
+        int(c.get("out_channels", 0) or 0) >= 2 for c in candidates
+    )
+
+    def _adjusted_score(c: dict) -> float:
+        score = float(c.get("score", -999.0))
+        forced_channels = c.get("forced_channels")
+        out_channels = int(c.get("out_channels", 0) or 0)
+        if stereo_available and forced_channels == 1 and out_channels == 1:
+            # Prevent forced-mono fallback from winning when stereo decodes exist.
+            score -= 0.75
+        return score
+
+    best_idx = 0
+    best_rank = None
+    for i, c in enumerate(candidates):
+        out_channels = int(c.get("out_channels", 0) or 0)
+        corr_rank = float(c.get("corr", 0.0)) if out_channels >= 2 else -1.0
+        rank = (
+            _adjusted_score(c),
+            float(c.get("raw", -999.0)),
+            float(c.get("duration", 0.0)),
+            -float(c.get("zcr", 1.0)),
+            corr_rank,
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_idx = i
+
+    return best_idx
+
+
 def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
     """Optionally replace best candidate when it has a clear noise signature.
 
@@ -322,6 +359,10 @@ def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
     if not (best["zcr"] >= 0.28 and best["corr"] <= 0.62):
         return best_idx
 
+    best_out_channels = int(best.get("out_channels", 0) or 0)
+    if best_out_channels < 2:
+        return best_idx
+
     best_dur = best["duration"]
     best_br = best["bitrate"]
     best_raw = best["raw"]
@@ -330,6 +371,9 @@ def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
     alt_rank = None
     for i, c in enumerate(candidates):
         if i == best_idx:
+            continue
+        c_out_channels = int(c.get("out_channels", 0) or 0)
+        if c_out_channels != best_out_channels:
             continue
         if abs(c["duration"] - best_dur) > 0.4:
             continue
@@ -1683,7 +1727,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r8"
+_DECODER_CACHE_REV = "r9"
 
 
 def _get_cache_dir() -> Path:
@@ -1772,7 +1816,7 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
                 wav_out = cache_dir / f"{cache_key}.wav"
                 result = subprocess.run(
                     [ffmpeg, "-y", "-i", str(nus3audio_path),
-                     "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
+                     "-ar", "48000", "-sample_fmt", "s16",
                      str(wav_out)],
                     capture_output=True, timeout=30,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -1826,7 +1870,7 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
             wav_out = cache_dir / f"{cache_key}.wav"
             result = subprocess.run(
                 [ffmpeg, "-y", "-i", str(nus3audio_path),
-                 "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
+                 "-ar", "48000", "-sample_fmt", "s16",
                  str(wav_out)],
                 capture_output=True, timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -1880,11 +1924,11 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         lopus_magic = struct.unpack_from('<I', audio_data, 0)[0]
         if lopus_magic & 0x80000000:
             from src.utils.logger import logger
-            best_idx = -1
             candidates: list[dict] = []
 
-            # Try auto-detected channels first, then forced stereo/mono.
-            for try_channels in [None, 2, 1]:
+            # Prefer auto/stereo. Forced mono is only used as a last resort
+            # when no other candidate could be decoded.
+            for try_channels in [None, 2]:
                 ch_label = str(try_channels) if try_channels is not None else "auto"
                 try:
                     ogg_data = _lopus_to_ogg(audio_data, force_channels=try_channels)
@@ -1906,28 +1950,44 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                             "bitrate": bitrate_kbps,
                             "zcr": zcr,
                             "corr": corr,
+                            "out_channels": out_channels,
+                            "forced_channels": try_channels,
                             "wav": wav_path,
                         }
                         candidates.append(candidate)
-                        if best_idx < 0:
-                            best_idx = len(candidates) - 1
-                            continue
-                        best = candidates[best_idx]
-                        if score > best["score"] + 1e-6:
-                            best_idx = len(candidates) - 1
-                        elif abs(score - best["score"]) <= 0.05:
-                            if duration_s > best["duration"] + 0.5:
-                                best_idx = len(candidates) - 1
-                            elif abs(duration_s - best["duration"]) <= 0.5:
-                                # For near-tied candidates, prefer cleaner
-                                # waveform signatures over first-seen order.
-                                if zcr + 0.02 < best["zcr"]:
-                                    best_idx = len(candidates) - 1
-                                elif abs(zcr - best["zcr"]) <= 0.02 and corr > best["corr"] + 0.06:
-                                    best_idx = len(candidates) - 1
                 except Exception as e:
                     logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
 
+            if not candidates:
+                ch_label = "1"
+                try:
+                    ogg_data = _lopus_to_ogg(audio_data, force_channels=1)
+                    ogg_path = cache_dir / f"{cache_key}_lopus_{ch_label}.ogg"
+                    ogg_path.write_bytes(ogg_data)
+                    wav_path = _convert_ogg_opus_to_wav(ogg_path)
+                    if wav_path and wav_path.exists():
+                        raw_score, out_channels = _score_wav_quality(wav_path)
+                        duration_s = _wav_duration_seconds(wav_path)
+                        score, bitrate_kbps = _score_opus_candidate(
+                            raw_score, duration_s, len(audio_data)
+                        )
+                        zcr, corr = _wav_noise_signature(wav_path)
+                        candidates.append({
+                            "label": f"{ch_label}/{out_channels}ch",
+                            "score": score,
+                            "raw": raw_score,
+                            "duration": duration_s,
+                            "bitrate": bitrate_kbps,
+                            "zcr": zcr,
+                            "corr": corr,
+                            "out_channels": out_channels,
+                            "forced_channels": 1,
+                            "wav": wav_path,
+                        })
+                except Exception as e:
+                    logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
+
+            best_idx = _select_best_candidate_index(candidates)
             if best_idx >= 0 and candidates:
                 chosen_idx = _pick_low_noise_override(candidates, best_idx)
                 if chosen_idx != best_idx:
@@ -2015,11 +2075,10 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
     # OPUS raw container
     if audio_data[:4] == b'OPUS':
         from src.utils.logger import logger
-        best_idx = -1
         candidates: list[dict] = []
 
-        def _capture_best(ogg_data: bytes, label: str) -> None:
-            nonlocal best_idx
+        def _capture_best(ogg_data: bytes, label: str,
+                          forced_channels: Optional[int] = None) -> None:
             ogg_path = cache_dir / f"{cache_key}_{label}.ogg"
             ogg_path.write_bytes(ogg_data)
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
@@ -2038,25 +2097,11 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     "bitrate": bitrate_kbps,
                     "zcr": zcr,
                     "corr": corr,
+                    "out_channels": out_channels,
+                    "forced_channels": forced_channels,
                     "wav": wav_path,
                 }
                 candidates.append(candidate)
-                if best_idx < 0:
-                    best_idx = len(candidates) - 1
-                    return
-                best = candidates[best_idx]
-                if score > best["score"] + 1e-6:
-                    best_idx = len(candidates) - 1
-                elif abs(score - best["score"]) <= 0.05:
-                    if duration_s > best["duration"] + 0.5:
-                        best_idx = len(candidates) - 1
-                    elif abs(duration_s - best["duration"]) <= 0.5:
-                        # For near-tied candidates, prefer cleaner
-                        # waveform signatures over first-seen order.
-                        if zcr + 0.02 < best["zcr"]:
-                            best_idx = len(candidates) - 1
-                        elif abs(zcr - best["zcr"]) <= 0.02 and corr > best["corr"] + 0.06:
-                            best_idx = len(candidates) - 1
 
         # Main OPUS container path.
         try:
@@ -2064,18 +2109,39 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         except Exception as e:
             logger.debug("NUS3AUDIO", f"OPUS container conversion: {e}")
 
-        # Fallback: try interpreting payload offsets as LOPUS and vary channels.
-        for try_ch in [None, 2, 1]:
+        # Fallback: try interpreting payload offsets as LOPUS. Keep mono as
+        # a strict last resort only.
+        for try_ch in [None, 2]:
             ch_label = str(try_ch) if try_ch is not None else "auto"
             for payload_off in (4, 0x20, 0x30, 0x40):
                 if len(audio_data) <= payload_off + 8:
                     continue
                 try:
                     ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=try_ch)
-                    _capture_best(ogg_data, f"opus_lopus_{ch_label}_off{payload_off}")
+                    _capture_best(
+                        ogg_data,
+                        f"opus_lopus_{ch_label}_off{payload_off}",
+                        forced_channels=try_ch,
+                    )
                 except Exception:
                     pass
 
+        if not candidates:
+            ch_label = "1"
+            for payload_off in (4, 0x20, 0x30, 0x40):
+                if len(audio_data) <= payload_off + 8:
+                    continue
+                try:
+                    ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=1)
+                    _capture_best(
+                        ogg_data,
+                        f"opus_lopus_{ch_label}_off{payload_off}",
+                        forced_channels=1,
+                    )
+                except Exception:
+                    pass
+
+        best_idx = _select_best_candidate_index(candidates)
         if best_idx >= 0 and candidates:
             chosen_idx = _pick_low_noise_override(candidates, best_idx)
             if chosen_idx != best_idx:
@@ -2147,7 +2213,7 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
             wav_out = cache_dir / f"{cache_key}.wav"
             result = subprocess.run(
                 [ffmpeg, "-y", "-i", str(raw_path), "-ar", "48000",
-                 "-ac", "2", "-sample_fmt", "s16", str(wav_out)],
+                 "-sample_fmt", "s16", str(wav_out)],
                 capture_output=True, timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
