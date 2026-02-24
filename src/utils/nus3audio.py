@@ -1386,6 +1386,35 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
     while pos + slot_size <= len(data):
         frames.append(data[pos:pos + slot_size])
         pos += slot_size
+    if not frames:
+        return frames
+
+    # Many SSBU custom CBR LOPUS tracks append an 8-byte trailer to each
+    # slot where the first 4 bytes are a BE payload length (commonly slot-8).
+    # Passing trailer bytes into Opus decoding causes global crunchy distortion.
+    # Detect this pattern conservatively and trim per-frame payloads.
+    trailer_lengths: list[int] = []
+    probe_n = min(80, len(frames))
+    for fr in frames[:probe_n]:
+        if len(fr) < 12:
+            continue
+        declared = struct.unpack_from('>I', fr, len(fr) - 8)[0]
+        if 1 <= declared <= slot_size - 8:
+            trailer_lengths.append(declared)
+
+    if trailer_lengths:
+        from collections import Counter
+        mode_len, mode_count = Counter(trailer_lengths).most_common(1)[0]
+        # Require a strong majority before trimming to avoid false positives.
+        if mode_count >= max(8, int(probe_n * 0.7)):
+            trimmed: list[bytes] = []
+            for fr in frames:
+                declared = struct.unpack_from('>I', fr, len(fr) - 8)[0] if len(fr) >= 12 else 0
+                pkt_len = declared if 1 <= declared <= slot_size - 8 else mode_len
+                trimmed.append(fr[:pkt_len])
+            if _validate_opus_frames(trimmed):
+                return trimmed
+
     return frames
 
 
@@ -1727,7 +1756,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r9"
+_DECODER_CACHE_REV = "r10"
 
 
 def _get_cache_dir() -> Path:

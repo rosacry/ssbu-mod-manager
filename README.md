@@ -276,6 +276,11 @@ MIT
 
 ## Changelog
 
+### v3.1.14
+- **Fix: root-cause OPUS/LOPUS global distortion** - Corrected CBR frame extraction for SSBU custom tracks that store an 8-byte per-slot trailer; decoder now strips trailer metadata before Opus decode instead of feeding those bytes as audio payload
+- **Diagnostics: improved waveform quality after trailer trim** - On previously problematic tracks, candidate metrics shifted from noisy signatures (high `zcr`, weak stereo correlation) to clean signatures (lower `zcr`, stronger correlation) with identical durations/bitrates
+- **Fix: stale decode cache after extraction fix** - Bumped decoder cache revision to `r10` so old distorted cached WAV outputs are invalidated automatically
+
 ### v3.1.13
 - **Fix: OPUS/LOPUS forced-mono mis-picks** - Candidate selection is now channel-aware and forced mono is only used as a strict last resort (when auto/stereo candidates fail), preventing global fallback to `lopus_1` paths on tracks that decode correctly in stereo
 - **Fix: channel masking during candidate scoring** - Removed forced stereo downmix (`-ac 2`) from ffmpeg decode-to-WAV paths so candidate analysis preserves real channel layouts instead of making mono fallbacks look artificially "clean"
