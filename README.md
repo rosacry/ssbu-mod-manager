@@ -9,6 +9,9 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
 - Mod management with search, status filter, category grouping, and bulk enable/disable.
 - Plugin management with required-plugin safety checks, optional plugin-name display, custom right-click plugin name/description overrides, and description visibility toggle.
 - Right-click mod renaming with app-only alias support or optional on-disk folder rename.
+- One-click folder import on Mods/Plugins pages with automatic path mapping:
+  - Mods: unwraps common extra wrapper folders before install.
+  - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
 - Music page with stage playlists, preview playback, and assignment export.
 - Conflict detection/resolution (XMSBT merge flow + locale MSBT fixes).
@@ -64,6 +67,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Mods and Plugins now share consistent wheel behavior.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.
+- Conflicts page initial state and empty states are centered in-view to keep the primary action visible.
 
 ## Repository Layout
 

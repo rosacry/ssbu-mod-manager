@@ -1,9 +1,11 @@
 """Plugins management page - compact rows with accent bars."""
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
+from pathlib import Path
 from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
+from src.core.content_importer import import_plugin_package
 from src.utils.logger import logger
 
 
@@ -34,6 +36,14 @@ class PluginsPage(BasePage):
                                  fg_color="#555555", hover_color="#444444",
                                  corner_radius=8, height=34)
         open_btn.pack(side="right", padx=(5, 0))
+
+        import_btn = ctk.CTkButton(
+            header_frame, text="Import", width=100,
+            command=self._import_plugin_folder,
+            fg_color="#245e8a", hover_color="#194664",
+            corner_radius=8, height=34,
+        )
+        import_btn.pack(side="right", padx=(5, 0))
 
         disable_all_btn = ctk.CTkButton(header_frame, text="Disable All", width=100,
                                         command=self._disable_all,
@@ -295,6 +305,47 @@ class PluginsPage(BasePage):
         if settings.plugins_path and settings.plugins_path.exists():
             open_folder(settings.plugins_path)
 
+    def _import_plugin_folder(self):
+        settings = self.app.config_manager.settings
+        if not settings.plugins_path:
+            messagebox.showerror("Import Failed", "Plugins path is not configured in Settings.")
+            return
+        if not settings.eden_sdmc_path:
+            messagebox.showerror("Import Failed", "SDMC path is not configured in Settings.")
+            return
+
+        folder = filedialog.askdirectory(title="Select Plugin Folder to Import")
+        if not folder:
+            return
+
+        try:
+            summary = import_plugin_package(
+                Path(folder),
+                settings.eden_sdmc_path,
+                settings.plugins_path,
+            )
+            logger.info(
+                "Plugins",
+                f"Imported plugin package: {summary.files_copied} file(s), "
+                f"{summary.plugin_files} plugin binary file(s), {summary.replaced_paths} replaced path(s)",
+            )
+            lines = [
+                f"Copied {summary.files_copied} file(s).",
+                f"Imported/updated {summary.plugin_files} plugin binary file(s).",
+            ]
+            if summary.replaced_paths:
+                lines.append(f"Replaced {summary.replaced_paths} existing path(s).")
+            if summary.warnings:
+                lines.append("")
+                lines.extend(summary.warnings[:5])
+                if len(summary.warnings) > 5:
+                    lines.append(f"...and {len(summary.warnings) - 5} more warning(s).")
+            messagebox.showinfo("Import Complete", "\n".join(lines))
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Plugins", f"Import failed: {e}")
+            messagebox.showerror("Import Failed", str(e))
+
     def _toggle_friendly_names(self):
         settings = self.app.config_manager.settings
         settings.use_plugin_friendly_names = self._friendly_names_var.get()
@@ -367,49 +418,51 @@ class PluginsPage(BasePage):
             return None
         self._close_context_menu()
 
-        menu = ctk.CTkToplevel(self)
-        menu.withdraw()
-        menu.overrideredirect(True)
-        menu.attributes("-topmost", True)
-        menu.configure(fg_color="#101427")
-
-        frame = ctk.CTkFrame(
-            menu,
+        menu = ctk.CTkFrame(
+            self,
             fg_color="#171a31",
             border_width=1,
             border_color="#2f3f6a",
             corner_radius=8,
         )
-        frame.pack(fill="both", expand=True)
 
         self._add_context_item(
-            frame,
+            menu,
             "Rename Plugin Name",
             lambda p=plugin: self._rename_plugin_title(p),
         )
         self._add_context_item(
-            frame,
+            menu,
             "Rename Plugin Description",
             lambda p=plugin: self._rename_plugin_description(p),
         )
 
         if self._has_custom_plugin_name(plugin):
             self._add_context_item(
-                frame,
+                menu,
                 "Reset Plugin Name",
                 lambda p=plugin: self._reset_single_custom_name(p),
             )
 
         if self._has_custom_plugin_description(plugin):
             self._add_context_item(
-                frame,
+                menu,
                 "Reset Plugin Description",
                 lambda p=plugin: self._reset_single_custom_description(p),
             )
 
         menu.update_idletasks()
-        menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
-        menu.deiconify()
+        try:
+            local_x = (event.x_root - self.winfo_rootx()) + 4
+            local_y = (event.y_root - self.winfo_rooty()) + 2
+            max_x = max(6, self.winfo_width() - menu.winfo_reqwidth() - 6)
+            max_y = max(6, self.winfo_height() - menu.winfo_reqheight() - 6)
+            local_x = min(max(6, local_x), max_x)
+            local_y = min(max(6, local_y), max_y)
+        except Exception:
+            local_x, local_y = 12, 12
+
+        menu.place(x=local_x, y=local_y)
         menu.lift()
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
         self._context_menu = menu
@@ -462,6 +515,10 @@ class PluginsPage(BasePage):
         self._context_menu = None
         if menu is None:
             return
+        try:
+            menu.place_forget()
+        except Exception:
+            pass
         try:
             menu.destroy()
         except Exception:
@@ -521,32 +578,48 @@ class PluginsPage(BasePage):
 
     def _show_text_entry_dialog(self, title: str, subtitle: str, initial_value: str):
         result = {"value": None}
-        dialog = ctk.CTkToplevel(self)
-        dialog.withdraw()
-        dialog.title(title)
-        dialog.resizable(False, False)
-        dialog.configure(fg_color="#0f1327")
-        try:
-            dialog.transient(self.winfo_toplevel())
-        except Exception:
-            pass
-        try:
-            dialog.attributes("-topmost", True)
-        except Exception:
-            pass
+        done = tk.BooleanVar(value=False)
 
-        shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
-                             border_width=1, border_color="#304378")
-        shell.pack(fill="both", expand=True, padx=10, pady=10)
+        overlay = ctk.CTkFrame(self, fg_color="#0a0f22", corner_radius=0)
+        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        overlay.lift()
+
+        shell = ctk.CTkFrame(
+            overlay,
+            fg_color="#151b36",
+            corner_radius=10,
+            border_width=1,
+            border_color="#304378",
+        )
+
+        def _place_shell(_event=None):
+            try:
+                overlay.update_idletasks()
+                width = min(560, max(460, overlay.winfo_width() - 50))
+                height = 290
+                x = max(20, (overlay.winfo_width() - width) // 2)
+                y = max(20, (overlay.winfo_height() - height) // 2)
+                shell.place(x=x, y=y, width=width, height=height)
+            except Exception:
+                shell.place(x=60, y=60, width=500, height=290)
+
+        overlay.bind("<Configure>", _place_shell, add="+")
+        _place_shell()
 
         ctk.CTkLabel(
-            shell, text=title, anchor="w",
+            shell,
+            text=title,
+            anchor="w",
             font=ctk.CTkFont(size=16, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
         ctk.CTkLabel(
-            shell, text=subtitle, anchor="w", justify="left",
-            font=ctk.CTkFont(size=12), text_color="#b9bfd8",
+            shell,
+            text=subtitle,
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=12),
+            text_color="#b9bfd8",
         ).pack(fill="x", padx=14)
 
         entry = ctk.CTkEntry(shell, height=32)
@@ -558,44 +631,49 @@ class PluginsPage(BasePage):
         btn_row.pack(fill="x", padx=14, pady=(0, 12))
 
         def close_with(value=None):
+            if done.get():
+                return
             result["value"] = value
-            try:
-                dialog.grab_release()
-            except Exception:
-                pass
-            dialog.destroy()
+            done.set(True)
 
         ctk.CTkButton(
-            btn_row, text="Cancel", width=96, height=30,
-            fg_color="#2f3557", hover_color="#3f476f",
+            btn_row,
+            text="Cancel",
+            width=96,
+            height=30,
+            fg_color="#2f3557",
+            hover_color="#3f476f",
             command=lambda: close_with(None),
         ).pack(side="right")
 
         ctk.CTkButton(
-            btn_row, text="Save", width=96, height=30,
-            fg_color="#1f538d", hover_color="#163b6a",
+            btn_row,
+            text="Save",
+            width=96,
+            height=30,
+            fg_color="#1f538d",
+            hover_color="#163b6a",
             command=lambda: close_with(entry.get()),
         ).pack(side="right", padx=(0, 8))
 
-        dialog.bind("<Escape>", lambda _e: close_with(None))
-        dialog.bind("<Return>", lambda _e: close_with(entry.get()))
-        self._center_dialog(dialog, width=500, height=290)
+        overlay.bind("<Escape>", lambda _e: close_with(None), add="+")
+        overlay.bind("<Return>", lambda _e: close_with(entry.get()), add="+")
 
-        dialog.deiconify()
-        dialog.lift()
-        dialog.grab_set()
-        entry.focus_set()
-        self.wait_window(dialog)
-        return result["value"]
-
-    def _center_dialog(self, dialog, width: int, height: int):
         try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
-            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
+            overlay.grab_set()
         except Exception:
-            x, y = 200, 200
-        dialog.geometry(f"{width}x{height}+{x}+{y}")
+            pass
+        entry.focus_set()
+        self.wait_variable(done)
+        try:
+            overlay.grab_release()
+        except Exception:
+            pass
+        try:
+            overlay.destroy()
+        except Exception:
+            pass
+        return result["value"]
 
     def _reset_single_custom_name(self, plugin):
         settings = self.app.config_manager.settings

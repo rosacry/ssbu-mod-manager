@@ -62,6 +62,7 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._scan_generation = 0
         self._initial_prompt_frame = None
+        self._initial_prompt_spacer = None
         self._initial_prompt_visible = False
         self._build_ui()
 
@@ -126,13 +127,8 @@ class ConflictsPage(BasePage):
             corner_radius=8, height=34,
         )
 
-        self.content_host = ctk.CTkFrame(self, fg_color="transparent")
-        self.content_host.pack(fill="both", expand=True, padx=30, pady=(0, 10))
-
-        self.empty_state_host = ctk.CTkFrame(self.content_host, fg_color="transparent")
-
-        self.conflict_list = ctk.CTkScrollableFrame(self.content_host, fg_color="transparent")
-        self.conflict_list.pack(fill="both", expand=True)
+        self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
         self.bind("<Configure>", self._on_page_configure, add="+")
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
@@ -157,14 +153,16 @@ class ConflictsPage(BasePage):
             text_color="#999999")
         self.auto_resolve_btn.pack_forget()
         self.fix_locale_btn.pack_forget()
-        self._show_empty_state_host()
-        for w in self.empty_state_host.winfo_children():
-            w.destroy()
         for w in self.conflict_list.winfo_children():
             w.destroy()
 
-        self._initial_prompt_frame = ctk.CTkFrame(self.empty_state_host, fg_color="transparent")
-        self._initial_prompt_frame.pack(expand=True)
+        self._initial_prompt_spacer = ctk.CTkFrame(
+            self.conflict_list, fg_color="transparent", height=24
+        )
+        self._initial_prompt_spacer.pack(fill="x")
+
+        self._initial_prompt_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
+        self._initial_prompt_frame.pack(fill="x", pady=(0, 24))
         ctk.CTkLabel(self._initial_prompt_frame, text="No scan performed yet",
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#cccccc").pack(pady=(0, 8))
@@ -184,6 +182,7 @@ class ConflictsPage(BasePage):
         scan_prompt_btn.pack()
 
         self._initial_prompt_visible = True
+        self.after(20, self._reposition_initial_prompt)
 
     def _hide_initial_prompt(self):
         self._initial_prompt_visible = False
@@ -194,28 +193,19 @@ class ConflictsPage(BasePage):
                 pass
             self._initial_prompt_frame = None
         try:
-            for w in self.empty_state_host.winfo_children():
-                w.destroy()
+            if self._initial_prompt_spacer is not None:
+                self._initial_prompt_spacer.destroy()
         except Exception:
             pass
+        self._initial_prompt_spacer = None
 
     def _show_empty_state_host(self):
-        try:
-            if self.conflict_list.winfo_manager():
-                self.conflict_list.pack_forget()
-            if not self.empty_state_host.winfo_manager():
-                self.empty_state_host.pack(fill="both", expand=True)
-        except Exception:
-            pass
+        # Kept for backward compatibility with older call sites.
+        return
 
     def _show_conflict_list(self):
-        try:
-            if self.empty_state_host.winfo_manager():
-                self.empty_state_host.pack_forget()
-            if not self.conflict_list.winfo_manager():
-                self.conflict_list.pack(fill="both", expand=True)
-        except Exception:
-            pass
+        # Kept for backward compatibility with older call sites.
+        return
 
     def _set_rescan_visible(self, visible: bool):
         try:
@@ -235,7 +225,8 @@ class ConflictsPage(BasePage):
             pass
 
     def _on_page_configure(self, _event=None):
-        return
+        if self._initial_prompt_visible:
+            self.after(0, self._reposition_initial_prompt)
 
     def _reposition_initial_prompt(self):
         """Keep the initial prompt centered in the visible scroll viewport."""
@@ -245,11 +236,11 @@ class ConflictsPage(BasePage):
             frame = self._initial_prompt_frame
             if not frame.winfo_exists():
                 return
-            self._center_content_in_view(frame)
+            self._center_content_in_view(frame, spacer=self._initial_prompt_spacer, bias=-48)
         except Exception:
             pass
 
-    def _center_content_in_view(self, frame):
+    def _center_content_in_view(self, frame, spacer=None, bias: int = 0):
         """Center an empty-state block in the visible viewport."""
         try:
             canvas = getattr(self.conflict_list, "_parent_canvas", None)
@@ -259,8 +250,11 @@ class ConflictsPage(BasePage):
             frame.update_idletasks()
             visible_h = max(0, canvas.winfo_height())
             frame_h = frame.winfo_reqheight()
-            top_pad = max(24, (visible_h - frame_h) // 2)
-            frame.pack_configure(pady=(top_pad, 24))
+            top_pad = max(20, ((visible_h - frame_h) // 2) + bias)
+            if spacer is not None and spacer.winfo_exists():
+                spacer.configure(height=top_pad)
+            else:
+                frame.pack_configure(pady=(top_pad, 24))
             canvas.yview_moveto(0.0)
         except Exception:
             pass

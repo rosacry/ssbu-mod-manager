@@ -1,10 +1,12 @@
 """Mods management page with category grouping, virtual scrolling, and undo/redo."""
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 from collections import defaultdict
+from pathlib import Path
 from src.ui.base_page import BasePage
 from src.models.mod import Mod, ModStatus
+from src.core.content_importer import import_mod_package
 from src.utils.logger import logger
 from src.utils.action_history import action_history, Action
 
@@ -70,6 +72,14 @@ class ModsPage(BasePage):
                                  fg_color="#555555", hover_color="#444444",
                                  corner_radius=8, height=34)
         open_btn.pack(side="right", padx=(5, 0))
+
+        import_btn = ctk.CTkButton(
+            header_frame, text="Import", width=100,
+            command=self._import_mod_folder,
+            fg_color="#245e8a", hover_color="#194664",
+            corner_radius=8, height=34,
+        )
+        import_btn.pack(side="right", padx=(5, 0))
 
         disable_all_btn = ctk.CTkButton(header_frame, text="Disable All", width=100,
                                         command=self._disable_all,
@@ -788,3 +798,40 @@ class ModsPage(BasePage):
         settings = self.app.config_manager.settings
         if settings.mods_path and settings.mods_path.exists():
             open_folder(settings.mods_path)
+
+    def _import_mod_folder(self):
+        settings = self.app.config_manager.settings
+        mods_path = settings.mods_path
+        if not mods_path:
+            messagebox.showerror("Import Failed", "Mods path is not configured in Settings.")
+            return
+
+        folder = filedialog.askdirectory(title="Select Mod Folder to Import")
+        if not folder:
+            return
+
+        try:
+            summary = import_mod_package(Path(folder), mods_path)
+            logger.info(
+                "Mods",
+                f"Imported {summary.items_imported} mod(s), "
+                f"{summary.files_copied} file(s), {summary.replaced_paths} replaced path(s)",
+            )
+            lines = [
+                f"Imported {summary.items_imported} mod(s).",
+                f"Copied {summary.files_copied} file(s).",
+            ]
+            if summary.flattened_mods:
+                lines.append(f"Auto-flattened {summary.flattened_mods} nested mod folder(s).")
+            if summary.replaced_paths:
+                lines.append(f"Replaced {summary.replaced_paths} existing mod folder(s).")
+            if summary.warnings:
+                lines.append("")
+                lines.extend(summary.warnings[:5])
+                if len(summary.warnings) > 5:
+                    lines.append(f"...and {len(summary.warnings) - 5} more warning(s).")
+            messagebox.showinfo("Import Complete", "\n".join(lines))
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Mods", f"Import failed: {e}")
+            messagebox.showerror("Import Failed", str(e))
