@@ -39,10 +39,10 @@ from src.ui.pages.online_compat_page import OnlineCompatPage
 
 class ModManagerApp(ctk.CTk):
     # Base dimensions (at 100% scale)
-    _BASE_WIDTH = 1400
-    _BASE_HEIGHT = 900
-    _MIN_WIDTH = 1050
-    _MIN_HEIGHT = 650
+    _BASE_WIDTH = 1480
+    _BASE_HEIGHT = 940
+    _MIN_WIDTH = 1100
+    _MIN_HEIGHT = 680
 
     def __init__(self):
         import sys as _sys
@@ -84,6 +84,7 @@ class ModManagerApp(ctk.CTk):
         self._last_height = 0
         self._is_maximized = False
         self._zoom_indicator_id = None
+        self._scroll_debug_keys = set()
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -422,9 +423,10 @@ class ModManagerApp(ctk.CTk):
 
     # --- Global fast scroll --------------------------------------------------
 
-    _SCROLL_SPEED = 5                  # Listbox/Text scroll multiplier
-    _CANVAS_SCROLL_SPEED = 18          # Default CTkScrollableFrame canvas speed
-    _LONGFORM_CANVAS_SCROLL_SPEED = 34  # Online Guide/Migration boosted speed
+    _SCROLL_SPEED = 5                   # Listbox/Text scroll multiplier
+    _CANVAS_SCROLL_SPEED = 18           # Default CTkScrollableFrame canvas speed
+    _LONGFORM_SCROLL_SPEED = 16         # Long-form text/list widgets
+    _LONGFORM_CANVAS_SCROLL_SPEED = 56  # Online Guide/Migration canvas boost
 
     @staticmethod
     def _canvas_can_scroll_vertically(canvas) -> bool:
@@ -523,7 +525,10 @@ class ModManagerApp(ctk.CTk):
         # Walk up the hierarchy looking for a scrollable widget
         w = widget
         scrollable = None
+        in_longform_page = False
         while w is not None:
+            if w.__class__.__name__ in ("OnlineCompatPage", "MigrationPage"):
+                in_longform_page = True
             if isinstance(w, tk.Listbox):
                 scrollable = w
                 break
@@ -558,16 +563,25 @@ class ModManagerApp(ctk.CTk):
                 return "break"
             direction = -1 if event.delta > 0 else 1
             ticks = max(1, int(round(abs(event.delta) / 120)))
+            page_id = None
+            try:
+                page_id = self.main_window.current_page
+            except Exception:
+                pass
+            longform = in_longform_page or page_id in ("online_compat", "migration")
             if isinstance(scrollable, tk.Canvas):
                 speed = self._CANVAS_SCROLL_SPEED
-                try:
-                    page_id = self.main_window.current_page
-                except Exception:
-                    page_id = None
-                if page_id in ("online_compat", "migration"):
+                if longform:
                     speed = self._LONGFORM_CANVAS_SCROLL_SPEED
             else:
                 speed = self._SCROLL_SPEED
+                if longform:
+                    speed = self._LONGFORM_SCROLL_SPEED
+            if longform:
+                key = f"{page_id or 'unknown'}:{type(scrollable).__name__}:{speed}"
+                if key not in self._scroll_debug_keys:
+                    self._scroll_debug_keys.add(key)
+                    logger.debug("App", f"Long-form scroll boost active ({key})")
             delta = direction * speed * ticks
             scrollable.yview_scroll(delta, "units")
         except tk.TclError:

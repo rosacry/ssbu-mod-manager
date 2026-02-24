@@ -85,7 +85,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Smooth UI** — Resize debouncing, proper cleanup, and consistent dark theme
 - **Lazy Page Loading** — Pages are created on first navigation for fast startup
 - **Lazy Audio Init** — Pygame mixer initializes only when audio is first played, not at startup
-- **Fast Scrolling** — Accelerated global mouse-wheel handling across all scrollable widgets, with stronger canvas scrolling for long guide pages (Online Guide and Migration)
+- **Fast Scrolling** — Accelerated global mouse-wheel handling across all scrollable widgets, with deterministic long-form boosts on Online Guide and Migration (canvas + text/list widgets)
 - **Non-Blocking Audio** — Audio playback runs in a background thread so the UI never freezes during NUS3AUDIO conversion
 - **Global Save / Discard** — Save and Discard buttons right-aligned in the toolbar header (alongside Undo/Redo). Save is bright green when active, Discard is grey. Both buttons are visually shaded out when there's nothing to save. Ctrl+S to save
 - **Unsaved Changes Warning** — Prompts before closing the application if you have unsaved music or CSS changes
@@ -275,6 +275,13 @@ ssbu-mod-manager/
 MIT
 
 ## Changelog
+
+### v3.1.8
+- **Fix: OPUS distortion still selected as \"best\"** - Added a narrow low-noise override in OPUS/LOPUS candidate selection that only activates when the top candidate looks hissy (high zero-crossing + weak stereo correlation) and an alternate candidate has matching duration/bitrate with a clearly cleaner signature
+- **Diagnostics: richer OPUS/LOPUS candidate logs** - Candidate debug output now includes `zcr` and stereo correlation so distortion cases can be identified directly from `crash.log`
+- **Fix: stale decode cache after decoder-selection update** - Bumped decoder cache revision to `r6` so old cached WAV outputs are invalidated automatically
+- **Fix: Online Guide/Migration scrolling still feeling unchanged** - Long-form pages now use stronger wheel multipliers for both canvas and text/list widgets, with ancestry-based detection so boost still applies even when focus/event routing varies
+- **UI: larger default startup size** - Increased base startup geometry and minimum size slightly for a roomier first launch layout
 
 ### v3.1.7
 - **Fix: Audio regression rollback** - Reverted the aggressive stereo-coherence decode bias introduced in v3.1.6 that could over-select alternate OPUS/LOPUS paths and worsen distortion on some tracks

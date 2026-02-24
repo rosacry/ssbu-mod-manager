@@ -204,6 +204,58 @@ def _wav_duration_seconds(wav_path: Path) -> float:
         return 0.0
 
 
+def _wav_noise_signature(wav_path: Path) -> tuple[float, float]:
+    """Return quick noise-signature metrics as (zcr, stereo_corr)."""
+    try:
+        with open(wav_path, 'rb') as f:
+            header = f.read(44)
+            if len(header) < 44 or header[:4] != b'RIFF':
+                return 0.0, 1.0
+            channels = int(struct.unpack_from('<H', header, 22)[0]) if len(header) >= 24 else 2
+            pcm = f.read(160000)
+        if len(pcm) < 4000:
+            return 0.0, 1.0
+
+        import array
+        samples = array.array('h')
+        samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
+        if len(samples) < 200:
+            return 0.0, 1.0
+
+        view = samples[:min(len(samples), 12000)]
+        n = len(view)
+        if n < 200:
+            return 0.0, 1.0
+
+        zero_crossings = 0
+        for i in range(1, n):
+            a = view[i - 1]
+            b = view[i]
+            if (a < 0 <= b) or (a > 0 >= b):
+                zero_crossings += 1
+        zcr = zero_crossings / max(1, n - 1)
+
+        if channels != 2:
+            return zcr, 1.0
+
+        left = view[0::2]
+        right = view[1::2]
+        m = min(len(left), len(right), 6000)
+        if m < 8:
+            return zcr, 1.0
+        left = left[:m]
+        right = right[:m]
+        mean_l = sum(left) / m
+        mean_r = sum(right) / m
+        var_l = sum((x - mean_l) ** 2 for x in left) / m
+        var_r = sum((x - mean_r) ** 2 for x in right) / m
+        cov = sum((left[i] - mean_l) * (right[i] - mean_r) for i in range(m)) / m
+        corr = cov / ((var_l * var_r) ** 0.5 + 1e-9)
+        return zcr, corr
+    except Exception:
+        return 0.0, 1.0
+
+
 def _score_opus_candidate(base_score: float, duration_s: float,
                           encoded_size_bytes: int) -> tuple[float, float]:
     """Adjust raw PCM quality score using encoded-size plausibility.
@@ -250,6 +302,51 @@ def _score_opus_candidate(base_score: float, duration_s: float,
         score -= 1.0
 
     return score, bitrate_kbps
+
+
+def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
+    """Optionally replace best candidate when it has a clear noise signature.
+
+    This is intentionally narrow and only fires when:
+    - best candidate looks hissy/noisy (high zcr, weak stereo correlation), and
+    - another candidate has nearly identical timing/bitrate but much cleaner
+      signature and not dramatically worse raw score.
+    """
+    if best_idx < 0 or best_idx >= len(candidates):
+        return best_idx
+
+    best = candidates[best_idx]
+    if not (best["zcr"] >= 0.28 and best["corr"] <= 0.50):
+        return best_idx
+
+    best_dur = best["duration"]
+    best_br = best["bitrate"]
+    best_raw = best["raw"]
+
+    alt_idx = best_idx
+    alt_rank = None
+    for i, c in enumerate(candidates):
+        if i == best_idx:
+            continue
+        if abs(c["duration"] - best_dur) > 0.4:
+            continue
+        if abs(c["bitrate"] - best_br) > max(6.0, best_br * 0.08):
+            continue
+        if c["zcr"] > 0.12 or c["corr"] < 0.82:
+            continue
+        if c["raw"] < (best_raw - 0.8):
+            continue
+        rank = (
+            c["score"],
+            c["raw"],
+            -c["zcr"],
+            c["corr"],
+        )
+        if alt_rank is None or rank > alt_rank:
+            alt_rank = rank
+            alt_idx = i
+
+    return alt_idx
 
 
 def _build_crc_table():
@@ -1578,7 +1675,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r5"
+_DECODER_CACHE_REV = "r6"
 
 
 def _get_cache_dir() -> Path:
@@ -1738,12 +1835,8 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         lopus_magic = struct.unpack_from('<I', audio_data, 0)[0]
         if lopus_magic & 0x80000000:
             from src.utils.logger import logger
-            best_score = -1.0
-            best_duration = 0.0
-            best_bitrate = 0.0
-            best_wav: Optional[Path] = None
-            best_label = "unknown"
-            candidates: list[tuple[str, float, float, float, int]] = []
+            best_idx = -1
+            candidates: list[dict] = []
 
             # Try auto-detected channels first, then forced stereo/mono.
             for try_channels in [None, 2, 1]:
@@ -1759,28 +1852,57 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                         score, bitrate_kbps = _score_opus_candidate(
                             raw_score, duration_s, len(audio_data)
                         )
-                        candidates.append(
-                            (f"{ch_label}/{out_channels}ch", score, raw_score, duration_s, int(round(bitrate_kbps)))
-                        )
-                        if (score > best_score + 1e-6 or
-                                (abs(score - best_score) <= 0.05 and
-                                 duration_s > best_duration + 0.5)):
-                            best_score = score
-                            best_duration = duration_s
-                            best_bitrate = bitrate_kbps
-                            best_wav = wav_path
-                            best_label = f"{ch_label}/{out_channels}ch"
+                        zcr, corr = _wav_noise_signature(wav_path)
+                        candidate = {
+                            "label": f"{ch_label}/{out_channels}ch",
+                            "score": score,
+                            "raw": raw_score,
+                            "duration": duration_s,
+                            "bitrate": bitrate_kbps,
+                            "zcr": zcr,
+                            "corr": corr,
+                            "wav": wav_path,
+                        }
+                        candidates.append(candidate)
+                        if best_idx < 0:
+                            best_idx = len(candidates) - 1
+                            continue
+                        best = candidates[best_idx]
+                        if (score > best["score"] + 1e-6 or
+                                (abs(score - best["score"]) <= 0.05 and
+                                 duration_s > best["duration"] + 0.5)):
+                            best_idx = len(candidates) - 1
                 except Exception as e:
                     logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
 
-            if best_wav and best_wav.exists():
+            if best_idx >= 0 and candidates:
+                chosen_idx = _pick_low_noise_override(candidates, best_idx)
+                if chosen_idx != best_idx:
+                    noisy = candidates[best_idx]
+                    clean = candidates[chosen_idx]
+                    logger.info(
+                        "NUS3AUDIO",
+                        f"LOPUS override {noisy['label']} -> {clean['label']} "
+                        f"(zcr {noisy['zcr']:.3f}->{clean['zcr']:.3f}, "
+                        f"corr {noisy['corr']:.3f}->{clean['corr']:.3f})"
+                    )
+                best = candidates[chosen_idx]
+                best_wav = best["wav"]
+                best_label = best["label"]
+                best_score = best["score"]
+                best_duration = best["duration"]
+                best_bitrate = best["bitrate"]
+
+            if best_idx >= 0 and best_wav and best_wav.exists():
                 if candidates:
-                    top = sorted(candidates, key=lambda x: x[1], reverse=True)[:3]
+                    top = sorted(candidates, key=lambda x: x["score"], reverse=True)[:4]
                     logger.debug(
                         "NUS3AUDIO",
                         "LOPUS candidates: " + "; ".join(
-                            f"{lbl} adj={adj:.2f} raw={raw:.2f} dur={dur:.2f}s br={br}kbps"
-                            for lbl, adj, raw, dur, br in top
+                            f"{c['label']} adj={c['score']:.2f} raw={c['raw']:.2f} "
+                            f"dur={c['duration']:.2f}s br={int(round(c['bitrate']))}kbps "
+                            f"zcr={c['zcr']:.3f} corr={c['corr']:.3f}"
+                            for c in top
                         )
                     )
                 canonical = cache_dir / f"{cache_key}.wav"
@@ -1840,15 +1962,11 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
     # OPUS raw container
     if audio_data[:4] == b'OPUS':
         from src.utils.logger import logger
-        best_score = -1.0
-        best_duration = 0.0
-        best_bitrate = 0.0
-        best_wav: Optional[Path] = None
-        best_label = "unknown"
-        candidates: list[tuple[str, float, float, float, int]] = []
+        best_idx = -1
+        candidates: list[dict] = []
 
         def _capture_best(ogg_data: bytes, label: str) -> None:
-            nonlocal best_score, best_duration, best_bitrate, best_wav, best_label
+            nonlocal best_idx
             ogg_path = cache_dir / f"{cache_key}_{label}.ogg"
             ogg_path.write_bytes(ogg_data)
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
@@ -1858,17 +1976,26 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                 score, bitrate_kbps = _score_opus_candidate(
                     raw_score, duration_s, len(audio_data)
                 )
-                candidates.append(
-                    (f"{label}/{out_channels}ch", score, raw_score, duration_s, int(round(bitrate_kbps)))
-                )
-                if (score > best_score + 1e-6 or
-                        (abs(score - best_score) <= 0.05 and
-                         duration_s > best_duration + 0.5)):
-                    best_score = score
-                    best_duration = duration_s
-                    best_bitrate = bitrate_kbps
-                    best_wav = wav_path
-                    best_label = f"{label}/{out_channels}ch"
+                zcr, corr = _wav_noise_signature(wav_path)
+                candidate = {
+                    "label": f"{label}/{out_channels}ch",
+                    "score": score,
+                    "raw": raw_score,
+                    "duration": duration_s,
+                    "bitrate": bitrate_kbps,
+                    "zcr": zcr,
+                    "corr": corr,
+                    "wav": wav_path,
+                }
+                candidates.append(candidate)
+                if best_idx < 0:
+                    best_idx = len(candidates) - 1
+                    return
+                best = candidates[best_idx]
+                if (score > best["score"] + 1e-6 or
+                        (abs(score - best["score"]) <= 0.05 and
+                         duration_s > best["duration"] + 0.5)):
+                    best_idx = len(candidates) - 1
 
         # Main OPUS container path.
         try:
@@ -1888,14 +2015,36 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                 except Exception:
                     pass
 
+        if best_idx >= 0 and candidates:
+            chosen_idx = _pick_low_noise_override(candidates, best_idx)
+            if chosen_idx != best_idx:
+                noisy = candidates[best_idx]
+                clean = candidates[chosen_idx]
+                logger.info(
+                    "NUS3AUDIO",
+                    f"OPUS override {noisy['label']} -> {clean['label']} "
+                    f"(zcr {noisy['zcr']:.3f}->{clean['zcr']:.3f}, "
+                    f"corr {noisy['corr']:.3f}->{clean['corr']:.3f})"
+                )
+            best = candidates[chosen_idx]
+            best_wav = best["wav"]
+            best_label = best["label"]
+            best_score = best["score"]
+            best_duration = best["duration"]
+            best_bitrate = best["bitrate"]
+        else:
+            best_wav = None
+
         if best_wav and best_wav.exists():
             if candidates:
-                top = sorted(candidates, key=lambda x: x[1], reverse=True)[:5]
+                top = sorted(candidates, key=lambda x: x["score"], reverse=True)[:6]
                 logger.debug(
                     "NUS3AUDIO",
                     "OPUS candidates: " + "; ".join(
-                        f"{lbl} adj={adj:.2f} raw={raw:.2f} dur={dur:.2f}s br={br}kbps"
-                        for lbl, adj, raw, dur, br in top
+                        f"{c['label']} adj={c['score']:.2f} raw={c['raw']:.2f} "
+                        f"dur={c['duration']:.2f}s br={int(round(c['bitrate']))}kbps "
+                        f"zcr={c['zcr']:.3f} corr={c['corr']:.3f}"
+                        for c in top
                     )
                 )
             canonical = cache_dir / f"{cache_key}.wav"
