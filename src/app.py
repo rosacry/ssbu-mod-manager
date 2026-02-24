@@ -94,6 +94,13 @@ class ModManagerApp(ctk.CTk):
         # Set consistent dark background
         self.configure(fg_color="#0e0e1a")
 
+        # Patch CTkScrollbar drag behavior so grabbing the thumb doesn't
+        # jump/recenter to the cursor position on first movement.
+        try:
+            self._patch_ctk_scrollbar_drag_behavior()
+        except Exception as e:
+            logger.warn("App", f"Failed to patch CTk scrollbar drag behavior: {e}")
+
         # Set window icon
         try:
             from src.utils.resource_path import resource_path
@@ -238,6 +245,7 @@ class ModManagerApp(ctk.CTk):
         self.bind("<Control-KP_Add>", lambda e: (self._zoom_in(), "break")[-1])
         self.bind("<Control-KP_Subtract>", lambda e: (self._zoom_out(), "break")[-1])
         self.bind("<Control-KP_0>", lambda e: (self._zoom_reset(), "break")[-1])
+        self.bind("<Configure>", self._on_window_activity, add="+")
         self.bind_all("<ButtonPress-1>", lambda _e: self._set_left_button_down(True), add="+")
         self.bind_all("<ButtonRelease-1>", lambda _e: self._set_left_button_down(False), add="+")
 
@@ -407,7 +415,7 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(160, self._flush_pending_scale)
+        self._zoom_apply_after_id = self.after(180, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -503,6 +511,26 @@ class ModManagerApp(ctk.CTk):
         self._pointer_left_down = bool(pressed)
         if pressed:
             self._suppress_scroll_refresh_until = time.monotonic() + 0.35
+            # Drop pending refreshes before scrollbar dragging starts.
+            if self._scroll_refresh_after_id:
+                try:
+                    self.after_cancel(self._scroll_refresh_after_id)
+                except Exception:
+                    pass
+                self._scroll_refresh_after_id = None
+            self._scroll_refresh_widgets.clear()
+
+    def _on_window_activity(self, event):
+        """Throttle heavy redraw work during active resize/reflow."""
+        try:
+            if event.widget != self:
+                return
+            self._suppress_scroll_refresh_until = max(
+                self._suppress_scroll_refresh_until,
+                time.monotonic() + 0.12,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _widget_can_scroll_vertically(widget) -> bool:
@@ -538,6 +566,71 @@ class ModManagerApp(ctk.CTk):
             return True
         except Exception:
             return False
+
+    def _patch_ctk_scrollbar_drag_behavior(self):
+        """Make CTk scrollbar thumb dragging preserve click offset.
+
+        CustomTkinter's default behavior recenters the thumb under the mouse
+        on click, which feels like a sudden jump when dragging from the top
+        or bottom half of the thumb.
+        """
+        from customtkinter.windows.widgets import ctk_scrollbar as _ctk_scrollbar
+
+        if getattr(_ctk_scrollbar.CTkScrollbar, "_ssbumm_drag_patch", False):
+            return
+
+        original_clicked = _ctk_scrollbar.CTkScrollbar._clicked
+
+        def _clicked_preserve_offset(scrollbar, event):
+            try:
+                if scrollbar._orientation == "vertical":
+                    denom = max(1e-6, (scrollbar._current_height - 2 * scrollbar._border_spacing))
+                    value = scrollbar._reverse_widget_scaling(
+                        (event.y - scrollbar._border_spacing) / denom
+                    )
+                else:
+                    denom = max(1e-6, (scrollbar._current_width - 2 * scrollbar._border_spacing))
+                    value = scrollbar._reverse_widget_scaling(
+                        (event.x - scrollbar._border_spacing) / denom
+                    )
+
+                value = max(0.0, min(1.0, float(value)))
+                length = max(0.0, float(scrollbar._end_value - scrollbar._start_value))
+                length = min(length, 1.0)
+
+                event_type = getattr(event, "type", None)
+                event_type_s = str(event_type).lower()
+                is_press = (
+                    event_type == 4
+                    or event_type_s == "4"
+                    or "buttonpress" in event_type_s
+                )
+
+                if is_press:
+                    if scrollbar._start_value <= value <= scrollbar._end_value:
+                        # Clicked inside thumb: preserve relative click offset.
+                        scrollbar._drag_anchor = value - scrollbar._start_value
+                    else:
+                        # Clicked outside thumb: keep prior "jump toward click" behavior.
+                        scrollbar._drag_anchor = length / 2.0
+
+                anchor = getattr(scrollbar, "_drag_anchor", length / 2.0)
+                target_start = value - anchor
+                target_start = max(0.0, min(target_start, 1.0 - length))
+                target_end = target_start + length
+
+                scrollbar._start_value = target_start
+                scrollbar._end_value = target_end
+                scrollbar._draw()
+
+                if scrollbar._command is not None:
+                    scrollbar._command("moveto", scrollbar._start_value)
+            except Exception:
+                # Fall back to stock behavior if anything unexpected happens.
+                return original_clicked(scrollbar, event)
+
+        _ctk_scrollbar.CTkScrollbar._clicked = _clicked_preserve_offset
+        _ctk_scrollbar.CTkScrollbar._ssbumm_drag_patch = True
 
     def _neutralize_ctk_scroll_management(self):
         """Prevent CTkScrollableFrame from overriding our global scroll handler.
@@ -712,7 +805,7 @@ class ModManagerApp(ctk.CTk):
             self._scroll_refresh_widgets.add(widget)
             if self._scroll_refresh_after_id:
                 return
-            self._scroll_refresh_after_id = self.after(16, self._flush_scroll_refresh)
+            self._scroll_refresh_after_id = self.after(24, self._flush_scroll_refresh)
         except Exception:
             pass
 
@@ -724,11 +817,13 @@ class ModManagerApp(ctk.CTk):
             return
         for widget in widgets:
             try:
+                if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
+                    continue
                 widget.update_idletasks()
             except Exception:
                 pass
         try:
-            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 5
+            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 8
             if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
                 for widget in widgets:
                     try:

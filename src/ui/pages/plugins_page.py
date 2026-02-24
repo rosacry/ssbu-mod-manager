@@ -1,5 +1,6 @@
 """Plugins management page - compact rows with accent bars."""
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import messagebox
 from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
@@ -159,15 +160,14 @@ class PluginsPage(BasePage):
         show_descriptions = self._show_descriptions_var.get()
 
         row_height = 44
-        row = ctk.CTkFrame(self.plugin_list, fg_color="#1c1c34", corner_radius=6,
-                           height=row_height)
+        row = tk.Frame(self.plugin_list, bg="#1c1c34", height=row_height)
         row.pack(fill="x", pady=1, padx=2)
         row.pack_propagate(False)
 
         accent_color = "#1f538d" if is_enabled else "#3a3a4a"
         if is_required and is_enabled:
             accent_color = "#e94560"
-        accent = ctk.CTkFrame(row, width=4, fg_color=accent_color, corner_radius=2)
+        accent = tk.Frame(row, width=4, bg=accent_color)
         accent.pack(side="left", fill="y", padx=(3, 0), pady=4)
 
         switch = ctk.CTkSwitch(
@@ -182,35 +182,36 @@ class PluginsPage(BasePage):
         else:
             switch.deselect()
 
-        info_col = ctk.CTkFrame(row, fg_color="transparent")
-        info_col.pack(side="left", fill="both", expand=True, padx=(2, 6), pady=(6, 6))
-
+        base_filename = self._base_plugin_filename(plugin)
         name = self._plugin_display_name(plugin) if use_friendly_names else plugin.filename
         display_text = name
         if use_friendly_names:
-            base_filename = self._base_plugin_filename(plugin)
             if base_filename and base_filename != name:
                 display_text += f"  ({base_filename})"
-            if show_descriptions:
-                desc = self._plugin_display_description(plugin).strip()
-                if desc and desc != name:
-                    display_text += f"  \u2014  {desc}"
+        if show_descriptions:
+            desc = self._plugin_display_description(plugin).strip()
+            if desc and desc != name:
+                display_text += f"  \u2014  {desc}"
 
         name_color = "#d0d0e8" if is_enabled else "#454560"
-        ctk.CTkLabel(
-            info_col,
+        name_label = tk.Label(
+            row,
             text=display_text,
-            font=ctk.CTkFont(size=12),
-            text_color=name_color,
+            font=("Segoe UI", 12),
+            fg=name_color,
+            bg="#1c1c34",
             anchor="w",
-        ).pack(fill="x")
+        )
+        name_label.pack(side="left", fill="x", expand=True, padx=(2, 8))
 
         if is_required:
-            ctk.CTkLabel(
+            tk.Label(
                 row,
                 text="REQUIRED",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                text_color="#e94560",
+                font=("Segoe UI", 10, "bold"),
+                fg="#e94560",
+                bg="#1c1c34",
+                anchor="e",
             ).pack(side="right", padx=(0, 10))
 
         self._bind_context_menu_recursive(row, plugin)
@@ -348,11 +349,12 @@ class PluginsPage(BasePage):
 
     def _bind_context_menu_recursive(self, widget, plugin):
         """Attach right-click plugin actions to row and all descendants."""
-        try:
-            widget.bind("<Button-3>",
-                        lambda e, p=plugin: self._show_plugin_context_menu(e, p), add="+")
-        except Exception:
-            pass
+        for seq in ("<ButtonRelease-3>", "<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            try:
+                widget.bind(seq,
+                            lambda e, p=plugin: self._show_plugin_context_menu(e, p), add="+")
+            except Exception:
+                pass
         try:
             for child in widget.winfo_children():
                 self._bind_context_menu_recursive(child, plugin)
@@ -360,7 +362,7 @@ class PluginsPage(BasePage):
             pass
 
     def _show_plugin_context_menu(self, event, plugin):
-        if not self._friendly_names_var.get():
+        if not (self._friendly_names_var.get() or self._show_descriptions_var.get()):
             return None
         self._close_context_menu()
 
@@ -407,12 +409,13 @@ class PluginsPage(BasePage):
         menu.update_idletasks()
         menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
         menu.deiconify()
+        menu.lift()
         try:
             menu.focus_force()
         except Exception:
             pass
-        menu.bind("<FocusOut>", lambda _e: self._close_context_menu(), add="+")
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
+        menu.after(12000, self._close_context_menu)
         self._context_menu = menu
         return "break"
 

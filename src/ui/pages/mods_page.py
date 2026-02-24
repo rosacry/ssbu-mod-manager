@@ -404,11 +404,12 @@ class ModsPage(BasePage):
         return bool(overrides.get(mod.original_name, "").strip())
 
     def _bind_context_menu_recursive(self, widget, mod):
-        try:
-            widget.bind("<Button-3>",
-                        lambda e, m=mod: self._show_mod_context_menu(e, m), add="+")
-        except Exception:
-            pass
+        for seq in ("<ButtonRelease-3>", "<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            try:
+                widget.bind(seq,
+                            lambda e, m=mod: self._show_mod_context_menu(e, m), add="+")
+            except Exception:
+                pass
         try:
             for child in widget.winfo_children():
                 self._bind_context_menu_recursive(child, mod)
@@ -447,12 +448,13 @@ class ModsPage(BasePage):
         menu.update_idletasks()
         menu.geometry(f"+{event.x_root + 4}+{event.y_root + 2}")
         menu.deiconify()
+        menu.lift()
         try:
             menu.focus_force()
         except Exception:
             pass
-        menu.bind("<FocusOut>", lambda _e: self._close_context_menu(), add="+")
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
+        menu.after(12000, self._close_context_menu)
         self._context_menu = menu
         return "break"
 

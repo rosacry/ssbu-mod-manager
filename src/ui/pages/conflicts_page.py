@@ -5,7 +5,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 from src.ui.base_page import BasePage
 from src.ui.widgets.conflict_card import ConflictCard
-from src.models.conflict import ResolutionStrategy
+from src.models.conflict import ResolutionStrategy, ConflictSeverity
 from src.utils.logger import logger
 
 # Explanations for conflict types
@@ -66,8 +66,15 @@ class ConflictsPage(BasePage):
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 
-        self.scan_btn = ctk.CTkButton(header_frame, text="Rescan", width=120,
+        self.header_btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        self.scan_btn = ctk.CTkButton(self.header_btn_frame, text="Rescan", width=110,
                                       command=self._force_scan, corner_radius=8, height=34)
+        self.restore_btn_header = ctk.CTkButton(
+            self.header_btn_frame, text="Restore Originals",
+            fg_color="#b08a2a", hover_color="#8a6b1f",
+            command=self._restore_originals, width=165,
+            corner_radius=8, height=34,
+        )
 
         # Explanation section
         explain_frame = ctk.CTkFrame(self, fg_color="#1e1e38", corner_radius=10)
@@ -105,13 +112,6 @@ class ConflictsPage(BasePage):
             corner_radius=8, height=34,
         )
 
-        self.restore_btn = ctk.CTkButton(
-            self.auto_btn_frame, text="Restore Originals",
-            fg_color="#b08a2a", hover_color="#8a6b1f",
-            command=self._restore_originals, width=180,
-            corner_radius=8, height=34,
-        )
-
         self.fix_locale_btn = ctk.CTkButton(
             self.auto_btn_frame, text="Fix Locale MSBT Files",
             fg_color="#1f538d", hover_color="#163b6a",
@@ -144,7 +144,6 @@ class ConflictsPage(BasePage):
             text="Click 'Scan for Conflicts' to check for mod file conflicts.",
             text_color="#999999")
         self.auto_resolve_btn.pack_forget()
-        self.restore_btn.pack_forget()
         self.fix_locale_btn.pack_forget()
         for w in self.conflict_list.winfo_children():
             w.destroy()
@@ -183,12 +182,18 @@ class ConflictsPage(BasePage):
 
     def _set_rescan_visible(self, visible: bool):
         try:
+            if self.scan_btn.winfo_manager():
+                self.scan_btn.pack_forget()
+            if self.restore_btn_header.winfo_manager():
+                self.restore_btn_header.pack_forget()
+            if self.header_btn_frame.winfo_manager():
+                self.header_btn_frame.pack_forget()
+
             if visible:
-                if not self.scan_btn.winfo_manager():
-                    self.scan_btn.pack(side="right")
-            else:
-                if self.scan_btn.winfo_manager():
-                    self.scan_btn.pack_forget()
+                self.header_btn_frame.pack(side="right")
+                # Pack restore first so rescan appears to its left.
+                self.restore_btn_header.pack(side="right")
+                self.scan_btn.pack(side="right", padx=(0, 8))
         except Exception:
             pass
 
@@ -337,7 +342,6 @@ class ConflictsPage(BasePage):
         for w in self.conflict_list.winfo_children():
             w.destroy()
         self.auto_resolve_btn.pack_forget()
-        self.restore_btn.pack_forget()
         self.fix_locale_btn.pack_forget()
 
         if not self._conflicts and not self._locale_msbts:
@@ -389,10 +393,6 @@ class ConflictsPage(BasePage):
 
         if mergeable > 0:
             self.auto_resolve_btn.pack(side="left")
-            self.restore_btn.pack(side="left", padx=(10, 0))
-        else:
-            # Still show restore button in case user needs to undo a previous merge
-            self.restore_btn.pack(side="left")
 
         if locale_count > 0:
             self.fix_locale_btn.pack(side="left", padx=(10, 0))
@@ -405,7 +405,26 @@ class ConflictsPage(BasePage):
                 by_ext[ext] = []
             by_ext[ext].append(c)
 
-        for ext, conflicts in sorted(by_ext.items()):
+        severity_rank = {
+            ConflictSeverity.CRITICAL: 0,
+            ConflictSeverity.HIGH: 1,
+            ConflictSeverity.MEDIUM: 2,
+            ConflictSeverity.LOW: 3,
+        }
+
+        sorted_groups = sorted(
+            by_ext.items(),
+            key=lambda item: (
+                min(severity_rank.get(c.severity, 99) for c in item[1]),
+                item[0],
+            ),
+        )
+
+        for ext, conflicts in sorted_groups:
+            conflicts.sort(key=lambda c: (
+                severity_rank.get(c.severity, 99),
+                str(c.relative_path).lower(),
+            ))
             # Type header with explanation
             info = CONFLICT_EXPLANATIONS.get(ext)
             if info:
