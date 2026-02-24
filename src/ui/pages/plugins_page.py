@@ -12,7 +12,7 @@ class PluginsPage(BasePage):
         super().__init__(parent, app, **kwargs)
         self._loaded = False
         self._context_menu = None
-        self.bind_all("<Button-1>", self._close_context_menu_on_global_click, add="+")
+        self.app.bind("<Button-1>", self._close_context_menu_on_global_click, add="+")
         self._build_ui()
 
     def _build_ui(self):

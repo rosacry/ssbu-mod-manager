@@ -42,7 +42,7 @@ class ModsPage(BasePage):
         self._last_scroll_region = (0, 0)
         self._scroll_after_id = None
         self._context_menu = None
-        self.bind_all("<Button-1>", self._close_context_menu_on_global_click, add="+")
+        self.app.bind("<Button-1>", self._close_context_menu_on_global_click, add="+")
         self._build_ui()
 
     def _patch_all_scroll_speeds(self):
