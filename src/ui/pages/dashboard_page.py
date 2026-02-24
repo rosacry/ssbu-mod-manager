@@ -212,7 +212,7 @@ class DashboardPage(BasePage):
             if settings.eden_sdmc_path:
                 emu = settings.emulator or "Emulator"
                 self.path_label.configure(
-                    text=f"\u2022  {emu}: {settings.eden_sdmc_path}",
+                    text=f"\u2022  {emu} is configured and ready",
                     text_color="#2fa572")
                 configured = True
             else:

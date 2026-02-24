@@ -43,6 +43,12 @@ class ModsPage(BasePage):
         self._scroll_after_id = None
         self._build_ui()
 
+    def _patch_all_scroll_speeds(self):
+        """Use app-global wheel handling for parity with Plugins page."""
+        # Intentionally no per-widget wheel bindings on this page.
+        # This keeps Mods and Plugins scrolling behavior consistent.
+        return
+
     def _build_ui(self):
         # Header
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -97,17 +103,20 @@ class ModsPage(BasePage):
                                     corner_radius=8)
         search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
+        right_filters = ctk.CTkFrame(filter_frame, fg_color="transparent")
+        right_filters.pack(side="right")
+
         self.group_var = ctk.BooleanVar(value=True)
-        group_cb = ctk.CTkCheckBox(filter_frame, text="Group by type",
+        group_cb = ctk.CTkCheckBox(right_filters, text="Group by type",
                                    variable=self.group_var,
                                    command=self._render_mods,
                                    font=ctk.CTkFont(size=12), width=130)
-        group_cb.pack(side="right", padx=(0, 10))
+        group_cb.pack(side="right", padx=(14, 0))
 
         self.filter_var = ctk.StringVar(value="All")
         filter_menu = ctk.CTkOptionMenu(
-            filter_frame, values=["All", "Enabled", "Disabled"],
-            variable=self.filter_var, command=lambda v: self._render_mods(), width=110,
+            right_filters, values=["All", "Enabled", "Disabled"],
+            variable=self.filter_var, command=lambda v: self._render_mods(), width=125,
             corner_radius=8, height=34,
         )
         filter_menu.pack(side="right")
@@ -140,9 +149,7 @@ class ModsPage(BasePage):
 
         # Bind events
         self._canvas.bind("<Configure>", self._on_canvas_configure)
-        self._canvas.bind("<MouseWheel>", self._on_mousewheel)
         self._inner_frame.bind("<Configure>", self._on_frame_configure)
-        self._mousewheel_bound = False
 
     def _on_canvas_configure(self, event):
         """Resize inner frame to match canvas width."""
@@ -171,36 +178,6 @@ class ModsPage(BasePage):
             self._canvas.configure(scrollregion=self._canvas.bbox("all"))
         except tk.TclError:
             pass
-
-    def _on_mousewheel(self, event):
-        """Handle mouse wheel scrolling with faster speed."""
-        try:
-            # Scroll 5 units per tick instead of 1 for faster scrolling
-            self._canvas.yview_scroll(int(-5 * (event.delta / 120)), "units")
-        except tk.TclError:
-            pass
-        return "break"
-
-    def _bind_mousewheel(self):
-        """Bind mousewheel to canvas and all children recursively."""
-        # Unbind existing handlers first to prevent accumulation
-        def _unbind_from(widget):
-            try:
-                widget.unbind("<MouseWheel>")
-            except Exception:
-                pass
-            for child in widget.winfo_children():
-                _unbind_from(child)
-
-        def _bind_to(widget):
-            widget.bind("<MouseWheel>", self._on_mousewheel)
-            for child in widget.winfo_children():
-                _bind_to(child)
-
-        _unbind_from(self._canvas)
-        _unbind_from(self._inner_frame)
-        _bind_to(self._canvas)
-        _bind_to(self._inner_frame)
 
     def on_show(self):
         if not self._loaded:
@@ -280,9 +257,6 @@ class ModsPage(BasePage):
         # Force scroll region update
         self._inner_frame.update_idletasks()
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
-
-        # Bind mousewheel to all child widgets for smooth scrolling
-        self._bind_mousewheel()
 
         logger.debug("Mods", f"Rendered {len(filtered)} mod entries")
 

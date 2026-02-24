@@ -51,11 +51,6 @@ class MainWindow(ctk.CTkFrame):
         )
         self.redo_btn.pack(side="left", padx=(0, 12))
 
-        # Separator between undo/redo and save/discard
-        sep_label = ctk.CTkLabel(toolbar_inner, text="|", text_color="#333355",
-                                 font=ctk.CTkFont(size=14))
-        sep_label.pack(side="left", padx=(0, 12))
-
         # Action label (between undo/redo and save/discard)
         self.action_label = ctk.CTkLabel(
             toolbar_inner, text="",

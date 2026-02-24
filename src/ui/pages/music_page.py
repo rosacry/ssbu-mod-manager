@@ -27,7 +27,6 @@ class MusicPage(BasePage):
         self._spinner_active = False
         self._track_filter_after_id = None
         self._stage_filter_after_id = None
-        self._volume_after_id = None
         self._pending_volume_value = 0.7
         self._track_data_revision = 0
         self._last_track_render_signature = None
@@ -67,8 +66,8 @@ class MusicPage(BasePage):
         # Main 3-column layout using PanedWindow for resizable splitters
         content = tk.PanedWindow(
             self, orient=tk.HORIZONTAL, sashwidth=6,
-            bg="#12121e", sashpad=0, opaqueresize=False,
-            borderwidth=0, relief="flat", sashcursor="sb_h_double_arrow",
+            bg="#12121e", sashpad=0, opaqueresize=True,
+            borderwidth=0, relief="flat",
         )
         content.pack(fill="both", expand=True, padx=30, pady=(0, 10))
         self._paned = content  # store for sash positioning
@@ -103,7 +102,7 @@ class MusicPage(BasePage):
                                         selectforeground="white",
                                         font=("Segoe UI", 10),
                                         relief="flat", bd=0, highlightthickness=0,
-                                        activestyle="none")
+                                        activestyle="none", cursor="arrow")
         stage_scroll = ctk.CTkScrollbar(stage_list_frame, command=self.stage_listbox.yview)
         self.stage_listbox.configure(yscrollcommand=stage_scroll.set)
         self.stage_listbox.pack(side="left", fill="both", expand=True)
@@ -195,7 +194,7 @@ class MusicPage(BasePage):
                                          selectforeground="white",
                                          font=("Segoe UI", 10),
                                          relief="flat", bd=0, highlightthickness=0,
-                                         activestyle="none")
+                                         activestyle="none", cursor="arrow")
         track_scroll = ctk.CTkScrollbar(track_frame, command=self.track_listbox.yview)
         self.track_listbox.configure(yscrollcommand=track_scroll.set)
         self.track_listbox.pack(side="left", fill="both", expand=True)
@@ -241,7 +240,6 @@ class MusicPage(BasePage):
         )
         self.volume_slider.set(70)
         self.volume_slider.pack(side="left", padx=(0, 6))
-        self.volume_slider.bind("<ButtonRelease-1>", self._on_volume_release)
 
         # Seek timeline
         self.seek_label = ctk.CTkLabel(player_inner, text="0:00",
@@ -287,7 +285,7 @@ class MusicPage(BasePage):
 
     def on_hide(self):
         """Clean up playlist widgets for smoother page transitions."""
-        for attr in ("_track_filter_after_id", "_stage_filter_after_id", "_volume_after_id"):
+        for attr in ("_track_filter_after_id", "_stage_filter_after_id"):
             aid = getattr(self, attr, None)
             if aid:
                 try:
@@ -863,25 +861,10 @@ class MusicPage(BasePage):
         self.after(2000, lambda: self.player_status.configure(text=""))
 
     def _on_volume_change(self, value):
-        self._pending_volume_value = max(0.0, min(1.0, float(value) / 100.0))
-        if self._volume_after_id:
-            try:
-                self.after_cancel(self._volume_after_id)
-            except Exception:
-                pass
-        self._volume_after_id = self.after(120, self._apply_pending_volume)
-
-    def _on_volume_release(self, _event):
-        if self._volume_after_id:
-            try:
-                self.after_cancel(self._volume_after_id)
-            except Exception:
-                pass
-            self._volume_after_id = None
-        self._apply_pending_volume()
-
-    def _apply_pending_volume(self):
-        self._volume_after_id = None
+        new_volume = max(0.0, min(1.0, float(value) / 100.0))
+        if abs(new_volume - self._pending_volume_value) < 0.01:
+            return
+        self._pending_volume_value = new_volume
         audio_player.set_volume(self._pending_volume_value)
 
     def _on_seek_drag(self, value):

@@ -105,7 +105,7 @@ class AudioPlayer:
         self._ffplay_anchor = 0.0
         self._ffplay_duration = 0.0
         self._ffplay_paused = False
-        self._backend = "ffplay" if self._ffplay else "pygame"
+        self._backend = "pygame"
         self._current_file: Optional[Path] = None
         self._playing = False
         self._paused = False
@@ -115,10 +115,8 @@ class AudioPlayer:
 
     @property
     def available(self) -> bool:
-        if self._ffplay:
-            return True
         _ensure_mixer()
-        return _pygame_available
+        return _pygame_available or bool(self._ffplay)
 
     @property
     def is_playing(self) -> bool:
@@ -228,13 +226,12 @@ class AudioPlayer:
 
     def play(self, file_path: Path) -> tuple[bool, str]:
         """Play an audio file. Returns (success, message)."""
-        if not self._ffplay:
-            _ensure_mixer()
-            if not _pygame_available:
-                msg = "Audio playback requires pygame. Install with: pip install pygame"
-                if _pygame_error:
-                    msg += f"\nInit error: {_pygame_error}"
-                return False, msg
+        _ensure_mixer()
+        if not _pygame_available and not self._ffplay:
+            msg = "Audio playback requires pygame or ffplay."
+            if _pygame_error:
+                msg += f"\nInit error: {_pygame_error}"
+            return False, msg
 
         try:
             from src.utils.logger import logger
@@ -278,52 +275,58 @@ class AudioPlayer:
 
     def _play_file(self, file_path: Path) -> tuple[bool, str]:
         """Play a standard audio file."""
-        if self._ffplay:
-            return self._play_file_ffplay(file_path, start=0.0)
-        try:
-            # Proactively detect OGG Opus files — pygame/stb_vorbis silently
-            # produces no audio for Opus (no exception, just silence).
-            if file_path.suffix.lower() == ".ogg":
-                try:
-                    with open(file_path, 'rb') as f:
-                        header = f.read(48)
-                    if b'OpusHead' in header:
-                        wav_result = self._try_ffmpeg_fallback(file_path)
-                        if wav_result:
-                            return wav_result
-                        return False, (
-                            "This track uses Opus audio which pygame cannot play.\n"
-                            "Install ffmpeg and add it to PATH for playback."
-                        )
-                except OSError:
-                    pass
+        # For Opus-in-OGG, prefer conversion so pygame keeps realtime volume control.
+        if file_path.suffix.lower() == ".ogg":
+            try:
+                with open(file_path, "rb") as f:
+                    header = f.read(48)
+                if b"OpusHead" in header:
+                    wav_result = self._try_ffmpeg_fallback(file_path)
+                    if wav_result:
+                        return wav_result
+                    if self._ffplay:
+                        return self._play_file_ffplay(file_path, start=0.0)
+                    return False, (
+                        "This track uses Opus audio which pygame cannot play.\n"
+                        "Install ffmpeg and add it to PATH for playback."
+                    )
+            except OSError:
+                pass
 
-            self.stop()
-            pygame.mixer.music.load(str(file_path))
-            pygame.mixer.music.set_volume(self._volume)
-            pygame.mixer.music.play()
-            self._backend = "pygame"
-            self._current_file = file_path
-            self._playing = True
-            self._paused = False
-            self._seek_offset = 0.0
-            self._raw_pos_at_anchor = 0.0
-            return True, f"Playing: {file_path.name}"
-        except Exception as e:
-            error_str = str(e)
-            # OGG Opus files fail with stb_vorbis — try ffmpeg conversion to WAV
-            if "VORBIS" in error_str.upper() and file_path.suffix.lower() == ".ogg":
-                wav_result = self._try_ffmpeg_fallback(file_path)
-                if wav_result:
-                    return wav_result
-            from src.utils.logger import logger as _logger
-            _logger.error("AudioPlayer", f"Playback failed for {file_path}: {e}")
-            if "VORBIS" in error_str.upper():
-                return False, (
-                    f"Playback failed: {e}\n"
-                    "This track uses Opus audio. Install ffmpeg and add it to PATH for playback."
-                )
-            return False, f"Playback failed: {e}"
+        pygame_error = None
+        if _pygame_available:
+            try:
+                self.stop()
+                pygame.mixer.music.load(str(file_path))
+                pygame.mixer.music.set_volume(self._volume)
+                pygame.mixer.music.play()
+                self._backend = "pygame"
+                self._current_file = file_path
+                self._playing = True
+                self._paused = False
+                self._seek_offset = 0.0
+                self._raw_pos_at_anchor = 0.0
+                return True, f"Playing: {file_path.name}"
+            except Exception as e:
+                pygame_error = str(e)
+                if "VORBIS" in pygame_error.upper() and file_path.suffix.lower() == ".ogg":
+                    wav_result = self._try_ffmpeg_fallback(file_path)
+                    if wav_result:
+                        return wav_result
+                from src.utils.logger import logger as _logger
+                _logger.warn("AudioPlayer", f"Pygame playback failed, trying ffplay fallback: {e}")
+
+        if self._ffplay:
+            ok, msg = self._play_file_ffplay(file_path, start=0.0)
+            if ok:
+                return ok, msg
+            if pygame_error:
+                return False, f"Pygame failed ({pygame_error}) and ffplay failed ({msg})"
+            return False, msg
+
+        if pygame_error:
+            return False, f"Playback failed: {pygame_error}"
+        return False, "Playback failed: no available backend"
 
     def _try_ffmpeg_fallback(self, ogg_path: Path) -> Optional[tuple[bool, str]]:
         """Attempt to convert an OGG Opus file to WAV via ffmpeg and play that."""
@@ -535,3 +538,4 @@ class AudioPlayer:
 
 # Singleton
 audio_player = AudioPlayer()
+

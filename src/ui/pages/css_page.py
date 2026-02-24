@@ -36,19 +36,20 @@ class CSSPage(BasePage):
 
         self.status_label = ctk.CTkLabel(summary_frame, text="No CSS mod loaded.",
                                          font=ctk.CTkFont(size=12), text_color="#999999", anchor="w")
-        self.status_label.pack(side="left")
+        self.status_label.pack(side="left", fill="x", expand=True)
 
         # Main content frame with resizable splitter
         main_frame = tk.PanedWindow(
             self, orient=tk.HORIZONTAL, sashwidth=6,
-            bg="#12121e", sashpad=0, opaqueresize=False,
-            borderwidth=0, relief="flat", sashcursor="sb_h_double_arrow",
+            bg="#12121e", sashpad=0, opaqueresize=True,
+            borderwidth=0, relief="flat",
         )
-        main_frame.pack(fill="both", expand=True, padx=30, pady=(0, 5))
+        main_frame.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        self._paned = main_frame
 
         # Left panel - character list
-        left_frame = ctk.CTkFrame(main_frame, width=600, fg_color="#242438", corner_radius=10)
-        main_frame.add(left_frame, minsize=400, stretch="never", width=600)
+        left_frame = ctk.CTkFrame(main_frame, width=560, fg_color="#242438", corner_radius=10)
+        main_frame.add(left_frame, minsize=340, stretch="never", width=560)
 
         ctk.CTkLabel(left_frame, text="Characters",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -95,7 +96,8 @@ class CSSPage(BasePage):
                                   selectbackground="#1f538d",
                                   selectforeground="white",
                                   font=("Segoe UI", 10),
-                                  relief="flat", bd=0, highlightthickness=0)
+                                  relief="flat", bd=0, highlightthickness=0,
+                                  activestyle="none", exportselection=False)
         listbox_scroll = ctk.CTkScrollbar(listbox_frame, command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=listbox_scroll.set)
         self.listbox.pack(side="left", fill="both", expand=True)
@@ -126,7 +128,7 @@ class CSSPage(BasePage):
 
         # Right panel - character details
         right_frame = ctk.CTkFrame(main_frame, fg_color="#242438", corner_radius=10)
-        main_frame.add(right_frame, minsize=300, stretch="always")
+        main_frame.add(right_frame, minsize=360, stretch="always")
 
         ctk.CTkLabel(right_frame, text="Character Details",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
@@ -134,6 +136,8 @@ class CSSPage(BasePage):
 
         details_frame = ctk.CTkScrollableFrame(right_frame, fg_color="transparent")
         details_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        details_frame.grid_columnconfigure(0, weight=0)
+        details_frame.grid_columnconfigure(1, weight=1)
 
         # Form fields
         self.fields = {}
@@ -150,8 +154,8 @@ class CSSPage(BasePage):
 
             var = tk.StringVar()
             var.trace("w", lambda name, index, mode, f=field: self._on_field_change(f))
-            entry = ctk.CTkEntry(details_frame, textvariable=var, width=280, height=30)
-            entry.grid(row=row, column=1, sticky="w", padx=(5, 10), pady=3)
+            entry = ctk.CTkEntry(details_frame, textvariable=var, height=30)
+            entry.grid(row=row, column=1, sticky="ew", padx=(5, 10), pady=3)
 
             self.fields[field] = var
 
@@ -160,6 +164,15 @@ class CSSPage(BasePage):
                                           fg_color="#555555", hover_color="#444444",
                                           corner_radius=6, height=30)
         self.autofill_btn.grid(row=len(field_names), column=0, columnspan=2, pady=15)
+
+        def _init_sash_position():
+            try:
+                total_w = main_frame.winfo_width()
+                if total_w > 700:
+                    main_frame.sash_place(0, int(total_w * 0.58), 0)
+            except Exception:
+                pass
+        self.after(120, _init_sash_position)
 
     @property
     def css_manager(self):
@@ -207,6 +220,7 @@ class CSSPage(BasePage):
             btn.configure(state="normal")
 
     def _update_listbox(self, *args):
+        prev_selected = self.selected_index
         search_term = self.search_var.get().lower()
         self.listbox.delete(0, tk.END)
         self.filtered_indices = []
@@ -223,6 +237,27 @@ class CSSPage(BasePage):
             if search_term in display_text.lower():
                 self.listbox.insert(tk.END, display_text)
                 self.filtered_indices.append(i)
+
+        if not self.filtered_indices:
+            self.selected_index = -1
+            self._updating_fields = True
+            for field in self.fields:
+                self.fields[field].set("")
+            self._updating_fields = False
+            self.autofill_btn.configure(state="disabled")
+            return
+
+        target_list_index = None
+        if prev_selected in self.filtered_indices:
+            target_list_index = self.filtered_indices.index(prev_selected)
+        elif prev_selected == -1:
+            target_list_index = 0
+
+        if target_list_index is not None:
+            self.listbox.selection_clear(0, tk.END)
+            self.listbox.selection_set(target_list_index)
+            self.listbox.see(target_list_index)
+            self.listbox.event_generate("<<ListboxSelect>>")
 
     def _on_select(self, event):
         selection = self.listbox.curselection()

@@ -11,7 +11,9 @@ icon_path = os.path.abspath('assets/icon.ico')
 args = [
     'main.py',
     '--name=SSBUModManager',
-    '--onefile',
+    # onedir launches significantly faster than onefile because it avoids
+    # extracting the full bundle on every startup.
+    '--onedir',
     '--windowed',
     '--add-data=ParamLabels.csv;.',
     '--hidden-import=pyprc',
@@ -27,12 +29,6 @@ args = [
     '--hidden-import=LMS.Stream.Writer',
     '--hidden-import=LMS.Project',
     '--collect-all=LMS',
-    '--hidden-import=lms',
-    '--hidden-import=lms.Common',
-    '--hidden-import=lms.Message',
-    '--hidden-import=lms.Stream',
-    '--hidden-import=lms.Project',
-    '--collect-all=lms',
     '--hidden-import=lupa',
     '--collect-all=lupa',
     '--hidden-import=customtkinter',
@@ -40,7 +36,6 @@ args = [
     '--hidden-import=PIL',
     '--hidden-import=PIL._tkinter_finder',
     '--hidden-import=pygame',
-    '--collect-all=pygame',
     '--add-data=assets;assets',
     '--noconfirm',
     '--clean',

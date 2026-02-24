@@ -90,38 +90,38 @@ def main():
         _write_debug("import OK, creating app...")
         app = ModManagerApp()
         _write_debug("app created, entering mainloop...")
-        # Startup heartbeat: helps diagnose silent native exits that
-        # happen shortly after entering Tk mainloop.
-        def _heartbeat(t=1):
-            try:
-                hb_state = app.wm_state()
-            except Exception:
-                hb_state = "unknown"
-            try:
-                hb_mapped = int(bool(app.winfo_ismapped()))
-            except Exception:
-                hb_mapped = -1
-            try:
-                hb_viewable = int(bool(app.winfo_viewable()))
-            except Exception:
-                hb_viewable = -1
-            try:
-                hb_geom = app.geometry()
-            except Exception:
-                hb_geom = "n/a"
-            _write_debug(
-                f"[HEARTBEAT] +{t}s state={hb_state} mapped={hb_mapped} "
-                f"viewable={hb_viewable} geom={hb_geom}"
-            )
-            if t < 60:
+        # Optional startup heartbeat for difficult crash debugging.
+        if os.environ.get("SSBUMM_HEARTBEAT", "").strip() == "1":
+            def _heartbeat(t=1):
                 try:
-                    app.after(1000, lambda: _heartbeat(t + 1))
-                except Exception as hb_err:
-                    _write_debug(f"[HEARTBEAT] scheduling failed: {hb_err}")
-        try:
-            app.after(1000, _heartbeat)
-        except Exception as hb_init_err:
-            _write_debug(f"[HEARTBEAT] init failed: {hb_init_err}")
+                    hb_state = app.wm_state()
+                except Exception:
+                    hb_state = "unknown"
+                try:
+                    hb_mapped = int(bool(app.winfo_ismapped()))
+                except Exception:
+                    hb_mapped = -1
+                try:
+                    hb_viewable = int(bool(app.winfo_viewable()))
+                except Exception:
+                    hb_viewable = -1
+                try:
+                    hb_geom = app.geometry()
+                except Exception:
+                    hb_geom = "n/a"
+                _write_debug(
+                    f"[HEARTBEAT] +{t}s state={hb_state} mapped={hb_mapped} "
+                    f"viewable={hb_viewable} geom={hb_geom}"
+                )
+                if t < 15:
+                    try:
+                        app.after(1000, lambda: _heartbeat(t + 1))
+                    except Exception as hb_err:
+                        _write_debug(f"[HEARTBEAT] scheduling failed: {hb_err}")
+            try:
+                app.after(1000, _heartbeat)
+            except Exception as hb_init_err:
+                _write_debug(f"[HEARTBEAT] init failed: {hb_init_err}")
 
         app.mainloop()
         _write_debug("mainloop exited normally")

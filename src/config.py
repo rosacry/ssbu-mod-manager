@@ -32,7 +32,7 @@ class ConfigManager:
                     backup_before_merge=data.get("backup_before_merge", True),
                     emulator=data.get("emulator", ""),
                     debug_mode=data.get("debug_mode", False),
-                    ui_scale=max(0.6, min(2.0, float(data.get("ui_scale", 1.0)))),
+                    ui_scale=max(0.6, min(2.0, float(data.get("ui_scale", 1.2)))),
                     use_plugin_friendly_names=bool(data.get("use_plugin_friendly_names", True)),
                 )
             except (json.JSONDecodeError, KeyError, TypeError, OSError,

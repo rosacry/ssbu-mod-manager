@@ -135,7 +135,7 @@ class ConflictsPage(BasePage):
             w.destroy()
 
         prompt_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
-        prompt_frame.pack(pady=60)
+        prompt_frame.pack(fill="x", pady=(40, 24))
 
         ctk.CTkLabel(prompt_frame, text="No scan performed yet",
                      font=ctk.CTkFont(size=18, weight="bold"),
@@ -154,10 +154,27 @@ class ConflictsPage(BasePage):
             corner_radius=8, command=self._scan,
         )
         scan_prompt_btn.pack()
+        self.after(10, lambda: self._center_content_in_view(prompt_frame))
 
         self.summary_label.configure(
             text="Click 'Scan for Conflicts' to check for mod file conflicts.",
             text_color="#999999")
+
+    def _center_content_in_view(self, frame):
+        """Center an empty-state block in the visible viewport."""
+        try:
+            canvas = getattr(self.conflict_list, "_parent_canvas", None)
+            if canvas is None:
+                return
+            canvas.update_idletasks()
+            frame.update_idletasks()
+            visible_h = max(0, canvas.winfo_height())
+            frame_h = frame.winfo_reqheight()
+            top_pad = max(24, (visible_h - frame_h) // 2)
+            frame.pack_configure(pady=(top_pad, 24))
+            canvas.yview_moveto(0.0)
+        except Exception:
+            pass
 
     def _force_scan(self):
         self._scanned = False
@@ -187,6 +204,12 @@ class ConflictsPage(BasePage):
         ctk.CTkLabel(self.conflict_list,
                      text="Scanning mod files for conflicts...",
                      font=ctk.CTkFont(size=13), text_color="#888888").pack(pady=40)
+        try:
+            canvas = getattr(self.conflict_list, "_parent_canvas", None)
+            if canvas is not None:
+                canvas.yview_moveto(0.0)
+        except Exception:
+            pass
 
         logger.info("Conflicts", f"Starting conflict scan in: {settings.mods_path}")
         mods_path = settings.mods_path
@@ -270,7 +293,7 @@ class ConflictsPage(BasePage):
                 text_color="#2fa572")
 
             empty_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
-            empty_frame.pack(pady=40)
+            empty_frame.pack(fill="x", pady=(40, 24))
             ctk.CTkLabel(empty_frame, text="No Conflicts Found",
                          font=ctk.CTkFont(size=18, weight="bold"),
                          text_color="#2fa572").pack(pady=(0, 8))
@@ -279,6 +302,7 @@ class ConflictsPage(BasePage):
                               "No file conflicts were detected.",
                          font=ctk.CTkFont(size=13), text_color="#888888",
                          justify="center").pack()
+            self.after(10, lambda: self._center_content_in_view(empty_frame))
             return
 
         total = len(self._conflicts)
