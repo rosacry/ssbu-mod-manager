@@ -276,6 +276,12 @@ MIT
 
 ## Changelog
 
+### v3.1.5
+- **Fix: Online Guide/Migration fast scrolling not applying** - Root-caused a DPI/scaling issue where global wheel routing relied on `winfo_containing(x_root, y_root)` and could return `None`, so accelerated scrolling was skipped. Global handler now uses `event.widget` as primary source and only uses `winfo_containing` as optional refinement
+- **Fix: Wrong canvas selected for wheel scroll** - Global wheel routing now ignores decorative CTk canvases (label/button draw canvases) and only targets canvases that actually have vertical scroll range, so long-form guide pages consistently scroll at accelerated speed
+- **Fix: OPUS/LOPUS preview selecting distorted decode variants** - Added bitrate/duration plausibility scoring on top of PCM quality checks so obviously wrong short/noisy decodes no longer outrank valid candidates
+- **Fix: stale audio cache after decoder logic changes** - Bumped decoder cache revision (`r3`) so old cached WAV outputs are invalidated automatically after the new candidate-selection logic
+
 ### v3.1.4
 - **Fix: Hidden/invisible startup window** — Strengthened startup show logic to always force `deiconify + state(normal) + alpha(1.0)` after initialization and added a short visibility watchdog that retries recovery if the window ends up hidden/minimized
 - **Fix: Bad startup positioning on some multi-monitor setups** — Startup centering now uses primary monitor metrics instead of virtual desktop size, reducing bottom-right/off-screen placement

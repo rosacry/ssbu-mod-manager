@@ -423,7 +423,16 @@ class ModManagerApp(ctk.CTk):
     # --- Global fast scroll --------------------------------------------------
 
     _SCROLL_SPEED = 5          # Listbox/Text scroll multiplier
-    _CANVAS_SCROLL_SPEED = 14  # CTkScrollableFrame canvas multiplier
+    _CANVAS_SCROLL_SPEED = 18  # CTkScrollableFrame canvas multiplier
+
+    @staticmethod
+    def _canvas_can_scroll_vertically(canvas) -> bool:
+        """Return True only for canvases that currently have vertical range."""
+        try:
+            y0, y1 = canvas.yview()
+            return (y1 - y0) < 0.999999
+        except Exception:
+            return False
 
     def _neutralize_ctk_scroll_management(self):
         """Prevent CTkScrollableFrame from overriding our global scroll handler.
@@ -498,8 +507,15 @@ class ModManagerApp(ctk.CTk):
     def _global_fast_scroll_impl(self, event):
         """Inner implementation of fast scroll (may raise)."""
         import tkinter as tk
-        # Find the widget directly under the mouse pointer
-        widget = event.widget.winfo_containing(event.x_root, event.y_root)
+        # Use event.widget as the primary source (reliable under scaling),
+        # then optionally refine via winfo_containing when available.
+        widget = getattr(event, "widget", None)
+        try:
+            pointed = event.widget.winfo_containing(event.x_root, event.y_root)
+            if pointed is not None:
+                widget = pointed
+        except Exception:
+            pass
         if widget is None:
             return
 
@@ -523,14 +539,11 @@ class ModManagerApp(ctk.CTk):
                 except AttributeError:
                     pass
             if isinstance(w, tk.Canvas):
-                # Only canvases that have a scrollregion (i.e. are scrollable)
-                try:
-                    sr = w.cget("scrollregion")
-                    if sr:
-                        scrollable = w
-                        break
-                except tk.TclError:
-                    pass
+                # Skip decorative CTk canvases (labels/buttons) and only use
+                # canvases that actually have a vertical scroll range.
+                if self._canvas_can_scroll_vertically(w):
+                    scrollable = w
+                    break
             try:
                 w = w.master
             except Exception:

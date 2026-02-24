@@ -191,6 +191,67 @@ def _score_wav_quality(wav_path: Path) -> tuple[float, int]:
         return -1.0, 0
 
 
+def _wav_duration_seconds(wav_path: Path) -> float:
+    """Best-effort duration for a WAV file in seconds."""
+    try:
+        import wave
+        with wave.open(str(wav_path), 'rb') as wf:
+            rate = wf.getframerate()
+            if rate <= 0:
+                return 0.0
+            return wf.getnframes() / float(rate)
+    except Exception:
+        return 0.0
+
+
+def _score_opus_candidate(base_score: float, duration_s: float,
+                          encoded_size_bytes: int) -> tuple[float, float]:
+    """Adjust raw PCM quality score using encoded-size plausibility.
+
+    Wrong offsets can decode to very short/noisy audio that still gets a
+    deceptively high PCM score. We penalize implausible implied bitrates.
+
+    Returns (adjusted_score, implied_bitrate_kbps).
+    """
+    if duration_s <= 0.0 or encoded_size_bytes <= 0:
+        return base_score - 3.0, 0.0
+
+    bitrate_kbps = (encoded_size_bytes * 8.0) / (duration_s * 1000.0)
+    score = base_score
+
+    # Strongly penalize impossible/highly unlikely Opus bitrates.
+    if bitrate_kbps > 1600.0:
+        score -= 3.0
+    elif bitrate_kbps > 1200.0:
+        score -= 2.4
+    elif bitrate_kbps > 900.0:
+        score -= 1.8
+    elif bitrate_kbps > 700.0:
+        score -= 1.1
+    elif bitrate_kbps > 512.0:
+        score -= 0.6
+
+    # Also penalize implausibly low bitrates (typically bad frame parsing).
+    if bitrate_kbps < 8.0:
+        score -= 2.0
+    elif bitrate_kbps < 16.0:
+        score -= 1.2
+    elif bitrate_kbps < 24.0:
+        score -= 0.6
+    elif 32.0 <= bitrate_kbps <= 320.0:
+        score += 0.25
+
+    # Additional short-duration guard using a conservative high bitrate cap.
+    # (If decoded duration is far below this bound, frame extraction is likely wrong.)
+    min_expected_duration = encoded_size_bytes / 96000.0  # ~768 kbps cap
+    if duration_s < min_expected_duration * 0.35:
+        score -= 2.0
+    elif duration_s < min_expected_duration * 0.6:
+        score -= 1.0
+
+    return score, bitrate_kbps
+
+
 def _build_crc_table():
     global _OGG_CRC_TABLE
     _OGG_CRC_TABLE = []
@@ -1517,7 +1578,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r2"
+_DECODER_CACHE_REV = "r3"
 
 
 def _get_cache_dir() -> Path:
@@ -1678,6 +1739,8 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         if lopus_magic & 0x80000000:
             from src.utils.logger import logger
             best_score = -1.0
+            best_duration = 0.0
+            best_bitrate = 0.0
             best_wav: Optional[Path] = None
             best_label = "unknown"
 
@@ -1690,9 +1753,17 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     ogg_path.write_bytes(ogg_data)
                     wav_path = _convert_ogg_opus_to_wav(ogg_path)
                     if wav_path and wav_path.exists():
-                        score, out_channels = _score_wav_quality(wav_path)
-                        if score > best_score:
+                        raw_score, out_channels = _score_wav_quality(wav_path)
+                        duration_s = _wav_duration_seconds(wav_path)
+                        score, bitrate_kbps = _score_opus_candidate(
+                            raw_score, duration_s, len(audio_data)
+                        )
+                        if (score > best_score + 1e-6 or
+                                (abs(score - best_score) <= 0.05 and
+                                 duration_s > best_duration + 0.5)):
                             best_score = score
+                            best_duration = duration_s
+                            best_bitrate = bitrate_kbps
                             best_wav = wav_path
                             best_label = f"{ch_label}/{out_channels}ch"
                 except Exception as e:
@@ -1709,12 +1780,15 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                 if _validate_wav_quality(best_wav):
                     logger.info(
                         "NUS3AUDIO",
-                        f"LOPUS best decode {best_label} score={best_score:.2f}"
+                        f"LOPUS best decode {best_label} score={best_score:.2f} "
+                        f"duration={best_duration:.2f}s bitrate={best_bitrate:.1f}kbps"
                     )
                 else:
                     logger.warn(
                         "NUS3AUDIO",
-                        f"LOPUS decode below quality threshold ({best_label}, score={best_score:.2f})"
+                        f"LOPUS decode below quality threshold ({best_label}, "
+                        f"score={best_score:.2f}, duration={best_duration:.2f}s, "
+                        f"bitrate={best_bitrate:.1f}kbps)"
                     )
                 return True, f"Playing: {display_name}", best_wav
 
@@ -1754,18 +1828,28 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
     if audio_data[:4] == b'OPUS':
         from src.utils.logger import logger
         best_score = -1.0
+        best_duration = 0.0
+        best_bitrate = 0.0
         best_wav: Optional[Path] = None
         best_label = "unknown"
 
         def _capture_best(ogg_data: bytes, label: str) -> None:
-            nonlocal best_score, best_wav, best_label
+            nonlocal best_score, best_duration, best_bitrate, best_wav, best_label
             ogg_path = cache_dir / f"{cache_key}_{label}.ogg"
             ogg_path.write_bytes(ogg_data)
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
             if wav_path and wav_path.exists():
-                score, out_channels = _score_wav_quality(wav_path)
-                if score > best_score:
+                raw_score, out_channels = _score_wav_quality(wav_path)
+                duration_s = _wav_duration_seconds(wav_path)
+                score, bitrate_kbps = _score_opus_candidate(
+                    raw_score, duration_s, len(audio_data)
+                )
+                if (score > best_score + 1e-6 or
+                        (abs(score - best_score) <= 0.05 and
+                         duration_s > best_duration + 0.5)):
                     best_score = score
+                    best_duration = duration_s
+                    best_bitrate = bitrate_kbps
                     best_wav = wav_path
                     best_label = f"{label}/{out_channels}ch"
 
@@ -1798,12 +1882,15 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
             if _validate_wav_quality(best_wav):
                 logger.info(
                     "NUS3AUDIO",
-                    f"OPUS best decode {best_label} score={best_score:.2f}"
+                    f"OPUS best decode {best_label} score={best_score:.2f} "
+                    f"duration={best_duration:.2f}s bitrate={best_bitrate:.1f}kbps"
                 )
             else:
                 logger.warn(
                     "NUS3AUDIO",
-                    f"OPUS decode below quality threshold ({best_label}, score={best_score:.2f})"
+                    f"OPUS decode below quality threshold ({best_label}, "
+                    f"score={best_score:.2f}, duration={best_duration:.2f}s, "
+                    f"bitrate={best_bitrate:.1f}kbps)"
                 )
             return True, f"Playing: {display_name}", best_wav
 
