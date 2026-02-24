@@ -316,7 +316,10 @@ def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
         return best_idx
 
     best = candidates[best_idx]
-    if not (best["zcr"] >= 0.28 and best["corr"] <= 0.50):
+    # Trigger override checks whenever the selected decode has clearly
+    # elevated high-frequency/noise signature, even if correlation is
+    # not extremely low.
+    if not (best["zcr"] >= 0.28 and best["corr"] <= 0.62):
         return best_idx
 
     best_dur = best["duration"]
@@ -332,7 +335,7 @@ def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
             continue
         if abs(c["bitrate"] - best_br) > max(6.0, best_br * 0.08):
             continue
-        if c["zcr"] > 0.12:
+        if c["zcr"] > min(0.12, best["zcr"] - 0.14):
             continue
         # Require clearly better stereo coherence, but avoid demanding
         # near-perfect correlation for tracks that are naturally wide.
@@ -1680,7 +1683,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r7"
+_DECODER_CACHE_REV = "r8"
 
 
 def _get_cache_dir() -> Path:

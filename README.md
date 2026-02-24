@@ -276,6 +276,11 @@ MIT
 
 ## Changelog
 
+### v3.1.10
+- **Fix: remaining OPUS noisy-container winners** - Relaxed the low-noise override trigger so high-`zcr` container selections with only moderately low stereo correlation are still re-evaluated against cleaner candidates
+- **Fix: cleaner-candidate requirement** - Override now requires a substantial `zcr` improvement relative to the selected candidate (not just an absolute threshold), reducing false switches while catching persistent distortion cases
+- **Fix: stale cache after override retune** - Bumped decoder cache revision to `r8` so prior cached WAV picks are invalidated automatically
+
 ### v3.1.9
 - **Fix: global decode path stability** - Switched NUS3AUDIO conversion to manual extraction first (whole-file ffmpeg demux now strict fallback only) to avoid environment-dependent ffmpeg direct-demux distortion
 - **Fix: noisy tied-candidate picks** - OPUS/LOPUS near-tie selection now prefers cleaner waveform signatures (`zcr`/correlation) instead of first-seen order
