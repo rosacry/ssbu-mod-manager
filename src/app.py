@@ -63,7 +63,10 @@ class ModManagerApp(ctk.CTk):
             self.withdraw()
             self._startup_hidden_withdraw = True
         except Exception:
-            self.attributes('-alpha', 0)
+            try:
+                self.attributes('-alpha', 0.0)
+            except Exception:
+                pass
 
         self.title("SSBU Mod Manager")
 
@@ -278,13 +281,13 @@ class ModManagerApp(ctk.CTk):
         if self._startup_hidden_withdraw:
             try:
                 self.deiconify()
-                self.state("normal")
             except Exception:
                 self.attributes('-alpha', 1)
         else:
             self.attributes('-alpha', 1)
-        self.lift()
-        self.focus_force()
+        # Avoid aggressive focus_force() during startup; it can trigger
+        # unstable behavior on some Windows setups.
+        self.after(10, self.lift)
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
 
         logger.info("App", "Application startup complete")
@@ -419,7 +422,8 @@ class ModManagerApp(ctk.CTk):
 
     # --- Global fast scroll --------------------------------------------------
 
-    _SCROLL_SPEED = 5  # Multiplier for mouse wheel scrolling
+    _SCROLL_SPEED = 5          # Listbox/Text scroll multiplier
+    _CANVAS_SCROLL_SPEED = 14  # CTkScrollableFrame canvas multiplier
 
     def _neutralize_ctk_scroll_management(self):
         """Prevent CTkScrollableFrame from overriding our global scroll handler.
@@ -476,7 +480,7 @@ class ModManagerApp(ctk.CTk):
             pass
 
     def _global_fast_scroll(self, event):
-        """Intercept every MouseWheel event and scroll 5x faster.
+        """Intercept every MouseWheel event and scroll faster.
 
         Walks up the widget tree from the widget under the mouse cursor
         to find the nearest scrollable ancestor (Canvas inside a
@@ -540,7 +544,8 @@ class ModManagerApp(ctk.CTk):
                 return "break"
             direction = -1 if event.delta > 0 else 1
             ticks = max(1, int(round(abs(event.delta) / 120)))
-            delta = direction * self._SCROLL_SPEED * ticks
+            speed = self._CANVAS_SCROLL_SPEED if isinstance(scrollable, tk.Canvas) else self._SCROLL_SPEED
+            delta = direction * speed * ticks
             scrollable.yview_scroll(delta, "units")
         except tk.TclError:
             pass

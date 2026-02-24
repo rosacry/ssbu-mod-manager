@@ -29,6 +29,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 ### Music Management
 - **3-Column Layout** — Stages on the left, playlist in the middle, available tracks on the right
 - **Audio Preview** — Play WAV, OGG, MP3, NUS3AUDIO (LOPUS, OPUS, IDSP, BWAV), and FLAC tracks directly in the app. Uses ffmpeg for high-fidelity NUS3AUDIO decoding when available, with robust manual fallback parser supporting non-aligned sections, JUNK padding, big/little-endian frame sizes, LOPUS sub-header detection, and TOC-byte validation. Automatically converts OGG Opus to WAV via ffmpeg when needed. Click any track while music is playing to auto-switch playback
+- **Background Track Scanning** — Auto-scan of available tracks continues in the background even if you navigate to another page, and the results are ready when you return
 - **Volume & Seek** — Adjustable volume slider and seek timeline for playback
 - **Stage Playlists** — Assign tracks to specific stages with drag-to-reorder
 - **Main Menu Music** — Change the main menu background music by assigning a track to the "Main Menu" stage entry
@@ -84,7 +85,7 @@ A full-featured desktop application for managing Super Smash Bros. Ultimate mods
 - **Smooth UI** — Resize debouncing, proper cleanup, and consistent dark theme
 - **Lazy Page Loading** — Pages are created on first navigation for fast startup
 - **Lazy Audio Init** — Pygame mixer initializes only when audio is first played, not at startup
-- **Fast Scrolling** — 5x scroll speed multiplier across all scrollable widgets, automatically re-applied on page navigation and dynamic content changes
+- **Fast Scrolling** — Accelerated global mouse-wheel handling across all scrollable widgets, with stronger canvas scrolling for long guide pages (Online Guide and Migration)
 - **Non-Blocking Audio** — Audio playback runs in a background thread so the UI never freezes during NUS3AUDIO conversion
 - **Global Save / Discard** — Save and Discard buttons right-aligned in the toolbar header (alongside Undo/Redo). Save is bright green when active, Discard is grey. Both buttons are visually shaded out when there's nothing to save. Ctrl+S to save
 - **Unsaved Changes Warning** — Prompts before closing the application if you have unsaved music or CSS changes
@@ -274,6 +275,13 @@ ssbu-mod-manager/
 MIT
 
 ## Changelog
+
+### v3.1.2
+- **Fix: OPUS/LOPUS music distortion** — Improved LOPUS frame extraction by scanning multiple candidate frame-start offsets (not just the header-size offset) and preferring validated size-prefixed frame layouts over weaker CBR fallback. This resolves tracks that previously played as distorted/noisy audio with faint music underneath
+- **Fix: Stale decoded audio cache** — Added decoder cache revisioning so updated decode logic invalidates old cached WAV output automatically
+- **Fix: Startup window instability/flash** — Simplified startup show flow by removing aggressive `focus_force()` and unnecessary post-deiconify state forcing, reducing border-only flashes and startup instability on some Windows systems
+- **Fix: Online Guide/Migration scrolling** — Removed page-local CTkScrollableFrame wheel monkey-patches that could block the app-wide fast-scroll handler; these pages now consistently use the global accelerated scroll path
+- **Fix: Music scan while tab hidden** — Hardened Music page refresh flow so scan completion is retained even when page UI updates are deferred, and track lists are re-rendered on return
 
 ### v3.1.0
 - **Fix: Scroll speed on Online Guide and Migration** — Root-caused and fixed the actual scroll issue: `BasePage._patch_scrollable_frame_speed()` was binding every child widget inside CTkScrollableFrame with `return "break"` handlers that blocked the global `bind_all("<MouseWheel>")` handler from ever firing. Changed `_recursive_patch_scroll()` to skip CTkScrollableFrame subtrees entirely (scrolling is handled by the global handler), so all pages now scroll at 5× speed

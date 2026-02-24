@@ -448,53 +448,65 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
         header_size = 0x28
 
     # --- Extract Opus frames ---
-    # Try each frame_size candidate. For each, try LE sizes, BE sizes,
-    # and CBR.  Pick the combination that yields the most validated frames.
+    # Some OPUS/LOPUS variants keep valid frame slots at offsets beyond
+    # header_size.  Scan a small set of candidate starts and prefer
+    # size-prefixed extraction over CBR if both validate.
+    start_offsets: list[int] = []
+    for off in [
+        header_size, header_size + 4, header_size + 8,
+        header_size + 12, header_size + 16,
+        0x20, 0x24, 0x28, 0x2C, 0x30, 0x38, 0x40,
+    ]:
+        if 0 <= off <= len(lopus_data) - 8 and off not in start_offsets:
+            start_offsets.append(off)
+    if not start_offsets:
+        start_offsets = [header_size]
+
     best_frames: list[bytes] = []
     best_channel_count = channel_candidates[0]
+    best_kind_rank = -1  # 3=size-prefixed, 2=CBR, 1=auto-detect
+
+    def _consider(frames: list[bytes], kind_rank: int) -> None:
+        nonlocal best_frames, best_kind_rank
+        if len(frames) < 10 or not _validate_opus_frames(frames):
+            return
+        if kind_rank > best_kind_rank:
+            best_frames = frames
+            best_kind_rank = kind_rank
+            return
+        if kind_rank == best_kind_rank and len(frames) > len(best_frames):
+            best_frames = frames
 
     for frame_size in frame_size_candidates:
-        # Also try frame_size + 4 in case the header value excludes the
-        # 4-byte size prefix from the slot size.
         for slot_size in [frame_size, frame_size + 4]:
             if slot_size < 8 or slot_size > 0x2000:
                 continue
+            for frame_start in start_offsets:
+                _consider(
+                    _extract_frames_with_slot(
+                        lopus_data, frame_start, slot_size, '<'),
+                    3,
+                )
+                _consider(
+                    _extract_frames_with_slot(
+                        lopus_data, frame_start, slot_size, '>'),
+                    3,
+                )
 
-            # LE size-prefixed frames
-            frames = _extract_frames_with_slot(
-                lopus_data, header_size, slot_size, '<')
-            if len(frames) >= 10 and _validate_opus_frames(frames):
-                if len(frames) > len(best_frames):
-                    best_frames = frames
-                    break  # Slot size confirmed, no need to try +4
+    # CBR fallback when no robust size-prefixed extraction was found.
+    for frame_size in frame_size_candidates:
+        for frame_start in start_offsets:
+            _consider(
+                _extract_opus_cbr_frames(
+                    lopus_data, frame_size, search_start=frame_start),
+                2,
+            )
 
-            # BE size-prefixed frames
-            frames = _extract_frames_with_slot(
-                lopus_data, header_size, slot_size, '>')
-            if len(frames) >= 10 and _validate_opus_frames(frames):
-                if len(frames) > len(best_frames):
-                    best_frames = frames
-                    break
-
-        if len(best_frames) >= 10:
-            break  # Good enough, stop trying other frame sizes
-
-    # If size-prefixed extraction failed with all candidates,
-    # try CBR (fixed-size) frames with each candidate.
-    if len(best_frames) < 10 or not _validate_opus_frames(best_frames):
-        for frame_size in frame_size_candidates:
-            cbr_frames = _extract_opus_cbr_frames(
-                lopus_data, frame_size, search_start=header_size)
-            if len(cbr_frames) >= 10 and _validate_opus_frames(cbr_frames):
-                if len(cbr_frames) > len(best_frames):
-                    best_frames = cbr_frames
-                    break
-
-    # Last resort: auto-detect slot size by scanning the data
-    if len(best_frames) < 10 or not _validate_opus_frames(best_frames):
-        detected = _auto_detect_slot_frames(lopus_data, header_size)
-        if detected and len(detected) > len(best_frames):
-            best_frames = detected
+    # Last resort: auto-detect slot size by scanning from each candidate start.
+    for frame_start in start_offsets:
+        detected = _auto_detect_slot_frames(lopus_data, frame_start)
+        if detected:
+            _consider(detected, 1)
 
     if not best_frames:
         raise ValueError("No Opus frames extracted from LOPUS data")
@@ -1505,6 +1517,7 @@ def _build_ogg_opus_from_frames(opus_frames: list[bytes], channels: int = 2,
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
+_DECODER_CACHE_REV = "r2"
 
 
 def _get_cache_dir() -> Path:
@@ -1531,7 +1544,7 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     except OSError:
         file_size = 0
     from src import __version__
-    cache_key = f"{nus3audio_path.stem}_{file_size}_v{__version__}"
+    cache_key = f"{nus3audio_path.stem}_{file_size}_v{__version__}_{_DECODER_CACHE_REV}"
 
     # Check for any cached format (prefer WAV over OGG since pygame handles WAV better)
     for ext in ('.wav', '.ogg'):

@@ -269,6 +269,8 @@ class MusicPage(BasePage):
         if not self._loaded:
             self._scan_tracks()
         else:
+            self._update_summary()
+            self._render_available_tracks()
             self._populate_stages()
             # Re-render the playlist if a stage was previously selected
             if self._selected_stage:
@@ -382,19 +384,22 @@ class MusicPage(BasePage):
     def _on_tracks_loaded(self, tracks):
         self._loaded = True
         self._all_tracks = tracks
-        self._stop_spinner()
-        self.track_count_label.configure(text=f"{len(tracks)} tracks")
-        self.exclude_var.set(self.app.music_manager.exclude_vanilla)
-        self._update_summary()
-        self._render_available_tracks()
-        self._populate_stages()
+        try:
+            self._stop_spinner()
+            self.track_count_label.configure(text=f"{len(tracks)} tracks")
+            self.exclude_var.set(self.app.music_manager.exclude_vanilla)
+            self._update_summary()
+            self._render_available_tracks()
+            self._populate_stages()
 
-        # Invalidate the dashboard conflict cache because
-        # generate_msbt_overlays() may have changed _MergedResources
-        # (cleaned up stale copies, added/removed files).
-        if "dashboard" in self.app.main_window.pages:
-            dash = self.app.main_window.pages["dashboard"]
-            dash._conflict_cache = None
+            # Invalidate the dashboard conflict cache because
+            # generate_msbt_overlays() may have changed _MergedResources
+            # (cleaned up stale copies, added/removed files).
+            if "dashboard" in self.app.main_window.pages:
+                dash = self.app.main_window.pages["dashboard"]
+                dash._conflict_cache = None
+        except Exception as e:
+            logger.warn("Music", f"Track scan finished but UI update was deferred: {e}")
 
     def _update_summary(self):
         summary = self.app.music_manager.get_assignment_summary()
