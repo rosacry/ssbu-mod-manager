@@ -276,6 +276,11 @@ MIT
 
 ## Changelog
 
+### v3.1.7
+- **Fix: Audio regression rollback** - Reverted the aggressive stereo-coherence decode bias introduced in v3.1.6 that could over-select alternate OPUS/LOPUS paths and worsen distortion on some tracks
+- **Fix: stale decode cache after rollback** - Bumped decoder cache revision to `r5` so prior cached WAV outputs from experimental decode selection are invalidated automatically
+- **Diagnostics: candidate ranking logs** - Added debug logs that print top OPUS/LOPUS candidate scores (adjusted score, raw score, duration, bitrate) to make remaining distortion cases directly traceable from `crash.log`
+
 ### v3.1.6
 - **Fix: Online Guide/Migration still feeling slow** - Added a dedicated boosted canvas wheel multiplier for these two long-form pages so they now scroll significantly faster than standard pages
 - **Fix: OPUS preview still choosing distorted candidates** - Added stereo-coherence heuristics (left/right correlation + L-R diff energy ratio) to OPUS/LOPUS candidate scoring so noisy container decodes are penalized even when raw PCM amplitude looks "good"
