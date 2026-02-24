@@ -12,7 +12,7 @@ args = [
     'main.py',
     '--name=SSBUModManager',
     '--onefile',
-    '--windowed',
+    '--console',
     '--add-data=ParamLabels.csv;.',
     '--hidden-import=pyprc',
     # PylibMS installs as both LMS (uppercase) and lms (lowercase).

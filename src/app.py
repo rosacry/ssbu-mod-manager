@@ -563,6 +563,13 @@ class ModManagerApp(ctk.CTk):
 
     def _on_close(self):
         """Clean shutdown - prompt for unsaved changes, stop threads and audio."""
+        import sys as _sys
+        try:
+            _sys.stderr.write("[CLOSE] _on_close entered\n")
+            _sys.stderr.flush()
+        except Exception:
+            pass
+
         if self._has_unsaved_changes:
             response = messagebox.askyesnocancel(
                 "Unsaved Changes",
