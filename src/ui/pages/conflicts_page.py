@@ -412,16 +412,9 @@ class ConflictsPage(BasePage):
         self._scanned = True
         self._conflicts = conflicts
         self._locale_msbts = locale_msbts or []
-        is_current_page = False
-        try:
-            is_current_page = getattr(self.app.main_window, "current_page", None) == "conflicts"
-        except Exception:
-            is_current_page = False
-        self._needs_render = not is_current_page
-
-        if not is_current_page:
-            return
-
+        # Always render the latest scan snapshot. Relying on current_page state
+        # here can race during navigation transitions and leave stale/blank UI.
+        self._needs_render = False
         try:
             self.after_idle(self._render)
         except Exception:

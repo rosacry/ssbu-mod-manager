@@ -83,6 +83,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts results viewport now runs a short multi-pass settle to prevent intermittent mid-list gaps after scan completion.
 - Conflicts scan/render now rebuilds the scroll host each pass to eliminate stale scrollregion state that could cause intermittent large top gaps.
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
+- Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
