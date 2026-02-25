@@ -251,6 +251,8 @@ class ConflictsPage(BasePage):
 
     def _show_conflict_list(self):
         try:
+            if self.conflict_list is None or not bool(self.conflict_list.winfo_exists()):
+                self._create_conflict_list()
             if not self.conflict_list.winfo_manager():
                 self.conflict_list.pack(fill="both", expand=True)
             self.conflict_list.lift()
@@ -341,7 +343,6 @@ class ConflictsPage(BasePage):
         current_gen = getattr(self, "_scan_generation", 0)
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
-        self._recreate_conflict_list()
         self._show_conflict_list()
         self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
 
@@ -441,7 +442,6 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
-        self._recreate_conflict_list()
         self._show_conflict_list()
 
         # Normalize scan outputs so malformed rows never break rendering.

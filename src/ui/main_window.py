@@ -264,6 +264,9 @@ class MainWindow(ctk.CTkFrame):
         page = self.pages.get(page_id)
         if page is None:
             return
+        if page_id == self.current_page:
+            # Never unmap the active page during background warmup.
+            return
         self._map_page(page)
         page.lower()
         try:
@@ -271,6 +274,8 @@ class MainWindow(ctk.CTkFrame):
             self.content.update_idletasks()
         except Exception:
             pass
+        if page_id == self.current_page:
+            return
         try:
             page.place_forget()
         except Exception:

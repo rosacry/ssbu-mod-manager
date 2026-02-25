@@ -1234,7 +1234,12 @@ class ModManagerApp(ctk.CTk):
             g = self.geometry()
             m = re.match(r"(\d+)x(\d+)", g)
             if m:
-                return int(m.group(1)), int(m.group(2))
+                w = int(m.group(1))
+                h = int(m.group(2))
+                # Some Tk startup paths briefly report 1x1 while withdrawn.
+                # Ignore that transient size so centering doesn't visibly jump.
+                if w > 50 and h > 50:
+                    return w, h
         except Exception:
             pass
         try:
@@ -1738,6 +1743,16 @@ class ModManagerApp(ctk.CTk):
             )
             return
         page_id = self._page_warmup_queue.pop(0)
+        # Queue membership is computed once. By the time this step runs, the
+        # user may already be on this page, so never prime the active page.
+        current = getattr(self.main_window, "current_page", None)
+        if page_id == current:
+            if self._page_warmup_queue:
+                self._page_warmup_after_id = self.after(
+                    self._PAGE_WARMUP_STEP_DELAY_MS,
+                    self._run_page_warmup_step,
+                )
+            return
         page = self._create_page(page_id)
         # Prime geometry while hidden but avoid page data loads (some pages kick
         # off heavy scans in on_show(), which causes startup jank).
