@@ -32,7 +32,7 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 70
+    _ZOOM_APPLY_DEBOUNCE_MS = 160
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _RESIZE_SETTLE_MS = 84
     _DRAG_REDRAW_INTERVAL_MS = 16
@@ -104,7 +104,9 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_after_id = None
         self._scroll_refresh_widgets = set()
         self._scroll_refresh_full_counter = 0
+        self._scroll_refresh_drag_counter = 0
         self._drag_refresh_after_id = None
+        self._drag_redraw_counter = 0
         self._scrollbar_drag_active = False
         self._active_drag_scroll_widget = None
         self._pointer_left_down = False
@@ -499,20 +501,20 @@ class ModManagerApp(ctk.CTk):
             return
         self._note_user_activity()
         self._pending_scale_apply = scale
-        now = time.monotonic()
-        min_interval = self._ZOOM_APPLY_DEBOUNCE_MS / 1000.0
-        due_in = min_interval - (now - self._last_scale_apply_monotonic)
         if self._zoom_apply_after_id:
             try:
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
             self._zoom_apply_after_id = None
-        if due_in <= 0:
-            self._flush_pending_scale()
-            return
-        due_ms = max(8, int(due_in * 1000))
-        self._zoom_apply_after_id = self.after(due_ms, self._flush_pending_scale)
+        # Apply once input settles so held key repeats don't stutter.
+        self._zoom_apply_after_id = self.after(self._ZOOM_APPLY_DEBOUNCE_MS, self._flush_pending_scale)
+        try:
+            if hasattr(self, "main_window") and hasattr(self.main_window, "status_bar"):
+                target_pct = self._scale_to_display_percent(scale)
+                self.main_window.status_bar.set_zoom(target_pct)
+        except Exception:
+            pass
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -562,6 +564,21 @@ class ModManagerApp(ctk.CTk):
                 page.update_idletasks()
                 self.main_window.content.update_idletasks()
                 page.after_idle(page.update_idletasks)
+            self._reset_all_canvas_xview(self.main_window)
+        except Exception:
+            pass
+
+    def _reset_all_canvas_xview(self, widget):
+        """Force horizontal canvas offset back to 0 after scale/layout churn."""
+        import tkinter as tk
+        try:
+            if isinstance(widget, tk.Canvas):
+                try:
+                    widget.xview_moveto(0.0)
+                except Exception:
+                    pass
+            for child in widget.winfo_children():
+                self._reset_all_canvas_xview(child)
         except Exception:
             pass
 
@@ -728,12 +745,19 @@ class ModManagerApp(ctk.CTk):
         if not self._pointer_left_down or not self._scrollbar_drag_active or self._shutting_down:
             return
         target = self._active_drag_scroll_widget
+        self._drag_redraw_counter = (self._drag_redraw_counter + 1) % 3
         try:
             if target is not None and bool(target.winfo_exists()):
-                target.update_idletasks()
-                target.after_idle(target.update_idletasks)
+                if self._drag_redraw_counter == 0:
+                    target.update()
+                else:
+                    target.update_idletasks()
+                    target.after_idle(target.update_idletasks)
             else:
-                self.update_idletasks()
+                if self._drag_redraw_counter == 0:
+                    self.update()
+                else:
+                    self.update_idletasks()
         except Exception:
             pass
         try:
@@ -1128,7 +1152,14 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            self.update_idletasks()
+            if self._pointer_left_down and self._scrollbar_drag_active:
+                self._scroll_refresh_drag_counter = (self._scroll_refresh_drag_counter + 1) % 3
+                if self._scroll_refresh_drag_counter == 0:
+                    self.update()
+                else:
+                    self.update_idletasks()
+            else:
+                self.update_idletasks()
         except Exception:
             pass
         try:

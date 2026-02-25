@@ -66,6 +66,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Zoom changes are throttled for smoother repeated `Ctrl +/-` use with less jitter.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
+- Page navigation now uses an isolated transition overlay to avoid mixed/partial page paints during fast tab switching.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.
 - Nested wrapper folders are auto-flattened on import and also surfaced as conflicts during scans.
@@ -78,6 +79,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts scan rendering now includes a resilient fallback so results never appear blank after a successful scan.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
+- Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
 - Primary page headers now match sidebar navigation labels exactly (no redundant "Manager/Management" suffixes).
 
 ## Repository Layout

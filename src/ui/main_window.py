@@ -14,6 +14,8 @@ class MainWindow(ctk.CTkFrame):
         self._shown_pages = set()
         self._render_settle_after_id = None
         self._render_settle_page_id = None
+        self._nav_token = 0
+        self._nav_overlay_after_id = None
 
         # Layout: sidebar | separator | content
         self.sidebar = Sidebar(self, on_navigate=app.navigate)
@@ -104,8 +106,16 @@ class MainWindow(ctk.CTkFrame):
         # Listen for unsaved changes
         self._unsaved_listener_id = None
 
-        self.content = ctk.CTkFrame(right, fg_color="transparent", corner_radius=0)
+        self.content = ctk.CTkFrame(right, fg_color="#12121e", corner_radius=0)
         self.content.pack(fill="both", expand=True)
+        self._nav_overlay = ctk.CTkFrame(self.content, fg_color="#12121e", corner_radius=0)
+        self._nav_overlay_label = ctk.CTkLabel(
+            self._nav_overlay,
+            text="Loading...",
+            font=ctk.CTkFont(size=13),
+            text_color="#6a6a8a",
+        )
+        self._nav_overlay_label.place(relx=0.5, rely=0.5, anchor="center")
 
         self.status_bar = StatusBar(right)
         self.status_bar.pack(fill="x", side="bottom")
@@ -272,7 +282,14 @@ class MainWindow(ctk.CTkFrame):
             return
         if page_id == self.current_page:
             return
+        self._nav_token += 1
+        token = self._nav_token
+        self._show_navigation_overlay()
+        self.after(0, lambda pid=page_id, t=token: self._complete_navigation(pid, t))
 
+    def _complete_navigation(self, page_id: str, token: int):
+        if token != self._nav_token:
+            return
         prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
         first_visit = page_id not in self._shown_pages
@@ -281,14 +298,11 @@ class MainWindow(ctk.CTkFrame):
             page.lower()
         except Exception:
             pass
-        # Prepare target page before revealing it so users don't see
-        # intermediate population/reflow states.
         try:
             page.on_show()
             page.update_idletasks()
             self.content.update_idletasks()
             if first_visit:
-                # Give first-time pages one more layout pass while hidden.
                 page.update_idletasks()
                 self.content.update_idletasks()
         except Exception:
@@ -316,14 +330,43 @@ class MainWindow(ctk.CTkFrame):
                 prev_page.place_forget()
             except Exception:
                 pass
-        # Set focus on the page so the user doesn't have to click it
-        # after selecting a sidebar item.
         page.focus_set()
-        # Re-patch scroll speeds after page content may have changed
         if hasattr(page, '_patch_all_scroll_speeds'):
             page.after(150, page._patch_all_scroll_speeds)
         self._schedule_render_settle(page_id)
         self.sidebar.set_active(page_id)
+        self._hide_navigation_overlay(token)
+
+    def _show_navigation_overlay(self):
+        try:
+            if self._nav_overlay_after_id:
+                self.after_cancel(self._nav_overlay_after_id)
+                self._nav_overlay_after_id = None
+        except Exception:
+            pass
+        try:
+            self._nav_overlay.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
+            self._nav_overlay.lift()
+            self._nav_overlay.update_idletasks()
+        except Exception:
+            pass
+
+    def _hide_navigation_overlay(self, token: int):
+        def _clear():
+            self._nav_overlay_after_id = None
+            if token != self._nav_token:
+                return
+            try:
+                self._nav_overlay.place_forget()
+            except Exception:
+                pass
+
+        try:
+            if self._nav_overlay_after_id:
+                self.after_cancel(self._nav_overlay_after_id)
+        except Exception:
+            pass
+        self._nav_overlay_after_id = self.after(36, _clear)
 
     def _schedule_render_settle(self, page_id: str):
         """Run a delayed idle/layout settle pass for the visible page."""

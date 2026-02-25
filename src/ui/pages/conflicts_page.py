@@ -392,16 +392,39 @@ class ConflictsPage(BasePage):
         self._scanned = True
         self._conflicts = conflicts
         self._locale_msbts = locale_msbts or []
-        self._needs_render = False
+        is_current_page = False
+        try:
+            is_current_page = getattr(self.app.main_window, "current_page", None) == "conflicts"
+        except Exception:
+            is_current_page = False
+        self._needs_render = not is_current_page
 
-        # Always render once scan results land. Viewability checks on Windows
-        # can race during rapid navigation and leave the page blank.
+        if not is_current_page:
+            return
+
         try:
             self.after_idle(self._render)
         except Exception:
             self._render()
 
     def _render(self):
+        try:
+            self._render_impl()
+        except Exception as e:
+            logger.error("Conflicts", f"Render failed unexpectedly: {e}")
+            try:
+                self._set_rescan_visible(True)
+                self._hide_initial_prompt()
+                self._show_conflict_list()
+                self.summary_label.configure(
+                    text="Conflicts detected (fallback rendering active).",
+                    text_color="#d4a017",
+                )
+                self._render_minimal_results()
+            except Exception:
+                pass
+
+    def _render_impl(self):
         self._needs_render = False
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
@@ -522,65 +545,68 @@ class ConflictsPage(BasePage):
         rendered_conflict_rows = 0
         rendered_section_blocks = 0
         for ext, conflicts in sorted_groups:
-            conflicts.sort(key=lambda c: (
-                severity_rank.get(getattr(c, "severity", None), 99),
-                str(getattr(c, "relative_path", "")).lower(),
-            ))
-            # Type header with explanation
-            info = CONFLICT_EXPLANATIONS.get(ext)
-            if info:
-                type_name, description, can_merge = info
-            else:
-                type_name = f"{ext.upper()} Conflicts"
-                description = "Files of this type are modified by multiple mods."
-                can_merge = False
+            try:
+                conflicts.sort(key=lambda c: (
+                    severity_rank.get(getattr(c, "severity", None), 99),
+                    str(getattr(c, "relative_path", "")).lower(),
+                ))
+                # Type header with explanation
+                info = CONFLICT_EXPLANATIONS.get(ext)
+                if info:
+                    type_name, description, can_merge = info
+                else:
+                    type_name = f"{ext.upper()} Conflicts"
+                    description = "Files of this type are modified by multiple mods."
+                    can_merge = False
 
-            type_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
-            type_header.pack(fill="x", pady=(8, 4))
-            rendered_section_blocks += 1
+                type_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+                type_header.pack(fill="x", pady=(8, 4))
+                rendered_section_blocks += 1
 
-            header_inner = ctk.CTkFrame(type_header, fg_color="transparent")
-            header_inner.pack(fill="x", padx=12, pady=8)
+                header_inner = ctk.CTkFrame(type_header, fg_color="transparent")
+                header_inner.pack(fill="x", padx=12, pady=8)
 
-            ctk.CTkLabel(header_inner, text=f"{type_name} ({len(conflicts)})",
-                         font=ctk.CTkFont(size=13, weight="bold"),
-                         text_color="white", anchor="w").pack(anchor="w")
+                ctk.CTkLabel(header_inner, text=f"{type_name} ({len(conflicts)})",
+                             font=ctk.CTkFont(size=13, weight="bold"),
+                             text_color="white", anchor="w").pack(anchor="w")
 
-            ctk.CTkLabel(header_inner, text=description,
-                         font=ctk.CTkFont(size=11), text_color="#888888",
-                         anchor="w", wraplength=800, justify="left").pack(anchor="w")
+                ctk.CTkLabel(header_inner, text=description,
+                             font=ctk.CTkFont(size=11), text_color="#888888",
+                             anchor="w", wraplength=800, justify="left").pack(anchor="w")
 
-            if can_merge:
-                ctk.CTkLabel(header_inner,
-                             text="These conflicts can be automatically merged.",
-                             font=ctk.CTkFont(size=11), text_color="#2fa572",
-                             anchor="w").pack(anchor="w")
+                if can_merge:
+                    ctk.CTkLabel(header_inner,
+                                 text="These conflicts can be automatically merged.",
+                                 font=ctk.CTkFont(size=11), text_color="#2fa572",
+                                 anchor="w").pack(anchor="w")
 
-            # Conflict cards for this type
-            for conflict in conflicts:
-                try:
-                    card = ConflictCard(
-                        self.conflict_list, conflict,
-                        on_merge=self._merge_conflict,
-                        on_keep=self._keep_conflict,
-                        on_ignore=self._ignore_conflict,
-                    )
-                    card.pack(fill="x", pady=3)
-                    rendered_conflict_rows += 1
-                except Exception as e:
-                    logger.warn(
-                        "Conflicts",
-                        f"Failed to render conflict card for {getattr(conflict, 'relative_path', 'unknown')}: {e}",
-                    )
-                    fallback_row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
-                    fallback_row.pack(fill="x", pady=2)
-                    ctk.CTkLabel(
-                        fallback_row,
-                        text=f"Could not render conflict row: {getattr(conflict, 'relative_path', 'unknown')}",
-                        font=ctk.CTkFont(size=12),
-                        text_color="#d4a017",
-                        anchor="w",
-                    ).pack(fill="x", padx=10, pady=8)
+                # Conflict cards for this type
+                for conflict in conflicts:
+                    try:
+                        card = ConflictCard(
+                            self.conflict_list, conflict,
+                            on_merge=self._merge_conflict,
+                            on_keep=self._keep_conflict,
+                            on_ignore=self._ignore_conflict,
+                        )
+                        card.pack(fill="x", pady=3)
+                        rendered_conflict_rows += 1
+                    except Exception as e:
+                        logger.warn(
+                            "Conflicts",
+                            f"Failed to render conflict card for {getattr(conflict, 'relative_path', 'unknown')}: {e}",
+                        )
+                        fallback_row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
+                        fallback_row.pack(fill="x", pady=2)
+                        ctk.CTkLabel(
+                            fallback_row,
+                            text=f"Could not render conflict row: {getattr(conflict, 'relative_path', 'unknown')}",
+                            font=ctk.CTkFont(size=12),
+                            text_color="#d4a017",
+                            anchor="w",
+                        ).pack(fill="x", padx=10, pady=8)
+            except Exception as e:
+                logger.warn("Conflicts", f"Failed to render conflict section '{ext}': {e}")
 
         # Render locale-specific MSBT section if any were found
         if self._locale_msbts:

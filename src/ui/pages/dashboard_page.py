@@ -23,6 +23,8 @@ class DashboardPage(BasePage):
         self._spinner_index = 0
         self._stats_refresh_after_id = None
         self._startup_refresh_after_id = None
+        self._stats_refresh_generation = 0
+        self._stats_refresh_thread_active = False
         self._build_ui()
 
     def _build_ui(self):
@@ -239,6 +241,11 @@ class DashboardPage(BasePage):
     def _refresh_stats_fast(self):
         """Quick refresh using cached data."""
         self._stats_refresh_after_id = None
+        if self._stats_refresh_thread_active:
+            return
+        self._stats_refresh_thread_active = True
+        self._stats_refresh_generation += 1
+        generation = self._stats_refresh_generation
         try:
             settings = self.app.config_manager.settings
             configured = bool(settings.eden_sdmc_path)
@@ -250,27 +257,52 @@ class DashboardPage(BasePage):
                 # Re-show if not currently packed (e.g., after settings reset)
                 if not self.getting_started.winfo_ismapped():
                     self.getting_started.pack(fill="x", padx=30, pady=(5, 20))
-
-            if settings.mods_path and settings.mods_path.exists():
-                mods = self.app.mod_manager.list_mods()
-                enabled = sum(1 for m in mods if m.status == ModStatus.ENABLED)
-                disabled = sum(1 for m in mods if m.status == ModStatus.DISABLED)
-                self.stat_cards["mods_enabled"].configure(text=str(enabled))
-                self.stat_cards["mods_disabled"].configure(text=str(disabled))
-                logger.debug("Dashboard", f"Mods: {enabled} enabled, {disabled} disabled")
-
-            if settings.plugins_path and settings.plugins_path.exists():
-                plugins = self.app.plugin_manager.list_plugins()
-                active = sum(1 for p in plugins if p.status == PluginStatus.ENABLED)
-                self.stat_cards["plugins"].configure(text=str(active))
-                logger.debug("Dashboard", f"Plugins: {active} active")
-
-            # Use cached conflict count (including locale MSBTs)
-            if self._conflict_cache is not None:
-                total = self._conflict_cache + (self._locale_msbt_cache or 0)
-                self.stat_cards["conflicts"].configure(text=str(total))
         except Exception as e:
             logger.error("Dashboard", f"Stats refresh error: {e}")
+            self._stats_refresh_thread_active = False
+            return
+
+        def collect():
+            enabled = 0
+            disabled = 0
+            active = 0
+            try:
+                local_settings = self.app.config_manager.settings
+                if local_settings.mods_path and local_settings.mods_path.exists():
+                    mods = self.app.mod_manager.list_mods()
+                    enabled = sum(1 for m in mods if m.status == ModStatus.ENABLED)
+                    disabled = sum(1 for m in mods if m.status == ModStatus.DISABLED)
+                if local_settings.plugins_path and local_settings.plugins_path.exists():
+                    plugins = self.app.plugin_manager.list_plugins()
+                    active = sum(1 for p in plugins if p.status == PluginStatus.ENABLED)
+            except Exception as e:
+                logger.error("Dashboard", f"Stats worker error: {e}")
+
+            def apply():
+                self._stats_refresh_thread_active = False
+                if generation != self._stats_refresh_generation:
+                    return
+                try:
+                    self.stat_cards["mods_enabled"].configure(text=str(enabled))
+                    self.stat_cards["mods_disabled"].configure(text=str(disabled))
+                    self.stat_cards["plugins"].configure(text=str(active))
+                    logger.debug("Dashboard", f"Mods: {enabled} enabled, {disabled} disabled")
+                    logger.debug("Dashboard", f"Plugins: {active} active")
+                    if self._conflict_cache is not None:
+                        total = self._conflict_cache + (self._locale_msbt_cache or 0)
+                        self.stat_cards["conflicts"].configure(text=str(total))
+                except Exception as e:
+                    logger.error("Dashboard", f"Stats apply error: {e}")
+
+            try:
+                if not self.app.shutting_down:
+                    self.after(0, apply)
+                else:
+                    self._stats_refresh_thread_active = False
+            except Exception:
+                self._stats_refresh_thread_active = False
+
+        threading.Thread(target=collect, daemon=True).start()
 
     def _force_refresh(self):
         """Full refresh with conflict scanning in background thread."""
