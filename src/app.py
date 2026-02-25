@@ -344,6 +344,13 @@ class ModManagerApp(ctk.CTk):
         self.report_callback_exception = self._on_tk_error
 
         self.update_idletasks()
+        # Build and settle the initial dashboard page while still hidden so
+        # the first visible frame is fully rendered.
+        try:
+            self._complete_startup_navigation(pre_map=True)
+        except Exception:
+            pass
+        self.update_idletasks()
 
         # Center before first show.
         self._center_window_on_screen()
@@ -399,13 +406,6 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
-        # Defer first real page navigation until after the window is mapped so
-        # startup appears immediately instead of freezing on dashboard setup.
-        try:
-            self._startup_nav_after_id = self.after(40, self._complete_startup_navigation)
-        except Exception:
-            self._complete_startup_navigation()
-
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
         _dbg("__init__ complete")
@@ -435,13 +435,20 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
-    def _complete_startup_navigation(self):
-        """Finish initial page setup after the root window is visible."""
+    def _complete_startup_navigation(self, pre_map: bool = False):
+        """Finish initial page setup, optionally while startup window is still hidden."""
         self._startup_nav_after_id = None
         if self._shutting_down:
             return
         try:
             self.navigate("dashboard")
+            # MainWindow.navigate schedules work via after(0). Process one
+            # event pass during hidden startup so the first paint is complete.
+            if pre_map:
+                try:
+                    self.update()
+                except Exception:
+                    pass
             self.update_idletasks()
         except Exception:
             pass

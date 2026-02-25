@@ -79,6 +79,8 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts scan rendering now includes a resilient fallback so results never appear blank after a successful scan.
 - Conflicts initial prompt and scan results now use isolated hosts with explicit show/hide transitions to prevent blank-result overlay races.
 - Startup geometry is centered before first paint and no delayed post-show recenter is used.
+- Startup now pre-renders the initial dashboard while hidden so first visible paint does not show partial widgets.
+- Conflicts results viewport now runs a short multi-pass settle to prevent intermittent mid-list gaps after scan completion.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.

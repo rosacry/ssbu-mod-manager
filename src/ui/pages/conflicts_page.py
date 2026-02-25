@@ -65,6 +65,7 @@ class ConflictsPage(BasePage):
         self._initial_prompt_frame = None
         self._initial_prompt_host = None
         self._initial_prompt_visible = False
+        self._viewport_stabilize_after_ids = []
         self._build_ui()
 
     def _build_ui(self):
@@ -137,6 +138,7 @@ class ConflictsPage(BasePage):
         # Keep initial prompt in a separate non-scroll host so prompt placement
         # cannot corrupt the scrollable canvas region for real results.
         self._initial_prompt_host = ctk.CTkFrame(self._results_stack, fg_color="transparent")
+        self._initial_prompt_host.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
         self.bind("<Configure>", self._on_page_configure, add="+")
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
@@ -152,9 +154,11 @@ class ConflictsPage(BasePage):
             self._set_rescan_visible(True)
             self._hide_initial_prompt()
             self.conflict_list.update_idletasks()
+            self._stabilize_conflict_viewport()
 
     def _show_initial_prompt(self):
         """Show initial centered scan prompt and keep results list hidden/cleared."""
+        self._cancel_conflict_viewport_stabilization()
         self._set_rescan_visible(False)
         self._set_results_chrome_visible(False)
         self.auto_resolve_btn.pack_forget()
@@ -190,6 +194,7 @@ class ConflictsPage(BasePage):
         self._show_empty_state_host()
 
     def _hide_initial_prompt(self):
+        self._cancel_conflict_viewport_stabilization()
         self._initial_prompt_visible = False
         self._set_results_chrome_visible(True)
         if self._initial_prompt_frame is not None:
@@ -234,7 +239,7 @@ class ConflictsPage(BasePage):
                 self.conflict_list.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
             self.conflict_list.lift()
             if self._initial_prompt_host.winfo_manager():
-                self._initial_prompt_host.place_forget()
+                self._initial_prompt_host.lower()
         except Exception:
             pass
 
@@ -329,6 +334,7 @@ class ConflictsPage(BasePage):
                      text="Scanning mod files for conflicts...",
                      font=ctk.CTkFont(size=13), text_color="#888888").pack(pady=40)
         self._reset_conflict_canvas_view()
+        self._stabilize_conflict_viewport()
 
         logger.info("Conflicts", f"Starting conflict scan in: {settings.mods_path}")
         mods_path = settings.mods_path
@@ -382,6 +388,7 @@ class ConflictsPage(BasePage):
         ctk.CTkLabel(self.conflict_list,
                      text=f"Scan error: {error_msg}\nClick 'Rescan' to try again.",
                      font=ctk.CTkFont(size=13), text_color="#e94560").pack(pady=40)
+        self._stabilize_conflict_viewport()
 
     def _on_scan_done(self, conflicts, locale_msbts=None):
         self._scanning = False
@@ -676,6 +683,7 @@ class ConflictsPage(BasePage):
             f"widgets={len(self.conflict_list.winfo_children())}",
         )
         self._reset_conflict_canvas_view()
+        self._stabilize_conflict_viewport()
         self.after(22, self._ensure_results_not_blank)
         # Re-patch scroll speed after rendering new widgets
         self.after(100, self._patch_all_scroll_speeds)
@@ -731,6 +739,7 @@ class ConflictsPage(BasePage):
 
         ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
         self._reset_conflict_canvas_view()
+        self._stabilize_conflict_viewport()
 
     def _reset_conflict_canvas_view(self):
         """Normalize list canvas view after prompt/results mode changes."""
@@ -745,6 +754,57 @@ class ConflictsPage(BasePage):
                 canvas.yview_moveto(0.0)
         except Exception:
             pass
+
+    def _cancel_conflict_viewport_stabilization(self):
+        pending = getattr(self, "_viewport_stabilize_after_ids", None) or []
+        self._viewport_stabilize_after_ids = []
+        for aid in pending:
+            try:
+                self.after_cancel(aid)
+            except Exception:
+                pass
+
+    def _stabilize_conflict_viewport(self, passes: int = 4):
+        """Run a short multi-pass viewport settle so results always start at the top."""
+        self._cancel_conflict_viewport_stabilization()
+
+        def _tick(remaining: int):
+            if self._scanning and remaining < passes:
+                return
+            self._reset_conflict_canvas_view()
+            try:
+                canvas = getattr(self.conflict_list, "_parent_canvas", None)
+                children = [w for w in self.conflict_list.winfo_children() if bool(w.winfo_exists())]
+                y0 = 0.0
+                first_y = -1
+                if canvas is not None:
+                    try:
+                        y0 = float(canvas.yview()[0])
+                    except Exception:
+                        y0 = 0.0
+                if children:
+                    try:
+                        first_y = int(children[0].winfo_y())
+                    except Exception:
+                        first_y = -1
+                if canvas is not None and (y0 > 0.0015 or first_y > 60):
+                    canvas.yview_moveto(0.0)
+                logger.debug(
+                    "Conflicts",
+                    f"Viewport settle pass={passes - remaining + 1}/{passes} y0={y0:.4f} first_y={first_y} "
+                    f"children={len(children)}",
+                )
+            except Exception:
+                pass
+
+            if remaining > 1:
+                try:
+                    aid = self.after(40, lambda: _tick(remaining - 1))
+                    self._viewport_stabilize_after_ids.append(aid)
+                except Exception:
+                    pass
+
+        _tick(passes)
 
     def _merge_conflict(self, conflict):
         try:
