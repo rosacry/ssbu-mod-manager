@@ -130,7 +130,9 @@ class ConflictsPage(BasePage):
 
         self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
-        self._initial_prompt_host = ctk.CTkFrame(self, fg_color="transparent")
+        # Render both initial prompt and scan results in the same scrollable
+        # host to avoid pack/forget races that can leave the results area blank.
+        self._initial_prompt_host = self.conflict_list
         self.bind("<Configure>", self._on_page_configure, add="+")
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
@@ -214,26 +216,13 @@ class ConflictsPage(BasePage):
             pass
 
     def _show_empty_state_host(self):
-        try:
-            if self.conflict_list.winfo_manager():
-                self.conflict_list.pack_forget()
-        except Exception:
-            pass
-        try:
-            if not self._initial_prompt_host.winfo_manager():
-                self._initial_prompt_host.pack(fill="both", expand=True, padx=30, pady=(0, 10))
-        except Exception:
-            pass
+        self._show_conflict_list()
 
     def _show_conflict_list(self):
         try:
-            if self._initial_prompt_host.winfo_manager():
-                self._initial_prompt_host.pack_forget()
-        except Exception:
-            pass
-        try:
             if not self.conflict_list.winfo_manager():
                 self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+            self.conflict_list.lift()
         except Exception:
             pass
 
@@ -692,11 +681,8 @@ class ConflictsPage(BasePage):
             return
         self._show_conflict_list()
         try:
-            if self._initial_prompt_host.winfo_manager():
-                self._initial_prompt_host.pack_forget()
-        except Exception:
-            pass
-        try:
+            if not self.conflict_list.winfo_ismapped():
+                self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
             children = [w for w in self.conflict_list.winfo_children() if bool(w.winfo_exists())]
         except Exception:
             children = []

@@ -75,8 +75,9 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Rename dialogs use a fully prepared modal show path to avoid first-frame flash.
 - Windows titlebar/taskbar icon now comes from a shared multi-resolution icon asset.
 - Lazy pages are background-warmed after startup to reduce first-open tab hitching.
-- Main window startup/shutdown now uses a short fade for smoother open/close transitions.
+- Main window now opens and closes without fade animations.
 - Conflicts scan rendering now includes a resilient fallback so results never appear blank after a successful scan.
+- Conflicts initial prompt and scan results now share one stable render host to avoid blank-result panel races.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.

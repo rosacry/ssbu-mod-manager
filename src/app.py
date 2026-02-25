@@ -40,6 +40,7 @@ class ModManagerApp(ctk.CTk):
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
+    _ENABLE_WINDOW_FADE = False
     _PAGE_WARMUP_INITIAL_DELAY_MS = 900
     _PAGE_WARMUP_STEP_DELAY_MS = 220
     _PAGE_WARMUP_IDLE_REQUIRED_MS = 900
@@ -360,17 +361,23 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
         fade_in_supported = False
-        try:
-            self.attributes("-alpha", 0.0)
-            fade_in_supported = True
-        except Exception:
-            pass
+        if self._ENABLE_WINDOW_FADE:
+            try:
+                self.attributes("-alpha", 0.0)
+                fade_in_supported = True
+            except Exception:
+                pass
+        else:
+            try:
+                self.attributes("-alpha", 1.0)
+            except Exception:
+                pass
         # Avoid aggressive focus_force() during startup; it can trigger
         # unstable behavior on some Windows setups.
         self.after(20, self._center_window_on_screen)
         self.after(180, self._center_window_on_screen)
         self.after(10, self.lift)
-        if fade_in_supported:
+        if fade_in_supported and self._ENABLE_WINDOW_FADE:
             self.after(25, self._fade_in_window)
         if self._startup_hidden_withdraw:
             self.after(120, lambda: self._ensure_window_visible(attempt=1))
@@ -1543,7 +1550,10 @@ class ModManagerApp(ctk.CTk):
 
         self._shutting_down = True
         logger.info("App", "Shutting down...")
-        self._fade_out_then(self._finalize_shutdown)
+        if self._ENABLE_WINDOW_FADE:
+            self._fade_out_then(self._finalize_shutdown)
+        else:
+            self._finalize_shutdown()
 
     def _finalize_shutdown(self):
         """Final cleanup after optional close animation."""
