@@ -82,8 +82,22 @@ def _write_debug(msg):
         pass
 
 
+def _set_windows_app_id():
+    """Set explicit Windows AppUserModelID for consistent taskbar icon identity."""
+    if os.name != "nt":
+        return
+    app_id = "SSBUModManager.Desktop"
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        _write_debug(f"Set AppUserModelID: {app_id}")
+    except Exception as exc:
+        _write_debug(f"Failed to set AppUserModelID: {exc}")
+
+
 def main():
     _write_debug("main() entered")
+    _set_windows_app_id()
     try:
         _write_debug("importing ModManagerApp...")
         from src.app import ModManagerApp

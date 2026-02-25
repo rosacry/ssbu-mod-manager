@@ -236,17 +236,28 @@ class MainWindow(ctk.CTkFrame):
         """Navigate to a page."""
         if page_id not in self.pages:
             return
+        if page_id == self.current_page:
+            return
 
-        # Hide current page
-        if self.current_page and self.current_page in self.pages:
-            self.pages[self.current_page].lower()
-            self.pages[self.current_page].on_hide()
-
-        # Show new page
-        self.current_page = page_id
+        prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
+        # Prepare target page before revealing it so users don't see
+        # intermediate population/reflow states.
+        try:
+            page.on_show()
+            page.update_idletasks()
+        except Exception:
+            pass
+
+        if prev_page is not None:
+            try:
+                prev_page.on_hide()
+            except Exception:
+                pass
+            prev_page.lower()
+
+        self.current_page = page_id
         page.lift()
-        page.on_show()
         # Set focus on the page so the user doesn't have to click it
         # after selecting a sidebar item.
         page.focus_set()

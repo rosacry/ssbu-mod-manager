@@ -76,7 +76,7 @@ class ModsPage(BasePage):
         import_btn = ctk.CTkButton(
             header_frame, text="Import", width=100,
             command=self._import_mod_folder,
-            fg_color="#245e8a", hover_color="#194664",
+            fg_color="#7a3fb0", hover_color="#633292",
             corner_radius=8, height=34,
         )
         import_btn.pack(side="right", padx=(5, 0))
@@ -648,20 +648,24 @@ class ModsPage(BasePage):
         self._center_dialog(dialog, width=460, height=270)
 
         try:
-            dialog.attributes("-alpha", 0.0)
+            dialog.transient(self.winfo_toplevel())
+        except Exception:
+            pass
+        try:
+            dialog.update_idletasks()
         except Exception:
             pass
         dialog.deiconify()
         dialog.lift()
         try:
+            dialog.wait_visibility()
+        except Exception:
+            pass
+        try:
             dialog.grab_set()
         except Exception:
             pass
         entry.focus_set()
-        try:
-            dialog.after_idle(lambda: dialog.attributes("-alpha", 1.0))
-        except Exception:
-            pass
         self.wait_window(dialog)
         if result["value"] is None:
             return None

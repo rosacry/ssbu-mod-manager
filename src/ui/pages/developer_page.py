@@ -54,14 +54,6 @@ class DeveloperPage(BasePage):
         )
         debug_switch.pack(side="left")
 
-        self.status_label = ctk.CTkLabel(
-            toggle_inner,
-            text="ON" if logger.enabled else "OFF",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#2fa572" if logger.enabled else "#666666",
-        )
-        self.status_label.pack(side="right")
-
         # Copy feedback label
         self.copy_feedback = ctk.CTkLabel(
             toggle_inner, text="",
@@ -146,10 +138,8 @@ class DeveloperPage(BasePage):
         self._update_toggle_status()
 
     def _update_toggle_status(self):
-        if logger.enabled:
-            self.status_label.configure(text="ON", text_color="#2fa572")
-        else:
-            self.status_label.configure(text="OFF", text_color="#666666")
+        # Toggle state is already represented by the switch itself.
+        return
 
     def _load_existing_logs(self):
         self.log_text.delete("1.0", tk.END)

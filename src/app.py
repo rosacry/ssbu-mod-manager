@@ -4,7 +4,7 @@ import importlib
 import re
 import time
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import PhotoImage, messagebox
 
 from src.config import ConfigManager
 from src.paths import auto_detect_sdmc, derive_mods_path, derive_plugins_path
@@ -32,6 +32,10 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
+    _ZOOM_APPLY_DEBOUNCE_MS = 120
+    _ZOOM_PERSIST_DEBOUNCE_MS = 700
+    _RESIZE_SETTLE_MS = 90
+    _DRAG_REDRAW_INTERVAL_MS = 55
 
     def __init__(self):
         import sys as _sys
@@ -84,8 +88,10 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_after_id = None
         self._scroll_refresh_widgets = set()
         self._scroll_refresh_full_counter = 0
+        self._drag_refresh_after_id = None
         self._pointer_left_down = False
         self._suppress_scroll_refresh_until = 0.0
+        self._last_window_activity_size = (0, 0)
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -101,15 +107,25 @@ class ModManagerApp(ctk.CTk):
         except Exception as e:
             logger.warn("App", f"Failed to patch CTk scrollbar drag behavior: {e}")
 
-        # Set window icon
+        # Set window/icon assets. Use iconbitmap for Windows shell integration
+        # and iconphoto as a fallback for titlebar/toplevel consistency.
         try:
             from src.utils.resource_path import resource_path
             icon_path = resource_path("assets/icon.ico")
+            logo_path = resource_path("assets/logo.png")
+            loaded_any = False
             if Path(icon_path).exists():
                 self.iconbitmap(icon_path)
+                loaded_any = True
                 logger.info("App", f"Window icon loaded from {icon_path}")
-            else:
-                logger.warn("App", f"Icon file not found: {icon_path}")
+            if Path(logo_path).exists():
+                # Keep a strong reference so Tk does not garbage-collect the image.
+                self._app_icon_photo = PhotoImage(file=logo_path)
+                self.iconphoto(True, self._app_icon_photo)
+                loaded_any = True
+                logger.info("App", f"Window icon photo loaded from {logo_path}")
+            if not loaded_any:
+                logger.warn("App", f"Icon files not found: {icon_path} / {logo_path}")
         except Exception as e:
             logger.warn("App", f"Failed to set window icon: {e}")
 
@@ -239,9 +255,6 @@ class ModManagerApp(ctk.CTk):
         self.bind("<Control-equal>", lambda e: (self._zoom_in(), "break")[-1])
         self.bind("<Control-minus>", lambda e: (self._zoom_out(), "break")[-1])
         self.bind("<Control-0>", lambda e: (self._zoom_reset(), "break")[-1])
-        self.bind("<Control-Key-=>", lambda e: (self._zoom_in(), "break")[-1])
-        self.bind("<Control-Key-minus>", lambda e: (self._zoom_out(), "break")[-1])
-        self.bind("<Control-Key-0>", lambda e: (self._zoom_reset(), "break")[-1])
         self.bind("<Control-KP_Add>", lambda e: (self._zoom_in(), "break")[-1])
         self.bind("<Control-KP_Subtract>", lambda e: (self._zoom_out(), "break")[-1])
         self.bind("<Control-KP_0>", lambda e: (self._zoom_reset(), "break")[-1])
@@ -415,7 +428,7 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(220, self._flush_pending_scale)
+        self._zoom_apply_after_id = self.after(self._ZOOM_APPLY_DEBOUNCE_MS, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -435,7 +448,7 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._zoom_persist_after_id)
             except Exception:
                 pass
-        self._zoom_persist_after_id = self.after(400, self._flush_scale_persist)
+        self._zoom_persist_after_id = self.after(self._ZOOM_PERSIST_DEBOUNCE_MS, self._flush_scale_persist)
 
     def _flush_scale_persist(self):
         self._zoom_persist_after_id = None
@@ -510,7 +523,7 @@ class ModManagerApp(ctk.CTk):
     def _set_left_button_down(self, pressed: bool):
         self._pointer_left_down = bool(pressed)
         if pressed:
-            self._suppress_scroll_refresh_until = time.monotonic() + 0.35
+            self._suppress_scroll_refresh_until = time.monotonic() + 0.12
             # Drop pending refreshes before scrollbar dragging starts.
             if self._scroll_refresh_after_id:
                 try:
@@ -519,16 +532,70 @@ class ModManagerApp(ctk.CTk):
                     pass
                 self._scroll_refresh_after_id = None
             self._scroll_refresh_widgets.clear()
+            self._ensure_drag_redraw_loop()
+        else:
+            if self._drag_refresh_after_id:
+                try:
+                    self.after_cancel(self._drag_refresh_after_id)
+                except Exception:
+                    pass
+                self._drag_refresh_after_id = None
+            try:
+                self.after(16, self._refresh_after_pointer_release)
+            except Exception:
+                pass
+
+    def _ensure_drag_redraw_loop(self):
+        if self._drag_refresh_after_id or not self._pointer_left_down:
+            return
+        try:
+            self._drag_refresh_after_id = self.after(
+                self._DRAG_REDRAW_INTERVAL_MS, self._drag_redraw_tick
+            )
+        except Exception:
+            self._drag_refresh_after_id = None
+
+    def _drag_redraw_tick(self):
+        self._drag_refresh_after_id = None
+        if not self._pointer_left_down or self._shutting_down:
+            return
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+        self._ensure_drag_redraw_loop()
+
+    def _refresh_after_pointer_release(self):
+        if self._pointer_left_down or self._shutting_down:
+            return
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
 
     def _on_window_activity(self, event):
         """Throttle heavy redraw work during active resize/reflow."""
         try:
             if event.widget != self:
                 return
+            w = int(getattr(event, "width", 0) or 0)
+            h = int(getattr(event, "height", 0) or 0)
+            if w <= 1 or h <= 1:
+                return
+            size = (w, h)
+            if size == self._last_window_activity_size:
+                return
+            self._last_window_activity_size = size
             self._suppress_scroll_refresh_until = max(
                 self._suppress_scroll_refresh_until,
-                time.monotonic() + 0.20,
+                time.monotonic() + 0.16,
             )
+            if self._resize_after_id:
+                try:
+                    self.after_cancel(self._resize_after_id)
+                except Exception:
+                    pass
+            self._resize_after_id = self.after(self._RESIZE_SETTLE_MS, self._finalize_resize)
         except Exception:
             pass
 
@@ -579,6 +646,7 @@ class ModManagerApp(ctk.CTk):
         if getattr(_ctk_scrollbar.CTkScrollbar, "_ssbumm_drag_patch", False):
             return
 
+        app = self
         original_clicked = _ctk_scrollbar.CTkScrollbar._clicked
         original_create_bindings = _ctk_scrollbar.CTkScrollbar._create_bindings
 
@@ -649,6 +717,14 @@ class ModManagerApp(ctk.CTk):
 
                 if scrollbar._command is not None:
                     scrollbar._command("moveto", scrollbar._start_value)
+                    # Trigger a lightweight redraw pass for the actual scroll
+                    # target to reduce transient text tearing during thumb drag.
+                    try:
+                        target_widget = getattr(scrollbar._command, "__self__", None)
+                        if target_widget is not None:
+                            app._schedule_scroll_refresh(target_widget)
+                    except Exception:
+                        pass
             except Exception:
                 # Fall back to stock behavior if anything unexpected happens.
                 return original_clicked(scrollbar, event)
@@ -1007,6 +1083,12 @@ class ModManagerApp(ctk.CTk):
     def _finalize_resize(self):
         """Finalize layout after resize settles."""
         self._resize_after_id = None
+        if self._shutting_down:
+            return
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
 
     def _on_close(self):
         """Clean shutdown - prompt for unsaved changes, stop threads and audio."""
@@ -1068,6 +1150,11 @@ class ModManagerApp(ctk.CTk):
         try:
             if self._scroll_refresh_after_id:
                 self.after_cancel(self._scroll_refresh_after_id)
+        except Exception:
+            pass
+        try:
+            if self._drag_refresh_after_id:
+                self.after_cancel(self._drag_refresh_after_id)
         except Exception:
             pass
 

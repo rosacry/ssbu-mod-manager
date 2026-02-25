@@ -62,7 +62,7 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._scan_generation = 0
         self._initial_prompt_frame = None
-        self._initial_prompt_spacer = None
+        self._initial_prompt_host = None
         self._initial_prompt_visible = False
         self._build_ui()
 
@@ -129,6 +129,7 @@ class ConflictsPage(BasePage):
 
         self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        self._initial_prompt_host = ctk.CTkFrame(self, fg_color="transparent")
         self.bind("<Configure>", self._on_page_configure, add="+")
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
@@ -155,14 +156,12 @@ class ConflictsPage(BasePage):
         self.fix_locale_btn.pack_forget()
         for w in self.conflict_list.winfo_children():
             w.destroy()
+        self._show_empty_state_host()
+        for w in self._initial_prompt_host.winfo_children():
+            w.destroy()
 
-        self._initial_prompt_spacer = ctk.CTkFrame(
-            self.conflict_list, fg_color="transparent", height=24
-        )
-        self._initial_prompt_spacer.pack(fill="x")
-
-        self._initial_prompt_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
-        self._initial_prompt_frame.pack(fill="x", pady=(0, 24))
+        self._initial_prompt_frame = ctk.CTkFrame(self._initial_prompt_host, fg_color="transparent")
+        self._initial_prompt_frame.place(relx=0.5, rely=0.5, anchor="center")
         ctk.CTkLabel(self._initial_prompt_frame, text="No scan performed yet",
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#cccccc").pack(pady=(0, 8))
@@ -182,7 +181,7 @@ class ConflictsPage(BasePage):
         scan_prompt_btn.pack()
 
         self._initial_prompt_visible = True
-        self.after(20, self._reposition_initial_prompt)
+        self._reposition_initial_prompt()
 
     def _hide_initial_prompt(self):
         self._initial_prompt_visible = False
@@ -193,19 +192,35 @@ class ConflictsPage(BasePage):
                 pass
             self._initial_prompt_frame = None
         try:
-            if self._initial_prompt_spacer is not None:
-                self._initial_prompt_spacer.destroy()
+            for w in self._initial_prompt_host.winfo_children():
+                w.destroy()
         except Exception:
             pass
-        self._initial_prompt_spacer = None
+        self._show_conflict_list()
 
     def _show_empty_state_host(self):
-        # Kept for backward compatibility with older call sites.
-        return
+        try:
+            if self.conflict_list.winfo_manager():
+                self.conflict_list.pack_forget()
+        except Exception:
+            pass
+        try:
+            if not self._initial_prompt_host.winfo_manager():
+                self._initial_prompt_host.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        except Exception:
+            pass
 
     def _show_conflict_list(self):
-        # Kept for backward compatibility with older call sites.
-        return
+        try:
+            if self._initial_prompt_host.winfo_manager():
+                self._initial_prompt_host.pack_forget()
+        except Exception:
+            pass
+        try:
+            if not self.conflict_list.winfo_manager():
+                self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+        except Exception:
+            pass
 
     def _set_rescan_visible(self, visible: bool):
         try:
@@ -229,14 +244,12 @@ class ConflictsPage(BasePage):
             self.after(0, self._reposition_initial_prompt)
 
     def _reposition_initial_prompt(self):
-        """Keep the initial prompt centered in the visible scroll viewport."""
+        """Keep the initial prompt centered in the available viewport."""
         if not self._initial_prompt_visible or self._initial_prompt_frame is None:
             return
         try:
-            frame = self._initial_prompt_frame
-            if not frame.winfo_exists():
-                return
-            self._center_content_in_view(frame, spacer=self._initial_prompt_spacer, bias=-48)
+            if self._initial_prompt_frame.winfo_exists():
+                self._initial_prompt_frame.place_configure(relx=0.5, rely=0.5, anchor="center")
         except Exception:
             pass
 
