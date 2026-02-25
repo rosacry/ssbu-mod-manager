@@ -1,6 +1,7 @@
 """Conflict detection and resolution page with explanations."""
 import threading
 import traceback
+import time
 from pathlib import Path
 import customtkinter as ctk
 from tkinter import messagebox
@@ -54,6 +55,9 @@ CONFLICT_EXPLANATIONS = {
 
 
 class ConflictsPage(BasePage):
+    _TOP_ANCHOR_GUARD_INTERVAL_MS = 140
+    _TOP_ANCHOR_GUARD_MAX_SECONDS = 30.0
+
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
         self._conflicts = []
@@ -66,6 +70,10 @@ class ConflictsPage(BasePage):
         self._initial_prompt_host = None
         self._initial_prompt_visible = False
         self._viewport_stabilize_after_ids = []
+        self._top_anchor_after_id = None
+        self._top_anchor_guard_until = 0.0
+        self._top_anchor_guard_active = False
+        self._top_anchor_released_by_user = False
         self.conflict_list = None
         self._build_ui()
 
@@ -146,6 +154,7 @@ class ConflictsPage(BasePage):
         self.conflict_list = ctk.CTkScrollableFrame(self._results_stack, fg_color="transparent")
         self.conflict_list.pack(fill="both", expand=True)
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
+        self._bind_conflict_scroll_intent_handlers()
 
     def _recreate_conflict_list(self):
         """Hard-reset the scroll host to avoid stale canvas/scrollregion state."""
@@ -171,10 +180,16 @@ class ConflictsPage(BasePage):
             self._hide_initial_prompt()
             self.conflict_list.update_idletasks()
             self._stabilize_conflict_viewport()
+            self._arm_top_anchor_guard("on_show")
+
+    def on_hide(self):
+        self._cancel_conflict_viewport_stabilization()
+        self._cancel_top_anchor_guard()
 
     def _show_initial_prompt(self):
         """Show initial centered scan prompt and keep results list hidden/cleared."""
         self._cancel_conflict_viewport_stabilization()
+        self._cancel_top_anchor_guard()
         self._set_rescan_visible(False)
         self._set_results_chrome_visible(False)
         self.auto_resolve_btn.pack_forget()
@@ -282,6 +297,134 @@ class ConflictsPage(BasePage):
         if self._initial_prompt_visible:
             self.after(0, self._reposition_initial_prompt)
 
+    def _bind_conflict_scroll_intent_handlers(self):
+        """Bind one-time handlers that detect explicit user scroll intent."""
+        if self.conflict_list is None:
+            return
+
+        def _bind_once(widget):
+            if widget is None:
+                return
+            try:
+                if getattr(widget, "_ssbum_conflict_intent_bound", False):
+                    return
+                setattr(widget, "_ssbum_conflict_intent_bound", True)
+            except Exception:
+                pass
+            try:
+                widget.bind("<MouseWheel>", self._on_conflict_user_intent, add="+")
+                widget.bind("<ButtonPress-1>", self._on_conflict_user_intent, add="+")
+                widget.bind("<B1-Motion>", self._on_conflict_user_intent, add="+")
+            except Exception:
+                pass
+
+        _bind_once(self.conflict_list)
+        try:
+            _bind_once(getattr(self.conflict_list, "_parent_canvas", None))
+        except Exception:
+            pass
+        try:
+            _bind_once(getattr(self.conflict_list, "_scrollbar", None))
+        except Exception:
+            pass
+
+        try:
+            for child in self.conflict_list.winfo_children():
+                _bind_once(child)
+        except Exception:
+            pass
+
+    def _on_conflict_user_intent(self, _event=None):
+        """Release top-anchor guard once the user intentionally interacts."""
+        if not self._top_anchor_guard_active:
+            return
+        self._top_anchor_released_by_user = True
+        self._cancel_top_anchor_guard()
+        logger.debug("Conflicts", "Top-anchor guard released by user interaction")
+
+    def _cancel_top_anchor_guard(self):
+        self._top_anchor_guard_active = False
+        self._top_anchor_guard_until = 0.0
+        if self._top_anchor_after_id:
+            try:
+                self.after_cancel(self._top_anchor_after_id)
+            except Exception:
+                pass
+            self._top_anchor_after_id = None
+
+    def _arm_top_anchor_guard(self, source: str = "render"):
+        """Keep results pinned to top until user scroll intent is observed."""
+        self._cancel_top_anchor_guard()
+        self._top_anchor_released_by_user = False
+        self._top_anchor_guard_active = True
+        self._top_anchor_guard_until = time.monotonic() + self._TOP_ANCHOR_GUARD_MAX_SECONDS
+        try:
+            self._top_anchor_after_id = self.after(0, self._run_top_anchor_guard)
+        except Exception:
+            self._top_anchor_after_id = None
+        logger.debug("Conflicts", f"Top-anchor guard armed ({source})")
+
+    def _run_top_anchor_guard(self):
+        self._top_anchor_after_id = None
+        if not self._top_anchor_guard_active:
+            return
+        if self._top_anchor_released_by_user:
+            self._cancel_top_anchor_guard()
+            return
+        try:
+            if time.monotonic() >= float(self._top_anchor_guard_until):
+                logger.debug("Conflicts", "Top-anchor guard expired")
+                self._cancel_top_anchor_guard()
+                return
+        except Exception:
+            self._cancel_top_anchor_guard()
+            return
+
+        try:
+            current_page = getattr(self.app.main_window, "current_page", None)
+        except Exception:
+            current_page = None
+        if current_page != "conflicts":
+            # Keep guard armed; resume checks when page is visible again.
+            try:
+                self._top_anchor_after_id = self.after(
+                    self._TOP_ANCHOR_GUARD_INTERVAL_MS, self._run_top_anchor_guard
+                )
+            except Exception:
+                self._top_anchor_after_id = None
+            return
+
+        if self._scanning:
+            try:
+                self._top_anchor_after_id = self.after(
+                    self._TOP_ANCHOR_GUARD_INTERVAL_MS, self._run_top_anchor_guard
+                )
+            except Exception:
+                self._top_anchor_after_id = None
+            return
+
+        try:
+            canvas = getattr(self.conflict_list, "_parent_canvas", None)
+            before_y0 = 0.0
+            if canvas is not None:
+                try:
+                    before_y0 = float(canvas.yview()[0])
+                except Exception:
+                    before_y0 = 0.0
+            self._reset_conflict_canvas_view()
+            self._compact_leading_conflict_gap()
+            if before_y0 > 0.0015:
+                logger.debug("Conflicts", f"Top-anchor guard corrected y0={before_y0:.4f}")
+        except Exception:
+            pass
+
+        try:
+            self._top_anchor_after_id = self.after(
+                self._TOP_ANCHOR_GUARD_INTERVAL_MS, self._run_top_anchor_guard
+            )
+        except Exception:
+            self._top_anchor_after_id = None
+
     def _reposition_initial_prompt(self):
         """Keep the initial prompt centered in the available viewport."""
         if not self._initial_prompt_visible or self._initial_prompt_frame is None:
@@ -344,6 +487,7 @@ class ConflictsPage(BasePage):
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
         self._show_conflict_list()
+        self._arm_top_anchor_guard("scan-start")
         self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
 
         for w in self.conflict_list.winfo_children():
@@ -407,6 +551,8 @@ class ConflictsPage(BasePage):
                      text=f"Scan error: {error_msg}\nClick 'Rescan' to try again.",
                      font=ctk.CTkFont(size=13), text_color="#e94560").pack(pady=40)
         self._stabilize_conflict_viewport()
+        self._bind_conflict_scroll_intent_handlers()
+        self._arm_top_anchor_guard("scan-error")
 
     def _on_scan_done(self, conflicts, locale_msbts=None):
         self._scanning = False
@@ -712,6 +858,7 @@ class ConflictsPage(BasePage):
             ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
 
         self.conflict_list.update_idletasks()
+        self._bind_conflict_scroll_intent_handlers()
         self._prune_empty_conflict_blocks()
         logger.debug(
             "Conflicts",
@@ -723,6 +870,7 @@ class ConflictsPage(BasePage):
         self.after(30, self._compact_leading_conflict_gap)
         self.after(150, self._compact_leading_conflict_gap)
         self.after(22, self._ensure_results_not_blank)
+        self._arm_top_anchor_guard("render")
         # Re-patch scroll speed after rendering new widgets
         self.after(100, self._patch_all_scroll_speeds)
 
@@ -778,6 +926,8 @@ class ConflictsPage(BasePage):
         ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
         self._reset_conflict_canvas_view()
         self._stabilize_conflict_viewport()
+        self._bind_conflict_scroll_intent_handlers()
+        self._arm_top_anchor_guard("minimal-render")
         self.after(30, self._compact_leading_conflict_gap)
 
     def _reset_conflict_canvas_view(self):
