@@ -68,6 +68,9 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.
 - Conflicts page initial state and empty states are centered in-view to keep the primary action visible.
+- Page switches pre-render target content before reveal to reduce mid-transition pop-in.
+- Rename dialogs use a fully prepared modal show path to avoid first-frame flash.
+- Windows titlebar/taskbar icon now comes from a shared multi-resolution icon asset.
 
 ## Repository Layout
 
