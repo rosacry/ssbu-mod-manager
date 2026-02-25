@@ -32,16 +32,18 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 140
+    _ZOOM_APPLY_DEBOUNCE_MS = 70
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _RESIZE_SETTLE_MS = 84
-    _DRAG_REDRAW_INTERVAL_MS = 10
-    _SCROLL_REFRESH_INTERVAL_MS = 8
+    _DRAG_REDRAW_INTERVAL_MS = 16
+    _SCROLL_REFRESH_INTERVAL_MS = 14
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
-    _PAGE_WARMUP_INITIAL_DELAY_MS = 3200
-    _PAGE_WARMUP_STEP_DELAY_MS = 260
+    _PAGE_WARMUP_INITIAL_DELAY_MS = 900
+    _PAGE_WARMUP_STEP_DELAY_MS = 220
+    _PAGE_WARMUP_IDLE_REQUIRED_MS = 900
+    _PAGE_WARMUP_RETRY_DELAY_MS = 260
     _PAGE_WARMUP_PAGE_IDS = (
         "mods",
         "plugins",
@@ -108,12 +110,15 @@ class ModManagerApp(ctk.CTk):
         self._pointer_left_down = False
         self._suppress_scroll_refresh_until = 0.0
         self._last_window_activity_size = (0, 0)
+        self._last_user_activity_monotonic = time.monotonic()
+        self._last_scale_apply_monotonic = 0.0
         self._page_warmup_after_id = None
         self._page_warmup_queue = []
         self._icon_bitmap_path = None
         self._app_icon_photo = None
         self._window_fade_after_id = None
         self._startup_nav_after_id = None
+        self._scale_layout_settle_after_id = None
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -492,13 +497,22 @@ class ModManagerApp(ctk.CTk):
             effective = self._current_scale
         if abs(scale - effective) < 1e-6:
             return
+        self._note_user_activity()
         self._pending_scale_apply = scale
+        now = time.monotonic()
+        min_interval = self._ZOOM_APPLY_DEBOUNCE_MS / 1000.0
+        due_in = min_interval - (now - self._last_scale_apply_monotonic)
         if self._zoom_apply_after_id:
             try:
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
-        self._zoom_apply_after_id = self.after(self._ZOOM_APPLY_DEBOUNCE_MS, self._flush_pending_scale)
+            self._zoom_apply_after_id = None
+        if due_in <= 0:
+            self._flush_pending_scale()
+            return
+        due_ms = max(8, int(due_in * 1000))
+        self._zoom_apply_after_id = self.after(due_ms, self._flush_pending_scale)
 
     def _flush_pending_scale(self):
         """Apply a debounced zoom request."""
@@ -508,7 +522,48 @@ class ModManagerApp(ctk.CTk):
         pending = self._pending_scale_apply
         self._pending_scale_apply = None
         self._apply_scale(pending, save=False)
+        self._last_scale_apply_monotonic = time.monotonic()
+        self._schedule_scale_layout_settle()
         self._schedule_scale_persist(pending)
+
+    def _schedule_scale_layout_settle(self):
+        """Run a short delayed reflow pass after scale changes."""
+        if self._scale_layout_settle_after_id:
+            try:
+                self.after_cancel(self._scale_layout_settle_after_id)
+            except Exception:
+                pass
+            self._scale_layout_settle_after_id = None
+        try:
+            self._scale_layout_settle_after_id = self.after(20, self._flush_scale_layout_settle)
+        except Exception:
+            self._scale_layout_settle_after_id = None
+
+    def _flush_scale_layout_settle(self):
+        self._scale_layout_settle_after_id = None
+        if self._shutting_down or not hasattr(self, "main_window"):
+            return
+        try:
+            self.main_window.update_idletasks()
+        except Exception:
+            pass
+        try:
+            page_id = getattr(self.main_window, "current_page", None)
+            if page_id and page_id in self.main_window.pages:
+                page = self.main_window.pages[page_id]
+                if not page.winfo_manager():
+                    page.place(
+                        in_=self.main_window.content,
+                        x=0,
+                        y=0,
+                        relwidth=1,
+                        relheight=1,
+                    )
+                page.update_idletasks()
+                self.main_window.content.update_idletasks()
+                page.after_idle(page.update_idletasks)
+        except Exception:
+            pass
 
     def _schedule_scale_persist(self, scale: float):
         """Persist zoom level lazily so key repeats don't hammer disk writes."""
@@ -592,12 +647,14 @@ class ModManagerApp(ctk.CTk):
 
     def _on_global_left_press(self, event):
         try:
+            self._note_user_activity()
             self._set_left_button_down(True, source_widget=getattr(event, "widget", None))
         except Exception:
             pass
 
     def _on_global_left_release(self, event):
         try:
+            self._note_user_activity()
             self._set_left_button_down(False, source_widget=getattr(event, "widget", None))
         except Exception:
             pass
@@ -674,14 +731,13 @@ class ModManagerApp(ctk.CTk):
         try:
             if target is not None and bool(target.winfo_exists()):
                 target.update_idletasks()
+                target.after_idle(target.update_idletasks)
             else:
                 self.update_idletasks()
         except Exception:
             pass
         try:
-            # A second idletask pass on the root helps CTk label/canvas text
-            # keep up when users drag the scrollbar thumb rapidly.
-            self.update()
+            self.update_idletasks()
         except Exception:
             pass
         self._ensure_drag_redraw_loop()
@@ -946,6 +1002,7 @@ class ModManagerApp(ctk.CTk):
     def _global_fast_scroll_impl(self, event):
         """Inner implementation of fast scroll (may raise)."""
         import tkinter as tk
+        self._note_user_activity()
         # Use event.widget as the primary source (reliable under scaling),
         # then optionally refine via winfo_containing when available.
         widget = getattr(event, "widget", None)
@@ -1071,10 +1128,7 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            if self._pointer_left_down and self._scrollbar_drag_active:
-                self.update()
-            else:
-                self.update_idletasks()
+            self.update_idletasks()
         except Exception:
             pass
         try:
@@ -1498,6 +1552,11 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
         try:
+            if self._scale_layout_settle_after_id:
+                self.after_cancel(self._scale_layout_settle_after_id)
+        except Exception:
+            pass
+        try:
             if self._scroll_refresh_after_id:
                 self.after_cancel(self._scroll_refresh_after_id)
         except Exception:
@@ -1607,6 +1666,12 @@ class ModManagerApp(ctk.CTk):
             return
         if not self._page_warmup_queue:
             return
+        if self.has_recent_user_activity(self._PAGE_WARMUP_IDLE_REQUIRED_MS / 1000.0):
+            self._page_warmup_after_id = self.after(
+                self._PAGE_WARMUP_RETRY_DELAY_MS,
+                self._run_page_warmup_step,
+            )
+            return
         page_id = self._page_warmup_queue.pop(0)
         page = self._create_page(page_id)
         # Prime geometry while hidden but avoid page data loads (some pages kick
@@ -1626,11 +1691,23 @@ class ModManagerApp(ctk.CTk):
         """Navigate to a page, creating it lazily if needed."""
         if self._shutting_down:
             return
+        self._note_user_activity()
         # Lazy page creation
         if page_id not in self.main_window.pages:
             self._create_page(page_id)
         logger.info("App", f"Navigate to: {page_id}")
         self.main_window.navigate(page_id)
+
+    def _note_user_activity(self):
+        """Record latest user interaction timestamp for idle-sensitive work."""
+        self._last_user_activity_monotonic = time.monotonic()
+
+    def has_recent_user_activity(self, seconds: float = 1.0) -> bool:
+        """True when users interacted with the app within the last N seconds."""
+        try:
+            return (time.monotonic() - self._last_user_activity_monotonic) < float(seconds)
+        except Exception:
+            return False
 
     @property
     def css_manager(self):

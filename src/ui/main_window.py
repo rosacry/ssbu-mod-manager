@@ -12,6 +12,8 @@ class MainWindow(ctk.CTkFrame):
         self.pages = {}
         self.current_page = None
         self._shown_pages = set()
+        self._render_settle_after_id = None
+        self._render_settle_page_id = None
 
         # Layout: sidebar | separator | content
         self.sidebar = Sidebar(self, on_navigate=app.navigate)
@@ -297,26 +299,57 @@ class MainWindow(ctk.CTkFrame):
                 prev_page.on_hide()
             except Exception:
                 pass
-            try:
-                prev_page.lower()
-            except Exception:
-                prev_page.lower()
 
         self.current_page = page_id
         self._shown_pages.add(page_id)
-        page.lift()
+        try:
+            page.lift()
+        except Exception:
+            pass
         try:
             page.update_idletasks()
             self.content.update_idletasks()
         except Exception:
             pass
+        if prev_page is not None and prev_page is not page:
+            try:
+                prev_page.place_forget()
+            except Exception:
+                pass
         # Set focus on the page so the user doesn't have to click it
         # after selecting a sidebar item.
         page.focus_set()
         # Re-patch scroll speeds after page content may have changed
         if hasattr(page, '_patch_all_scroll_speeds'):
             page.after(150, page._patch_all_scroll_speeds)
+        self._schedule_render_settle(page_id)
         self.sidebar.set_active(page_id)
+
+    def _schedule_render_settle(self, page_id: str):
+        """Run a delayed idle/layout settle pass for the visible page."""
+        self._render_settle_page_id = page_id
+        if self._render_settle_after_id:
+            try:
+                self.after_cancel(self._render_settle_after_id)
+            except Exception:
+                pass
+            self._render_settle_after_id = None
+
+        def _settle():
+            self._render_settle_after_id = None
+            if self.current_page != self._render_settle_page_id:
+                return
+            page = self.pages.get(self.current_page)
+            if page is None:
+                return
+            try:
+                page.update_idletasks()
+                self.content.update_idletasks()
+                page.after_idle(page.update_idletasks)
+            except Exception:
+                pass
+
+        self._render_settle_after_id = self.after(18, _settle)
 
     def update_status(self, text: str):
         self.status_bar.set_status(text)

@@ -520,6 +520,7 @@ class ConflictsPage(BasePage):
         )
 
         rendered_conflict_rows = 0
+        rendered_section_blocks = 0
         for ext, conflicts in sorted_groups:
             conflicts.sort(key=lambda c: (
                 severity_rank.get(getattr(c, "severity", None), 99),
@@ -536,6 +537,7 @@ class ConflictsPage(BasePage):
 
             type_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
             type_header.pack(fill="x", pady=(8, 4))
+            rendered_section_blocks += 1
 
             header_inner = ctk.CTkFrame(type_header, fg_color="transparent")
             header_inner.pack(fill="x", padx=12, pady=8)
@@ -584,6 +586,7 @@ class ConflictsPage(BasePage):
         if self._locale_msbts:
             locale_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
             locale_header.pack(fill="x", pady=(12, 4))
+            rendered_section_blocks += 1
 
             lh_inner = ctk.CTkFrame(locale_header, fg_color="transparent")
             lh_inner.pack(fill="x", padx=12, pady=8)
@@ -622,7 +625,7 @@ class ConflictsPage(BasePage):
                              anchor="w").pack(side="left", padx=(10, 0))
                 rendered_conflict_rows += 1
 
-        if rendered_conflict_rows == 0 and (self._conflicts or self._locale_msbts):
+        if rendered_conflict_rows == 0 and rendered_section_blocks == 0 and (self._conflicts or self._locale_msbts):
             # Never leave the results area blank - show a resilient fallback.
             logger.warn("Conflicts", "No conflict rows rendered; displaying fallback list")
             fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
@@ -651,8 +654,72 @@ class ConflictsPage(BasePage):
                 canvas.yview_moveto(0.0)
         except Exception:
             pass
+        self.after(22, self._ensure_results_not_blank)
         # Re-patch scroll speed after rendering new widgets
         self.after(100, self._patch_all_scroll_speeds)
+
+    def _ensure_results_not_blank(self):
+        """Guarantee the results area is never left empty after a completed scan."""
+        if self._scanning:
+            return
+        if not (self._conflicts or self._locale_msbts):
+            return
+        self._show_conflict_list()
+        try:
+            if self._initial_prompt_host.winfo_manager():
+                self._initial_prompt_host.pack_forget()
+        except Exception:
+            pass
+        try:
+            children = [w for w in self.conflict_list.winfo_children() if bool(w.winfo_exists())]
+        except Exception:
+            children = []
+        if children:
+            return
+        logger.warn("Conflicts", "Results were blank after render; building minimal fallback rows")
+        self._render_minimal_results()
+
+    def _render_minimal_results(self):
+        """Render a plain fallback list when detailed card rendering fails."""
+        for w in self.conflict_list.winfo_children():
+            w.destroy()
+
+        fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+        fallback_frame.pack(fill="x", pady=(10, 4))
+        ctk.CTkLabel(
+            fallback_frame,
+            text="Conflicts detected (fallback view)",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#d4a017",
+            anchor="w",
+        ).pack(fill="x", padx=12, pady=(10, 6))
+
+        for conflict in self._conflicts[:60]:
+            ctk.CTkLabel(
+                fallback_frame,
+                text=f"  - {getattr(conflict, 'relative_path', 'unknown')}",
+                font=ctk.CTkFont(size=11),
+                text_color="#bbbbcc",
+                anchor="w",
+            ).pack(fill="x", padx=12, pady=1)
+
+        if self._locale_msbts:
+            ctk.CTkLabel(
+                fallback_frame,
+                text=f"  - {len(self._locale_msbts)} locale-specific MSBT file(s) detected",
+                font=ctk.CTkFont(size=11),
+                text_color="#bbbbcc",
+                anchor="w",
+            ).pack(fill="x", padx=12, pady=(4, 1))
+
+        ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
+        try:
+            self.conflict_list.update_idletasks()
+            canvas = getattr(self.conflict_list, "_parent_canvas", None)
+            if canvas is not None:
+                canvas.yview_moveto(0.0)
+        except Exception:
+            pass
 
     def _merge_conflict(self, conflict):
         try:

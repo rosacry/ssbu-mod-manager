@@ -10,6 +10,8 @@ from src.utils.logger import logger
 
 class DashboardPage(BasePage):
     _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    _STARTUP_SCAN_DELAY_MS = 4200
+    _STARTUP_SCAN_RETRY_MS = 900
 
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
@@ -20,6 +22,7 @@ class DashboardPage(BasePage):
         self._spinner_active = False
         self._spinner_index = 0
         self._stats_refresh_after_id = None
+        self._startup_refresh_after_id = None
         self._build_ui()
 
     def _build_ui(self):
@@ -183,15 +186,29 @@ class DashboardPage(BasePage):
         self._stats_refresh_after_id = self.after(delay, self._refresh_stats_fast)
         # Auto-scan conflicts in background if we haven't yet
         if self._conflict_cache is None and not self._startup_scan_scheduled:
-            # Defer first heavy scan briefly so startup can fully settle.
+            # Delay heavy startup scan so initial interaction stays responsive.
             self._startup_scan_scheduled = True
-            self.after(1800, self._startup_refresh)
+            self._schedule_startup_refresh(self._STARTUP_SCAN_DELAY_MS)
 
     def _startup_refresh(self):
         """Run delayed first refresh after app startup settles."""
-        self._startup_scan_scheduled = False
+        self._startup_refresh_after_id = None
         if self.app.shutting_down:
             return
+        try:
+            if getattr(self.app.main_window, "current_page", None) != "dashboard":
+                # User left dashboard: do not scan in the background.
+                self._startup_scan_scheduled = False
+                return
+        except Exception:
+            pass
+        try:
+            if self.app.has_recent_user_activity(1.2):
+                self._schedule_startup_refresh(self._STARTUP_SCAN_RETRY_MS)
+                return
+        except Exception:
+            pass
+        self._startup_scan_scheduled = False
         if self._conflict_cache is None and not self._loading:
             self._force_refresh()
 
@@ -202,6 +219,22 @@ class DashboardPage(BasePage):
             except Exception:
                 pass
             self._stats_refresh_after_id = None
+        if self._startup_refresh_after_id:
+            try:
+                self.after_cancel(self._startup_refresh_after_id)
+            except Exception:
+                pass
+            self._startup_refresh_after_id = None
+            self._startup_scan_scheduled = False
+
+    def _schedule_startup_refresh(self, delay_ms: int):
+        if self._startup_refresh_after_id:
+            try:
+                self.after_cancel(self._startup_refresh_after_id)
+            except Exception:
+                pass
+            self._startup_refresh_after_id = None
+        self._startup_refresh_after_id = self.after(delay_ms, self._startup_refresh)
 
     def _refresh_stats_fast(self):
         """Quick refresh using cached data."""

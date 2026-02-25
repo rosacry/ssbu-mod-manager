@@ -63,6 +63,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 
 - Default visual density is tuned so current **100% zoom** matches the old 120% look.
 - `Ctrl +`, `Ctrl -`, and `Ctrl 0` adjust UI zoom.
+- Zoom changes are throttled for smoother repeated `Ctrl +/-` use with less jitter.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
@@ -75,6 +76,8 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Lazy pages are background-warmed after startup to reduce first-open tab hitching.
 - Main window startup/shutdown now uses a short fade for smoother open/close transitions.
 - Conflicts scan rendering now includes a resilient fallback so results never appear blank after a successful scan.
+- Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
+- Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Primary page headers now match sidebar navigation labels exactly (no redundant "Manager/Management" suffixes).
 
 ## Repository Layout
