@@ -507,7 +507,11 @@ class ModsPage(BasePage):
 
     def _invoke_context_action(self, callback):
         self._close_context_menu()
-        callback()
+        try:
+            # Let context menu teardown finish before opening rename dialog.
+            self.after_idle(callback)
+        except Exception:
+            callback()
 
     def _close_context_menu(self):
         menu = self._context_menu
@@ -579,13 +583,10 @@ class ModsPage(BasePage):
     def _show_rename_mod_dialog(self, initial_value: str):
         result = {"value": None, "rename_folder": False}
         dialog = ctk.CTkToplevel(self)
+        dialog.withdraw()
         dialog.title("Rename Mod")
         dialog.resizable(False, False)
         dialog.configure(fg_color="#0f1327")
-        try:
-            dialog.transient(self.winfo_toplevel())
-        except Exception:
-            pass
 
         shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
                              border_width=1, border_color="#304378")
@@ -646,8 +647,21 @@ class ModsPage(BasePage):
         dialog.bind("<Return>", lambda _e: close_with(entry.get()))
         self._center_dialog(dialog, width=460, height=270)
 
-        dialog.grab_set()
+        try:
+            dialog.attributes("-alpha", 0.0)
+        except Exception:
+            pass
+        dialog.deiconify()
+        dialog.lift()
+        try:
+            dialog.grab_set()
+        except Exception:
+            pass
         entry.focus_set()
+        try:
+            dialog.after_idle(lambda: dialog.attributes("-alpha", 1.0))
+        except Exception:
+            pass
         self.wait_window(dialog)
         if result["value"] is None:
             return None

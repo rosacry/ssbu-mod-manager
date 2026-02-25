@@ -508,7 +508,12 @@ class PluginsPage(BasePage):
 
     def _invoke_context_action(self, callback):
         self._close_context_menu()
-        callback()
+        try:
+            # Open dialogs on the next UI tick so menu teardown and focus changes
+            # complete first, avoiding a visible flash/remap on Windows.
+            self.after_idle(callback)
+        except Exception:
+            callback()
 
     def _close_context_menu(self):
         menu = self._context_menu
@@ -579,10 +584,6 @@ class PluginsPage(BasePage):
         dialog.title(title)
         dialog.resizable(False, False)
         dialog.configure(fg_color="#0f1327")
-        try:
-            dialog.transient(self.winfo_toplevel())
-        except Exception:
-            pass
 
         shell = ctk.CTkFrame(
             dialog,
@@ -649,6 +650,10 @@ class PluginsPage(BasePage):
         dialog.bind("<Return>", lambda _e: close_with(entry.get()))
         self._center_dialog(dialog, width=500, height=290)
 
+        try:
+            dialog.attributes("-alpha", 0.0)
+        except Exception:
+            pass
         dialog.deiconify()
         dialog.lift()
         try:
@@ -656,6 +661,10 @@ class PluginsPage(BasePage):
         except Exception:
             pass
         entry.focus_set()
+        try:
+            dialog.after_idle(lambda: dialog.attributes("-alpha", 1.0))
+        except Exception:
+            pass
         self.wait_window(dialog)
         return result["value"]
 
