@@ -278,10 +278,6 @@ class ModManagerApp(ctk.CTk):
         # Lazy page registry - pages are created on first navigation
         self._page_classes = {}
         self._register_page_classes()
-        try:
-            self.main_window.show_startup_overlay("Initializing UI...")
-        except Exception:
-            pass
 
         # Update status bar in background
         self.after(100, self._update_status)
@@ -419,21 +415,10 @@ class ModManagerApp(ctk.CTk):
         if self._shutting_down:
             return
         try:
-            if hasattr(self, "main_window"):
-                self.main_window.show_startup_overlay("Loading dashboard...")
-        except Exception:
-            pass
-        try:
             self.navigate("dashboard")
             self.update_idletasks()
         except Exception:
             pass
-        finally:
-            try:
-                if hasattr(self, "main_window"):
-                    self.main_window.hide_startup_overlay()
-            except Exception:
-                pass
         # Warm selected light pages only after the first page is shown.
         try:
             self.after(self._PAGE_WARMUP_INITIAL_DELAY_MS, self._start_background_page_warmup)
