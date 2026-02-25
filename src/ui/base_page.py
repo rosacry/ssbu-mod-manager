@@ -136,6 +136,65 @@ class BasePage(ctk.CTkFrame):
         except Exception:
             pass
 
+    def _present_modal_dialog(self, dialog, focus_widget=None):
+        """Show a modal dialog with icon/focus applied before first paint."""
+        try:
+            dialog.transient(self.winfo_toplevel())
+        except Exception:
+            pass
+        try:
+            self.app.apply_window_icon(dialog)
+        except Exception:
+            pass
+        try:
+            dialog.update_idletasks()
+        except Exception:
+            pass
+
+        fade_supported = False
+        try:
+            dialog.attributes("-alpha", 0.0)
+            fade_supported = True
+        except Exception:
+            pass
+
+        try:
+            dialog.deiconify()
+            dialog.lift()
+        except Exception:
+            pass
+
+        if fade_supported:
+            fade_values = (0.42, 0.68, 0.88, 1.0)
+
+            def _fade_step(index=0):
+                try:
+                    if not dialog.winfo_exists():
+                        return
+                except Exception:
+                    return
+                try:
+                    dialog.attributes("-alpha", fade_values[index])
+                except Exception:
+                    return
+                if index + 1 < len(fade_values):
+                    try:
+                        dialog.after(14, lambda: _fade_step(index + 1))
+                    except Exception:
+                        pass
+
+            _fade_step(0)
+
+        try:
+            dialog.grab_set()
+        except Exception:
+            pass
+        if focus_widget is not None:
+            try:
+                focus_widget.focus_set()
+            except Exception:
+                pass
+
     def on_show(self):
         """Called when the page is navigated to. Override to refresh data."""
         pass

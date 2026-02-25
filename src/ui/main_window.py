@@ -11,6 +11,7 @@ class MainWindow(ctk.CTkFrame):
         self.app = app
         self.pages = {}
         self.current_page = None
+        self._shown_pages = set()
 
         # Layout: sidebar | separator | content
         self.sidebar = Sidebar(self, on_navigate=app.navigate)
@@ -241,12 +242,17 @@ class MainWindow(ctk.CTkFrame):
 
         prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
+        first_visit = page_id not in self._shown_pages
         # Prepare target page before revealing it so users don't see
         # intermediate population/reflow states.
         try:
             page.on_show()
             page.update_idletasks()
             self.content.update_idletasks()
+            if first_visit:
+                # Give first-time pages one more layout pass while hidden.
+                page.update_idletasks()
+                self.content.update_idletasks()
         except Exception:
             pass
 
@@ -258,9 +264,11 @@ class MainWindow(ctk.CTkFrame):
             prev_page.lower()
 
         self.current_page = page_id
+        self._shown_pages.add(page_id)
         page.lift()
         try:
             page.update_idletasks()
+            self.content.update_idletasks()
         except Exception:
             pass
         # Set focus on the page so the user doesn't have to click it

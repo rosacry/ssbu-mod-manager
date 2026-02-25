@@ -23,7 +23,7 @@ class DeveloperPage(BasePage):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(25, 10))
 
-        title = ctk.CTkLabel(header_frame, text="Developer Tools",
+        title = ctk.CTkLabel(header_frame, text="Developer",
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 

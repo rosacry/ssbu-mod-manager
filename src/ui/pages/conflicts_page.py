@@ -1,6 +1,7 @@
 """Conflict detection and resolution page with explanations."""
 import threading
 import traceback
+from pathlib import Path
 import customtkinter as ctk
 from tkinter import messagebox
 from src.ui.base_page import BasePage
@@ -70,7 +71,7 @@ class ConflictsPage(BasePage):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(25, 10))
 
-        title = ctk.CTkLabel(header_frame, text="Conflict Detection & Resolution",
+        title = ctk.CTkLabel(header_frame, text="Conflicts",
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 
@@ -286,6 +287,15 @@ class ConflictsPage(BasePage):
         except Exception:
             pass
 
+    @staticmethod
+    def _conflict_extension(conflict) -> str:
+        """Return normalized conflict file extension."""
+        rel = str(getattr(conflict, "relative_path", "") or "").strip()
+        if not rel:
+            return ".other"
+        ext = Path(rel).suffix.lower()
+        return ext if ext else ".other"
+
     def _force_scan(self):
         self._scanned = True
         # Cancel any in-progress scan by bumping generation
@@ -433,7 +443,7 @@ class ConflictsPage(BasePage):
         # Count by type
         type_counts = {}
         for c in self._conflicts:
-            ext = "." + c.relative_path.rsplit(".", 1)[-1] if "." in c.relative_path else "other"
+            ext = self._conflict_extension(c)
             type_counts[ext] = type_counts.get(ext, 0) + 1
 
         type_info = ", ".join(f"{count} {ext}" for ext, count in sorted(type_counts.items()))
@@ -461,7 +471,7 @@ class ConflictsPage(BasePage):
         # Group conflicts by type and render with explanations
         by_ext = {}
         for c in self._conflicts:
-            ext = "." + c.relative_path.rsplit(".", 1)[-1] if "." in c.relative_path else ".other"
+            ext = self._conflict_extension(c)
             if ext not in by_ext:
                 by_ext[ext] = []
             by_ext[ext].append(c)
@@ -476,15 +486,16 @@ class ConflictsPage(BasePage):
         sorted_groups = sorted(
             by_ext.items(),
             key=lambda item: (
-                min(severity_rank.get(c.severity, 99) for c in item[1]),
+                min((severity_rank.get(getattr(c, "severity", None), 99) for c in item[1]), default=99),
                 item[0],
             ),
         )
 
+        rendered_conflict_rows = 0
         for ext, conflicts in sorted_groups:
             conflicts.sort(key=lambda c: (
-                severity_rank.get(c.severity, 99),
-                str(c.relative_path).lower(),
+                severity_rank.get(getattr(c, "severity", None), 99),
+                str(getattr(c, "relative_path", "")).lower(),
             ))
             # Type header with explanation
             info = CONFLICT_EXPLANATIONS.get(ext)
@@ -517,13 +528,29 @@ class ConflictsPage(BasePage):
 
             # Conflict cards for this type
             for conflict in conflicts:
-                card = ConflictCard(
-                    self.conflict_list, conflict,
-                    on_merge=self._merge_conflict,
-                    on_keep=self._keep_conflict,
-                    on_ignore=self._ignore_conflict,
-                )
-                card.pack(fill="x", pady=3)
+                try:
+                    card = ConflictCard(
+                        self.conflict_list, conflict,
+                        on_merge=self._merge_conflict,
+                        on_keep=self._keep_conflict,
+                        on_ignore=self._ignore_conflict,
+                    )
+                    card.pack(fill="x", pady=3)
+                    rendered_conflict_rows += 1
+                except Exception as e:
+                    logger.warn(
+                        "Conflicts",
+                        f"Failed to render conflict card for {getattr(conflict, 'relative_path', 'unknown')}: {e}",
+                    )
+                    fallback_row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
+                    fallback_row.pack(fill="x", pady=2)
+                    ctk.CTkLabel(
+                        fallback_row,
+                        text=f"Could not render conflict row: {getattr(conflict, 'relative_path', 'unknown')}",
+                        font=ctk.CTkFont(size=12),
+                        text_color="#d4a017",
+                        anchor="w",
+                    ).pack(fill="x", padx=10, pady=8)
 
         # Render locale-specific MSBT section if any were found
         if self._locale_msbts:
@@ -560,6 +587,29 @@ class ConflictsPage(BasePage):
                 ctk.CTkLabel(row_inner, text=f"in {mod_name}",
                              font=ctk.CTkFont(size=11), text_color="#888888",
                              anchor="w").pack(side="left", padx=(10, 0))
+                rendered_conflict_rows += 1
+
+        if rendered_conflict_rows == 0 and (self._conflicts or self._locale_msbts):
+            # Never leave the results area blank - show a resilient fallback.
+            logger.warn("Conflicts", "No conflict rows rendered; displaying fallback list")
+            fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+            fallback_frame.pack(fill="x", pady=(12, 4))
+            ctk.CTkLabel(
+                fallback_frame,
+                text="Conflicts detected but detailed cards failed to render.",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#d4a017",
+                anchor="w",
+            ).pack(fill="x", padx=12, pady=(10, 6))
+            for conflict in self._conflicts[:20]:
+                ctk.CTkLabel(
+                    fallback_frame,
+                    text=f"  - {getattr(conflict, 'relative_path', 'unknown')}",
+                    font=ctk.CTkFont(size=11),
+                    text_color="#bbbbcc",
+                    anchor="w",
+                ).pack(fill="x", padx=12, pady=1)
+            ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
 
         self.conflict_list.update_idletasks()
         try:

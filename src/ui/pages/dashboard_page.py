@@ -29,7 +29,7 @@ class DashboardPage(BasePage):
         header_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(25, 5))
 
-        title = ctk.CTkLabel(header_frame, text="SSBU Mod Manager",
+        title = ctk.CTkLabel(header_frame, text="Dashboard",
                              font=ctk.CTkFont(family="Segoe UI", size=28, weight="bold"),
                              anchor="w")
         title.pack(side="left")

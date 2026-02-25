@@ -32,7 +32,7 @@ class MigrationPage(BasePage):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=30, pady=(25, 5))
 
-        ctk.CTkLabel(header, text="Emulator Migration",
+        ctk.CTkLabel(header, text="Migration",
                      font=ctk.CTkFont(size=24, weight="bold"), anchor="w"
                      ).pack(side="left")
 

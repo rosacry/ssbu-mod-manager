@@ -37,7 +37,7 @@ class MusicPage(BasePage):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(20, 5))
 
-        title = ctk.CTkLabel(header_frame, text="Music Management",
+        title = ctk.CTkLabel(header_frame, text="Music",
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 

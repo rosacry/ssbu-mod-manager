@@ -58,7 +58,7 @@ class ModsPage(BasePage):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(20, 8))
 
-        title = ctk.CTkLabel(header_frame, text="Mod Management",
+        title = ctk.CTkLabel(header_frame, text="Mods",
                              font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
         title.pack(side="left")
 
@@ -504,7 +504,8 @@ class ModsPage(BasePage):
         try:
             # Give context-menu teardown one frame so rename dialogs
             # never show partially during focus handoff on Windows.
-            self.after(28, callback)
+            self.update_idletasks()
+            self.after(52, callback)
         except Exception:
             callback()
 
@@ -641,34 +642,7 @@ class ModsPage(BasePage):
         dialog.bind("<Escape>", lambda _e: close_with(None))
         dialog.bind("<Return>", lambda _e: close_with(entry.get()))
         self._center_dialog(dialog, width=460, height=270)
-
-        try:
-            dialog.transient(self.winfo_toplevel())
-        except Exception:
-            pass
-        try:
-            self.app.apply_window_icon(dialog)
-        except Exception:
-            pass
-        try:
-            dialog.update_idletasks()
-        except Exception:
-            pass
-        dialog.deiconify()
-        dialog.lift()
-        try:
-            dialog.wait_visibility()
-        except Exception:
-            pass
-        try:
-            self.app.apply_window_icon(dialog)
-        except Exception:
-            pass
-        try:
-            dialog.grab_set()
-        except Exception:
-            pass
-        entry.focus_set()
+        self._present_modal_dialog(dialog, focus_widget=entry)
         self.wait_window(dialog)
         if result["value"] is None:
             return None

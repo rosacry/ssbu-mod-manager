@@ -32,11 +32,14 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 90
+    _ZOOM_APPLY_DEBOUNCE_MS = 28
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _RESIZE_SETTLE_MS = 70
-    _DRAG_REDRAW_INTERVAL_MS = 24
-    _SCROLL_REFRESH_INTERVAL_MS = 16
+    _DRAG_REDRAW_INTERVAL_MS = 16
+    _SCROLL_REFRESH_INTERVAL_MS = 12
+    _WINDOW_FADE_STEP_MS = 15
+    _WINDOW_FADE_IN_MS = 120
+    _WINDOW_FADE_OUT_MS = 120
 
     def __init__(self):
         import sys as _sys
@@ -91,6 +94,7 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_full_counter = 0
         self._drag_refresh_after_id = None
         self._scrollbar_drag_active = False
+        self._active_drag_scroll_widget = None
         self._pointer_left_down = False
         self._suppress_scroll_refresh_until = 0.0
         self._last_window_activity_size = (0, 0)
@@ -98,6 +102,7 @@ class ModManagerApp(ctk.CTk):
         self._page_warmup_queue = []
         self._icon_bitmap_path = None
         self._app_icon_photo = None
+        self._window_fade_after_id = None
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -118,22 +123,51 @@ class ModManagerApp(ctk.CTk):
         try:
             from src.utils.resource_path import resource_path
             icon_path = resource_path("assets/icon.ico")
-            logo_path = resource_path("assets/logo.png")
             loaded_any = False
             if Path(icon_path).exists():
                 self._icon_bitmap_path = str(icon_path)
-                self.iconbitmap(icon_path)
+                try:
+                    self.iconbitmap(default=self._icon_bitmap_path)
+                except TypeError:
+                    self.iconbitmap(self._icon_bitmap_path)
                 loaded_any = True
                 logger.info("App", f"Window icon loaded from {icon_path}")
-            if Path(logo_path).exists():
+
+            # Prefer iconphoto generated from the same .ico file so child
+            # dialogs/toplevels always match the app icon exactly.
+            icon_photo = None
+            if Path(icon_path).exists():
+                try:
+                    from PIL import Image, ImageTk
+                    with Image.open(icon_path) as icon_img:
+                        icon_photo = ImageTk.PhotoImage(icon_img.convert("RGBA"))
+                except Exception:
+                    try:
+                        icon_photo = PhotoImage(file=icon_path)
+                    except Exception:
+                        icon_photo = None
+
+            if icon_photo is None:
+                for fallback_rel in ("assets/icon.png", "assets/logo.png"):
+                    fallback_path = resource_path(fallback_rel)
+                    if not Path(fallback_path).exists():
+                        continue
+                    try:
+                        icon_photo = PhotoImage(file=fallback_path)
+                        logger.info("App", f"Window icon photo fallback loaded from {fallback_path}")
+                        break
+                    except Exception:
+                        continue
+
+            if icon_photo is not None:
                 # Keep a strong reference so Tk does not garbage-collect the image.
-                self._app_icon_photo = PhotoImage(file=logo_path)
+                self._app_icon_photo = icon_photo
                 self.iconphoto(True, self._app_icon_photo)
                 loaded_any = True
-                logger.info("App", f"Window icon photo loaded from {logo_path}")
+
             self._patch_ctk_toplevel_icon_behavior()
             if not loaded_any:
-                logger.warn("App", f"Icon files not found: {icon_path} / {logo_path}")
+                logger.warn("App", f"Icon files not found/usable: {icon_path}")
         except Exception as e:
             logger.warn("App", f"Failed to set window icon: {e}")
 
@@ -312,8 +346,10 @@ class ModManagerApp(ctk.CTk):
             self.state("normal")
         except Exception:
             pass
+        fade_in_supported = False
         try:
-            self.attributes('-alpha', 1.0)
+            self.attributes("-alpha", 0.0)
+            fade_in_supported = True
         except Exception:
             pass
         # Avoid aggressive focus_force() during startup; it can trigger
@@ -321,6 +357,8 @@ class ModManagerApp(ctk.CTk):
         self.after(20, self._center_window_on_screen)
         self.after(180, self._center_window_on_screen)
         self.after(10, self.lift)
+        if fade_in_supported:
+            self.after(25, self._fade_in_window)
         if self._startup_hidden_withdraw:
             self.after(120, lambda: self._ensure_window_visible(attempt=1))
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
@@ -330,7 +368,7 @@ class ModManagerApp(ctk.CTk):
             pass
 
         # Warm lazy pages in the background so first navigation is seamless.
-        self.after(1100, self._start_background_page_warmup)
+        self.after(320, self._start_background_page_warmup)
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
@@ -521,10 +559,10 @@ class ModManagerApp(ctk.CTk):
     # --- Global fast scroll --------------------------------------------------
 
     _SCROLL_SPEED = 3                    # Listbox/Text scroll multiplier
-    _CANVAS_SCROLL_PIXELS = 92           # Default canvas movement per wheel tick
-    _MODS_CANVAS_SCROLL_PIXELS = 60      # Keep Mods aligned with Plugins pace
-    _LONGFORM_SCROLL_SPEED = 6           # Long-form text/list widgets
-    _LONGFORM_CANVAS_SCROLL_PIXELS = 120 # Online Guide/Migration boost
+    _CANVAS_SCROLL_PIXELS = 84           # Default canvas movement per wheel tick
+    _MODS_CANVAS_SCROLL_PIXELS = 58      # Keep Mods aligned with Plugins pace
+    _LONGFORM_SCROLL_SPEED = 5           # Long-form text/list widgets
+    _LONGFORM_CANVAS_SCROLL_PIXELS = 96  # Online Guide/Migration boost
 
     def _on_global_left_press(self, event):
         try:
@@ -558,7 +596,9 @@ class ModManagerApp(ctk.CTk):
         self._ensure_drag_redraw_loop()
 
     def _on_scrollbar_drag_end(self):
+        target = self._active_drag_scroll_widget
         self._scrollbar_drag_active = False
+        self._active_drag_scroll_widget = None
         if self._drag_refresh_after_id:
             try:
                 self.after_cancel(self._drag_refresh_after_id)
@@ -569,12 +609,14 @@ class ModManagerApp(ctk.CTk):
             self.after(8, self._refresh_after_pointer_release)
         except Exception:
             pass
+        if target is not None:
+            self._schedule_scroll_refresh(target)
 
     def _set_left_button_down(self, pressed: bool, source_widget=None):
         self._pointer_left_down = bool(pressed)
         if pressed:
             self._scrollbar_drag_active = self._widget_belongs_to_scrollbar(source_widget)
-            self._suppress_scroll_refresh_until = time.monotonic() + 0.12
+            self._suppress_scroll_refresh_until = time.monotonic() + 0.05
             # Drop pending refreshes before scrollbar dragging starts.
             if self._scroll_refresh_after_id:
                 try:
@@ -602,8 +644,12 @@ class ModManagerApp(ctk.CTk):
         self._drag_refresh_after_id = None
         if not self._pointer_left_down or not self._scrollbar_drag_active or self._shutting_down:
             return
+        target = self._active_drag_scroll_widget
         try:
-            self.update_idletasks()
+            if target is not None and bool(target.winfo_exists()):
+                target.update_idletasks()
+            else:
+                self.update_idletasks()
         except Exception:
             pass
         self._ensure_drag_redraw_loop()
@@ -631,7 +677,7 @@ class ModManagerApp(ctk.CTk):
             self._last_window_activity_size = size
             self._suppress_scroll_refresh_until = max(
                 self._suppress_scroll_refresh_until,
-                time.monotonic() + 0.12,
+                time.monotonic() + 0.08,
             )
             if self._resize_after_id:
                 try:
@@ -766,6 +812,7 @@ class ModManagerApp(ctk.CTk):
                     try:
                         target_widget = getattr(scrollbar._command, "__self__", None)
                         if target_widget is not None:
+                            app._active_drag_scroll_widget = target_widget
                             app._schedule_scroll_refresh(target_widget)
                     except Exception:
                         pass
@@ -962,7 +1009,12 @@ class ModManagerApp(ctk.CTk):
     def _schedule_scroll_refresh(self, widget):
         """Throttle redraws while wheel-scrolling to avoid transient text artifacts."""
         try:
-            if time.monotonic() < self._suppress_scroll_refresh_until:
+            # Keep refreshes active while dragging a scrollbar thumb so text
+            # in long-form pages does not smear during rapid movement.
+            if (
+                time.monotonic() < self._suppress_scroll_refresh_until
+                and not self._scrollbar_drag_active
+            ):
                 return
             self._scroll_refresh_widgets.add(widget)
             if self._scroll_refresh_after_id:
@@ -986,10 +1038,11 @@ class ModManagerApp(ctk.CTk):
                 widget.update_idletasks()
             except Exception:
                 pass
-        try:
-            self.update_idletasks()
-        except Exception:
-            pass
+        if not self._pointer_left_down:
+            try:
+                self.update_idletasks()
+            except Exception:
+                pass
         try:
             self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 6
             if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
@@ -1112,6 +1165,79 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
 
+    def _cancel_window_fade(self):
+        if self._window_fade_after_id:
+            try:
+                self.after_cancel(self._window_fade_after_id)
+            except Exception:
+                pass
+            self._window_fade_after_id = None
+
+    def _fade_in_window(self):
+        """Fade startup from transparent to fully visible."""
+        self._cancel_window_fade()
+        try:
+            self.attributes("-alpha", 0.0)
+        except Exception:
+            return
+
+        steps = max(1, int(self._WINDOW_FADE_IN_MS / self._WINDOW_FADE_STEP_MS))
+        increment = 1.0 / float(steps)
+        state = {"alpha": 0.0}
+
+        def _tick():
+            if self._shutting_down:
+                return
+            state["alpha"] = min(1.0, state["alpha"] + increment)
+            try:
+                self.attributes("-alpha", state["alpha"])
+            except Exception:
+                self._window_fade_after_id = None
+                return
+            if state["alpha"] >= 0.999:
+                self._window_fade_after_id = None
+                return
+            try:
+                self._window_fade_after_id = self.after(self._WINDOW_FADE_STEP_MS, _tick)
+            except Exception:
+                self._window_fade_after_id = None
+
+        _tick()
+
+    def _fade_out_then(self, on_complete):
+        """Fade out before shutdown to avoid abrupt teardown flash."""
+        self._cancel_window_fade()
+        try:
+            current = float(self.attributes("-alpha"))
+        except Exception:
+            current = 1.0
+        if current <= 0.05:
+            on_complete()
+            return
+
+        steps = max(1, int(self._WINDOW_FADE_OUT_MS / self._WINDOW_FADE_STEP_MS))
+        decrement = max(0.02, current / float(steps))
+
+        def _tick():
+            try:
+                value = max(0.0, float(self.attributes("-alpha")) - decrement)
+                self.attributes("-alpha", value)
+            except Exception:
+                self._window_fade_after_id = None
+                on_complete()
+                return
+            if value <= 0.01:
+                self._window_fade_after_id = None
+                on_complete()
+                return
+            try:
+                self._window_fade_after_id = self.after(self._WINDOW_FADE_STEP_MS, _tick)
+            except Exception:
+                self._window_fade_after_id = None
+                on_complete()
+
+        _tick()
+
     # --- Window events -------------------------------------------------------
 
     def _on_configure(self, event):
@@ -1173,7 +1299,10 @@ class ModManagerApp(ctk.CTk):
         try:
             icon_path = getattr(self, "_icon_bitmap_path", None)
             if icon_path and Path(icon_path).exists():
-                window.iconbitmap(icon_path)
+                try:
+                    window.iconbitmap(default=icon_path)
+                except TypeError:
+                    window.iconbitmap(icon_path)
         except Exception:
             pass
         try:
@@ -1193,6 +1322,9 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
+        if self._shutting_down:
+            return
+
         if self._has_unsaved_changes:
             response = messagebox.askyesnocancel(
                 "Unsaved Changes",
@@ -1207,6 +1339,11 @@ class ModManagerApp(ctk.CTk):
 
         self._shutting_down = True
         logger.info("App", "Shutting down...")
+        self._fade_out_then(self._finalize_shutdown)
+
+    def _finalize_shutdown(self):
+        """Final cleanup after optional close animation."""
+        self._cancel_window_fade()
 
         # Stop audio playback
         try:
@@ -1254,6 +1391,11 @@ class ModManagerApp(ctk.CTk):
         try:
             if self._page_warmup_after_id:
                 self.after_cancel(self._page_warmup_after_id)
+        except Exception:
+            pass
+        try:
+            if self._window_fade_after_id:
+                self.after_cancel(self._window_fade_after_id)
         except Exception:
             pass
 
@@ -1337,15 +1479,17 @@ class ModManagerApp(ctk.CTk):
             return
         page_id = self._page_warmup_queue.pop(0)
         page = self._create_page(page_id)
-        # Pre-kick the migration page data probe so first visit is less jarring.
-        if page_id == "migration" and page is not None:
+        # Prime page layout/data while hidden to avoid first-visit pop-in.
+        if page is not None:
             try:
                 page.on_show()
+                page.update_idletasks()
                 page.on_hide()
+                page.lower()
             except Exception:
                 pass
         if self._page_warmup_queue:
-            self._page_warmup_after_id = self.after(120, self._run_page_warmup_step)
+            self._page_warmup_after_id = self.after(85, self._run_page_warmup_step)
 
     def navigate(self, page_id: str):
         """Navigate to a page, creating it lazily if needed."""
