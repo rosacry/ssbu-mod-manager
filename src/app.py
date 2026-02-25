@@ -1122,6 +1122,19 @@ class ModManagerApp(ctk.CTk):
                 page_id = self.main_window.current_page
             except Exception:
                 pass
+            # Conflicts page is intentionally pinned to top right after scan
+            # until user explicitly interacts. Ignore wheel deltas during that
+            # short guard window so delayed wheel events cannot introduce a
+            # false initial offset.
+            if page_id == "conflicts":
+                try:
+                    conflicts_page = self.main_window.pages.get("conflicts")
+                    if conflicts_page is not None and bool(
+                        getattr(conflicts_page, "_top_anchor_guard_active", False)
+                    ):
+                        return "break"
+                except Exception:
+                    pass
             longform = in_longform_page or page_id in ("online_compat", "migration")
             if isinstance(scrollable, tk.Canvas):
                 speed = self._CANVAS_SCROLL_PIXELS

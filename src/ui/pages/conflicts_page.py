@@ -342,6 +342,25 @@ class ConflictsPage(BasePage):
         self._cancel_top_anchor_guard()
         logger.debug("Conflicts", "Top-anchor guard released by user interaction")
 
+    def _widget_has_meaningful_text(self, widget, depth: int = 0) -> bool:
+        """Return True when widget subtree contains visible non-empty label text."""
+        try:
+            if isinstance(widget, ctk.CTkLabel):
+                text = str(widget.cget("text") or "").strip()
+                if text:
+                    return True
+        except Exception:
+            pass
+        if depth >= 3:
+            return False
+        try:
+            for child in widget.winfo_children():
+                if self._widget_has_meaningful_text(child, depth + 1):
+                    return True
+        except Exception:
+            return False
+        return False
+
     def _cancel_top_anchor_guard(self):
         self._top_anchor_guard_active = False
         self._top_anchor_guard_until = 0.0
@@ -996,7 +1015,7 @@ class ConflictsPage(BasePage):
                     if isinstance(w, ConflictCard):
                         first_content = w
                         break
-                    if w.winfo_children():
+                    if self._widget_has_meaningful_text(w):
                         first_content = w
                         break
                 except Exception:
