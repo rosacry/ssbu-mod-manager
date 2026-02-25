@@ -1736,6 +1736,16 @@ class ModManagerApp(ctk.CTk):
             return
         if not self._page_warmup_queue:
             return
+        current = getattr(self.main_window, "current_page", None)
+        # Warmup is strictly a startup optimization. Running hidden page
+        # construction while users are actively using another page can cause
+        # visible layout churn on some CTk scroll hosts (notably Conflicts).
+        # Keep warmup work constrained to the dashboard startup window only.
+        if current not in (None, "dashboard"):
+            # User already moved past startup; stop warmup instead of retrying
+            # indefinitely in the background.
+            self._page_warmup_queue = []
+            return
         if self.has_recent_user_activity(self._PAGE_WARMUP_IDLE_REQUIRED_MS / 1000.0):
             self._page_warmup_after_id = self.after(
                 self._PAGE_WARMUP_RETRY_DELAY_MS,
