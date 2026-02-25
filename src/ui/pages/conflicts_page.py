@@ -786,6 +786,21 @@ class ConflictsPage(BasePage):
             self.conflict_list.update_idletasks()
             canvas = getattr(self.conflict_list, "_parent_canvas", None)
             if canvas is not None:
+                # Force canvas window origin/scrollregion to stay canonical.
+                # This prevents occasional top-gap drift where yview=0.0 but
+                # the embedded frame is visually offset downward.
+                try:
+                    window_id = getattr(self.conflict_list, "_create_window_id", None)
+                    if window_id is not None:
+                        canvas.coords(window_id, 0, 0)
+                except Exception:
+                    pass
+                try:
+                    bbox = canvas.bbox("all")
+                    if bbox:
+                        canvas.configure(scrollregion=bbox)
+                except Exception:
+                    pass
                 try:
                     canvas.xview_moveto(0.0)
                 except Exception:
@@ -840,9 +855,27 @@ class ConflictsPage(BasePage):
                 return
 
             first_y = int(first_content.winfo_y())
+            window_id = getattr(self.conflict_list, "_create_window_id", None)
+            window_y = 0.0
+            try:
+                if window_id is not None:
+                    coords = canvas.coords(window_id)
+                    if coords and len(coords) >= 2:
+                        window_y = float(coords[1])
+            except Exception:
+                window_y = 0.0
+
+            view_top = 0.0
+            try:
+                view_top = float(canvas.canvasy(0))
+            except Exception:
+                view_top = 0.0
+
+            first_canvas_y = float(first_y) + window_y
+            leading_gap = first_canvas_y - view_top
             # Normal renders start near the top (~0-30px). If we detect a large
-            # leading gap, jump to the first real block.
-            if first_y <= 120:
+            # leading gap in true canvas space, jump to the first real block.
+            if leading_gap <= 120.0:
                 return
 
             scrollregion = canvas.cget("scrollregion")
@@ -857,11 +890,12 @@ class ConflictsPage(BasePage):
                     total_h = max(0.0, float(bbox[3] - bbox[1]))
             view_h = max(1.0, float(canvas.winfo_height()))
             scroll_h = max(1.0, total_h - view_h)
-            target_px = max(0.0, min(scroll_h, float(first_y - 8)))
+            target_px = max(0.0, min(scroll_h, float(first_canvas_y - 8.0)))
             canvas.yview_moveto(target_px / scroll_h)
             logger.warn(
                 "Conflicts",
-                f"Compacted leading gap (first_y={first_y}, target_px={target_px:.1f})",
+                f"Compacted leading gap (first_y={first_y}, window_y={window_y:.1f}, "
+                f"view_top={view_top:.1f}, gap={leading_gap:.1f}, target_px={target_px:.1f})",
             )
         except Exception:
             pass
@@ -888,21 +922,62 @@ class ConflictsPage(BasePage):
                 children = [w for w in self.conflict_list.winfo_children() if bool(w.winfo_exists())]
                 y0 = 0.0
                 first_y = -1
+                window_y = 0.0
+                view_top = 0.0
+                leading_gap = 0.0
                 if canvas is not None:
+                    try:
+                        bbox = canvas.bbox("all")
+                        if bbox:
+                            canvas.configure(scrollregion=bbox)
+                    except Exception:
+                        pass
+                    try:
+                        window_id = getattr(self.conflict_list, "_create_window_id", None)
+                        if window_id is not None:
+                            canvas.coords(window_id, 0, 0)
+                            coords = canvas.coords(window_id)
+                            if coords and len(coords) >= 2:
+                                window_y = float(coords[1])
+                    except Exception:
+                        window_y = 0.0
                     try:
                         y0 = float(canvas.yview()[0])
                     except Exception:
                         y0 = 0.0
+                    try:
+                        view_top = float(canvas.canvasy(0))
+                    except Exception:
+                        view_top = 0.0
                 if children:
                     try:
                         first_y = int(children[0].winfo_y())
                     except Exception:
                         first_y = -1
-                if canvas is not None and (y0 > 0.0015 or first_y > 60):
-                    canvas.yview_moveto(0.0)
+                first_canvas_y = float(first_y if first_y >= 0 else 0) + window_y
+                leading_gap = first_canvas_y - view_top
+                if canvas is not None and (y0 > 0.0015 or leading_gap > 60.0):
+                    if leading_gap > 60.0:
+                        scrollregion = canvas.cget("scrollregion")
+                        total_h = 0.0
+                        if scrollregion:
+                            parts = [float(p) for p in str(scrollregion).split()]
+                            if len(parts) == 4:
+                                total_h = max(0.0, parts[3] - parts[1])
+                        if total_h <= 1.0:
+                            bbox = canvas.bbox("all")
+                            if bbox:
+                                total_h = max(0.0, float(bbox[3] - bbox[1]))
+                        view_h = max(1.0, float(canvas.winfo_height()))
+                        scroll_h = max(1.0, total_h - view_h)
+                        target_px = max(0.0, min(scroll_h, float(first_canvas_y - 8.0)))
+                        canvas.yview_moveto(target_px / scroll_h)
+                    else:
+                        canvas.yview_moveto(0.0)
                 logger.debug(
                     "Conflicts",
                     f"Viewport settle pass={passes - remaining + 1}/{passes} y0={y0:.4f} first_y={first_y} "
+                    f"window_y={window_y:.1f} view_top={view_top:.1f} gap={leading_gap:.1f} "
                     f"children={len(children)}",
                 )
             except Exception:
