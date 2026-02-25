@@ -77,7 +77,8 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Lazy pages are background-warmed after startup to reduce first-open tab hitching.
 - Main window now opens and closes without fade animations.
 - Conflicts scan rendering now includes a resilient fallback so results never appear blank after a successful scan.
-- Conflicts initial prompt and scan results now share one stable render host to avoid blank-result panel races.
+- Conflicts initial prompt and scan results now use isolated hosts with explicit show/hide transitions to prevent blank-result overlay races.
+- Startup geometry is centered before first paint and no delayed post-show recenter is used.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.

@@ -68,17 +68,17 @@ class ModManagerApp(ctk.CTk):
         _dbg("super().__init__() OK")
 
         # Keep the window hidden until startup is complete so users never
-        # see intermediate layout states. Prefer alpha hiding to avoid the
-        # withdrawn->deiconify border flash seen on some Windows systems.
+        # see intermediate layout states. Prefer withdraw as the primary
+        # strategy to prevent any visible top-left startup flash.
         self._startup_hidden_withdraw = False
         self._startup_hidden_alpha = False
         try:
-            self.attributes("-alpha", 0.0)
-            self._startup_hidden_alpha = True
+            self.withdraw()
+            self._startup_hidden_withdraw = True
         except Exception:
             try:
-                self.withdraw()
-                self._startup_hidden_withdraw = True
+                self.attributes("-alpha", 0.0)
+                self._startup_hidden_alpha = True
             except Exception:
                 pass
 
@@ -345,23 +345,34 @@ class ModManagerApp(ctk.CTk):
 
         self.update_idletasks()
 
-        # Centre before first show; re-centered again right after map.
+        # Center before first show.
         self._center_window_on_screen()
 
         _dbg("update_idletasks done, showing window...")
+        force_alpha_hidden = False
+        try:
+            self.attributes("-alpha", 0.0)
+            force_alpha_hidden = True
+        except Exception:
+            pass
         if self._startup_hidden_withdraw:
             try:
                 self.deiconify()
             except Exception:
                 pass
-        # Always force normal + visible regardless of which hide strategy
-        # was used during startup.
-        try:
-            self.state("normal")
-        except Exception:
-            pass
+        # Avoid forcing state("normal") after a withdrawn startup path
+        # because that can reset window position on map.
+        if not self._startup_hidden_withdraw:
+            try:
+                self.state("normal")
+            except Exception:
+                pass
+        # Normalize geometry synchronously after map to avoid visible jumps.
+        self.update_idletasks()
+        self._center_window_on_screen()
+
         fade_in_supported = False
-        if self._ENABLE_WINDOW_FADE:
+        if self._ENABLE_WINDOW_FADE and force_alpha_hidden:
             try:
                 self.attributes("-alpha", 0.0)
                 fade_in_supported = True
@@ -374,9 +385,10 @@ class ModManagerApp(ctk.CTk):
                 pass
         # Avoid aggressive focus_force() during startup; it can trigger
         # unstable behavior on some Windows setups.
-        self.after(20, self._center_window_on_screen)
-        self.after(180, self._center_window_on_screen)
-        self.after(10, self.lift)
+        try:
+            self.lift()
+        except Exception:
+            pass
         if fade_in_supported and self._ENABLE_WINDOW_FADE:
             self.after(25, self._fade_in_window)
         if self._startup_hidden_withdraw:

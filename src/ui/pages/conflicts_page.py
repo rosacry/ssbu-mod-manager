@@ -128,11 +128,15 @@ class ConflictsPage(BasePage):
             corner_radius=8, height=34,
         )
 
-        self.conflict_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
-        # Render both initial prompt and scan results in the same scrollable
-        # host to avoid pack/forget races that can leave the results area blank.
-        self._initial_prompt_host = self.conflict_list
+        self._results_stack = ctk.CTkFrame(self, fg_color="transparent")
+        self._results_stack.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+
+        self.conflict_list = ctk.CTkScrollableFrame(self._results_stack, fg_color="transparent")
+        self.conflict_list.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+
+        # Keep initial prompt in a separate non-scroll host so prompt placement
+        # cannot corrupt the scrollable canvas region for real results.
+        self._initial_prompt_host = ctk.CTkFrame(self._results_stack, fg_color="transparent")
         self.bind("<Configure>", self._on_page_configure, add="+")
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
@@ -183,6 +187,7 @@ class ConflictsPage(BasePage):
 
         self._initial_prompt_visible = True
         self._reposition_initial_prompt()
+        self._show_empty_state_host()
 
     def _hide_initial_prompt(self):
         self._initial_prompt_visible = False
@@ -204,9 +209,9 @@ class ConflictsPage(BasePage):
         try:
             if visible:
                 if not self.summary_label.winfo_manager():
-                    self.summary_label.pack(fill="x", padx=30, pady=(0, 5))
+                    self.summary_label.pack(fill="x", padx=30, pady=(0, 5), before=self._results_stack)
                 if not self.auto_btn_frame.winfo_manager():
-                    self.auto_btn_frame.pack(fill="x", padx=30, pady=(0, 8))
+                    self.auto_btn_frame.pack(fill="x", padx=30, pady=(0, 8), before=self._results_stack)
             else:
                 if self.summary_label.winfo_manager():
                     self.summary_label.pack_forget()
@@ -216,13 +221,20 @@ class ConflictsPage(BasePage):
             pass
 
     def _show_empty_state_host(self):
-        self._show_conflict_list()
+        try:
+            if not self._initial_prompt_host.winfo_manager():
+                self._initial_prompt_host.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+            self._initial_prompt_host.lift()
+        except Exception:
+            pass
 
     def _show_conflict_list(self):
         try:
             if not self.conflict_list.winfo_manager():
-                self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
+                self.conflict_list.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
             self.conflict_list.lift()
+            if self._initial_prompt_host.winfo_manager():
+                self._initial_prompt_host.place_forget()
         except Exception:
             pass
 
@@ -316,12 +328,7 @@ class ConflictsPage(BasePage):
         ctk.CTkLabel(self.conflict_list,
                      text="Scanning mod files for conflicts...",
                      font=ctk.CTkFont(size=13), text_color="#888888").pack(pady=40)
-        try:
-            canvas = getattr(self.conflict_list, "_parent_canvas", None)
-            if canvas is not None:
-                canvas.yview_moveto(0.0)
-        except Exception:
-            pass
+        self._reset_conflict_canvas_view()
 
         logger.info("Conflicts", f"Starting conflict scan in: {settings.mods_path}")
         mods_path = settings.mods_path
@@ -663,12 +670,12 @@ class ConflictsPage(BasePage):
             ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
 
         self.conflict_list.update_idletasks()
-        try:
-            canvas = getattr(self.conflict_list, "_parent_canvas", None)
-            if canvas is not None:
-                canvas.yview_moveto(0.0)
-        except Exception:
-            pass
+        logger.debug(
+            "Conflicts",
+            f"Render complete: sections={rendered_section_blocks}, rows={rendered_conflict_rows}, "
+            f"widgets={len(self.conflict_list.winfo_children())}",
+        )
+        self._reset_conflict_canvas_view()
         self.after(22, self._ensure_results_not_blank)
         # Re-patch scroll speed after rendering new widgets
         self.after(100, self._patch_all_scroll_speeds)
@@ -681,8 +688,6 @@ class ConflictsPage(BasePage):
             return
         self._show_conflict_list()
         try:
-            if not self.conflict_list.winfo_ismapped():
-                self.conflict_list.pack(fill="both", expand=True, padx=30, pady=(0, 10))
             children = [w for w in self.conflict_list.winfo_children() if bool(w.winfo_exists())]
         except Exception:
             children = []
@@ -725,10 +730,18 @@ class ConflictsPage(BasePage):
             ).pack(fill="x", padx=12, pady=(4, 1))
 
         ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
+        self._reset_conflict_canvas_view()
+
+    def _reset_conflict_canvas_view(self):
+        """Normalize list canvas view after prompt/results mode changes."""
         try:
             self.conflict_list.update_idletasks()
             canvas = getattr(self.conflict_list, "_parent_canvas", None)
             if canvas is not None:
+                try:
+                    canvas.xview_moveto(0.0)
+                except Exception:
+                    pass
                 canvas.yview_moveto(0.0)
         except Exception:
             pass
