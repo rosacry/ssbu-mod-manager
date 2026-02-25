@@ -230,8 +230,39 @@ class MainWindow(ctk.CTkFrame):
     def register_page(self, page_id: str, page):
         """Register a page for navigation."""
         self.pages[page_id] = page
+        # Keep lazily created pages unmapped until first navigation so hidden
+        # pages do not participate in every resize/reflow.
         page.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
-        page.lower()  # Hide initially
+        page.lower()
+        page.place_forget()
+
+    def _map_page(self, page):
+        """Place a page into the content region if not already mapped."""
+        try:
+            if not page.winfo_manager():
+                page.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
+        except Exception:
+            try:
+                page.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
+            except Exception:
+                pass
+
+    def prime_page_layout(self, page_id: str):
+        """Prime widget layout for a hidden page without running page data loads."""
+        page = self.pages.get(page_id)
+        if page is None:
+            return
+        self._map_page(page)
+        page.lower()
+        try:
+            page.update_idletasks()
+            self.content.update_idletasks()
+        except Exception:
+            pass
+        try:
+            page.place_forget()
+        except Exception:
+            pass
 
     def navigate(self, page_id: str):
         """Navigate to a page."""
@@ -243,6 +274,11 @@ class MainWindow(ctk.CTkFrame):
         prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
         first_visit = page_id not in self._shown_pages
+        self._map_page(page)
+        try:
+            page.lower()
+        except Exception:
+            pass
         # Prepare target page before revealing it so users don't see
         # intermediate population/reflow states.
         try:
@@ -261,7 +297,10 @@ class MainWindow(ctk.CTkFrame):
                 prev_page.on_hide()
             except Exception:
                 pass
-            prev_page.lower()
+            try:
+                prev_page.place_forget()
+            except Exception:
+                prev_page.lower()
 
         self.current_page = page_id
         self._shown_pages.add(page_id)

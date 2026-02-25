@@ -418,6 +418,11 @@ class PluginsPage(BasePage):
             return None
         self._close_context_menu()
         menu = ctk.CTkToplevel(self)
+        try:
+            menu.geometry("1x1+-32000+-32000")
+            menu.attributes("-alpha", 0.0)
+        except Exception:
+            pass
         menu.withdraw()
         menu.overrideredirect(True)
         menu.attributes("-topmost", True)
@@ -462,6 +467,10 @@ class PluginsPage(BasePage):
         menu_h = max(frame.winfo_reqheight(), 30)
         x, y = self._clamp_popup_to_screen(event.x_root + 4, event.y_root + 2, menu_w, menu_h)
         menu.geometry(f"{menu_w}x{menu_h}+{x}+{y}")
+        try:
+            menu.attributes("-alpha", 1.0)
+        except Exception:
+            pass
         menu.deiconify()
         menu.lift()
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
@@ -581,6 +590,11 @@ class PluginsPage(BasePage):
     def _show_text_entry_dialog(self, title: str, subtitle: str, initial_value: str):
         result = {"value": None}
         dialog = ctk.CTkToplevel(self)
+        try:
+            dialog.geometry("1x1+-32000+-32000")
+            dialog.attributes("-alpha", 0.0)
+        except Exception:
+            pass
         dialog.withdraw()
         dialog.title(title)
         dialog.resizable(False, False)
@@ -650,7 +664,7 @@ class PluginsPage(BasePage):
         dialog.bind("<Escape>", lambda _e: close_with(None))
         dialog.bind("<Return>", lambda _e: close_with(entry.get()))
         self._center_dialog(dialog, width=500, height=290)
-        self._present_modal_dialog(dialog, focus_widget=entry)
+        self._present_modal_dialog(dialog, focus_widget=entry, animate_open=False)
         self.wait_window(dialog)
         return result["value"]
 

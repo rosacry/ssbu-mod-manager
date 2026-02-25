@@ -32,14 +32,24 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 28
+    _ZOOM_APPLY_DEBOUNCE_MS = 72
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
-    _RESIZE_SETTLE_MS = 70
-    _DRAG_REDRAW_INTERVAL_MS = 16
-    _SCROLL_REFRESH_INTERVAL_MS = 12
+    _RESIZE_SETTLE_MS = 84
+    _DRAG_REDRAW_INTERVAL_MS = 12
+    _SCROLL_REFRESH_INTERVAL_MS = 8
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
+    _PAGE_WARMUP_INITIAL_DELAY_MS = 1200
+    _PAGE_WARMUP_STEP_DELAY_MS = 170
+    _PAGE_WARMUP_PAGE_IDS = (
+        "mods",
+        "plugins",
+        "conflicts",
+        "settings",
+        "developer",
+        "css",
+    )
 
     def __init__(self):
         import sys as _sys
@@ -367,8 +377,8 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
-        # Warm lazy pages in the background so first navigation is seamless.
-        self.after(320, self._start_background_page_warmup)
+        # Warm selected light pages in the background after startup settles.
+        self.after(self._PAGE_WARMUP_INITIAL_DELAY_MS, self._start_background_page_warmup)
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
@@ -559,10 +569,10 @@ class ModManagerApp(ctk.CTk):
     # --- Global fast scroll --------------------------------------------------
 
     _SCROLL_SPEED = 3                    # Listbox/Text scroll multiplier
-    _CANVAS_SCROLL_PIXELS = 84           # Default canvas movement per wheel tick
-    _MODS_CANVAS_SCROLL_PIXELS = 58      # Keep Mods aligned with Plugins pace
-    _LONGFORM_SCROLL_SPEED = 5           # Long-form text/list widgets
-    _LONGFORM_CANVAS_SCROLL_PIXELS = 96  # Online Guide/Migration boost
+    _CANVAS_SCROLL_PIXELS = 72           # Default canvas movement per wheel tick
+    _MODS_CANVAS_SCROLL_PIXELS = 54      # Keep Mods aligned with Plugins pace
+    _LONGFORM_SCROLL_SPEED = 4           # Long-form text/list widgets
+    _LONGFORM_CANVAS_SCROLL_PIXELS = 78  # Online Guide/Migration boost
 
     def _on_global_left_press(self, event):
         try:
@@ -650,6 +660,12 @@ class ModManagerApp(ctk.CTk):
                 target.update_idletasks()
             else:
                 self.update_idletasks()
+        except Exception:
+            pass
+        try:
+            # A second idletask pass on the root helps CTk label/canvas text
+            # keep up when users drag the scrollbar thumb rapidly.
+            self.update_idletasks()
         except Exception:
             pass
         self._ensure_drag_redraw_loop()
@@ -1038,11 +1054,10 @@ class ModManagerApp(ctk.CTk):
                 widget.update_idletasks()
             except Exception:
                 pass
-        if not self._pointer_left_down:
-            try:
-                self.update_idletasks()
-            except Exception:
-                pass
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
         try:
             self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 6
             if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
@@ -1281,15 +1296,75 @@ class ModManagerApp(ctk.CTk):
 
         app = self
         original_init = _ctk_toplevel.CTkToplevel.__init__
+        original_iconbitmap = _ctk_toplevel.CTkToplevel.iconbitmap
+        original_wm_iconbitmap = getattr(
+            _ctk_toplevel.CTkToplevel,
+            "wm_iconbitmap",
+            original_iconbitmap,
+        )
+
+        # Disable CTk header manipulation for transient dialogs. This avoids
+        # withdraw/deiconify flashes while popup windows are being created.
+        try:
+            _ctk_toplevel.CTkToplevel._deactivate_windows_window_header_manipulation = True
+        except Exception:
+            pass
+
+        def _override_ctk_default_icon(bitmap=None, default=None):
+            candidate = default if default is not None else bitmap
+            try:
+                normalized = str(candidate).replace("\\", "/").lower()
+            except Exception:
+                normalized = ""
+            if not normalized.endswith("customtkinter_icon_windows.ico"):
+                return bitmap, default
+            app_icon = getattr(app, "_icon_bitmap_path", None)
+            if not app_icon or not Path(app_icon).exists():
+                return bitmap, default
+            if default is not None:
+                return bitmap, app_icon
+            return app_icon, default
+
+        def _iconbitmap_with_override(toplevel, bitmap=None, default=None):
+            bitmap, default = _override_ctk_default_icon(bitmap, default)
+            try:
+                return original_iconbitmap(toplevel, bitmap=bitmap, default=default)
+            except TypeError:
+                if default is not None:
+                    return original_iconbitmap(toplevel, default=default)
+                return original_iconbitmap(toplevel, bitmap)
+
+        def _wm_iconbitmap_with_override(toplevel, bitmap=None, default=None):
+            bitmap, default = _override_ctk_default_icon(bitmap, default)
+            try:
+                return original_wm_iconbitmap(toplevel, bitmap=bitmap, default=default)
+            except TypeError:
+                if default is not None:
+                    return original_wm_iconbitmap(toplevel, default=default)
+                return original_wm_iconbitmap(toplevel, bitmap)
 
         def _init_with_icon(toplevel, *args, **kwargs):
             original_init(toplevel, *args, **kwargs)
-            try:
-                app.apply_window_icon(toplevel)
-            except Exception:
-                pass
+
+            def _apply_icon_once():
+                try:
+                    if bool(toplevel.winfo_exists()):
+                        app.apply_window_icon(toplevel)
+                except Exception:
+                    pass
+
+            _apply_icon_once()
+            # CTk schedules delayed icon operations; apply ours again after
+            # those callbacks so dialogs always keep the app icon.
+            for delay_ms in (220, 420):
+                try:
+                    toplevel.after(delay_ms, _apply_icon_once)
+                except Exception:
+                    pass
 
         _ctk_toplevel.CTkToplevel.__init__ = _init_with_icon
+        _ctk_toplevel.CTkToplevel.iconbitmap = _iconbitmap_with_override
+        _ctk_toplevel.CTkToplevel.wm_iconbitmap = _wm_iconbitmap_with_override
         _ctk_toplevel.CTkToplevel._ssbumm_icon_patch = True
 
     def apply_window_icon(self, window):
@@ -1461,13 +1536,19 @@ class ModManagerApp(ctk.CTk):
         return page
 
     def _start_background_page_warmup(self):
-        """Create lazy pages in the background to reduce first-navigation pop-in."""
+        """Create selected lazy pages in the background to reduce first-navigation pop-in."""
         if self._shutting_down or not hasattr(self, "main_window"):
             return
         if self._page_warmup_after_id is not None:
             return
         current = getattr(self.main_window, "current_page", None)
-        self._page_warmup_queue = [pid for pid in self._page_classes.keys() if pid != current]
+        self._page_warmup_queue = [
+            pid
+            for pid in self._PAGE_WARMUP_PAGE_IDS
+            if pid in self._page_classes and pid != current and pid not in self.main_window.pages
+        ]
+        if not self._page_warmup_queue:
+            return
         self._page_warmup_after_id = self.after(40, self._run_page_warmup_step)
 
     def _run_page_warmup_step(self):
@@ -1479,17 +1560,18 @@ class ModManagerApp(ctk.CTk):
             return
         page_id = self._page_warmup_queue.pop(0)
         page = self._create_page(page_id)
-        # Prime page layout/data while hidden to avoid first-visit pop-in.
+        # Prime geometry while hidden but avoid page data loads (some pages kick
+        # off heavy scans in on_show(), which causes startup jank).
         if page is not None:
             try:
-                page.on_show()
-                page.update_idletasks()
-                page.on_hide()
-                page.lower()
+                self.main_window.prime_page_layout(page_id)
             except Exception:
                 pass
         if self._page_warmup_queue:
-            self._page_warmup_after_id = self.after(85, self._run_page_warmup_step)
+            self._page_warmup_after_id = self.after(
+                self._PAGE_WARMUP_STEP_DELAY_MS,
+                self._run_page_warmup_step,
+            )
 
     def navigate(self, page_id: str):
         """Navigate to a page, creating it lazily if needed."""

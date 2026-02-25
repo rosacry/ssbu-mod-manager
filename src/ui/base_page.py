@@ -136,7 +136,7 @@ class BasePage(ctk.CTkFrame):
         except Exception:
             pass
 
-    def _present_modal_dialog(self, dialog, focus_widget=None):
+    def _present_modal_dialog(self, dialog, focus_widget=None, animate_open: bool = True):
         """Show a modal dialog with icon/focus applied before first paint."""
         try:
             dialog.transient(self.winfo_toplevel())
@@ -152,20 +152,27 @@ class BasePage(ctk.CTkFrame):
             pass
 
         fade_supported = False
-        try:
-            dialog.attributes("-alpha", 0.0)
-            fade_supported = True
-        except Exception:
-            pass
+        if animate_open:
+            try:
+                dialog.attributes("-alpha", 0.0)
+                fade_supported = True
+            except Exception:
+                pass
 
         try:
             dialog.deiconify()
             dialog.lift()
+            dialog.update_idletasks()
+        except Exception:
+            pass
+        try:
+            # Force one full composition pass before showing fade frames.
+            dialog.update()
         except Exception:
             pass
 
         if fade_supported:
-            fade_values = (0.42, 0.68, 0.88, 1.0)
+            fade_values = (0.82, 0.94, 1.0)
 
             def _fade_step(index=0):
                 try:
@@ -179,11 +186,16 @@ class BasePage(ctk.CTkFrame):
                     return
                 if index + 1 < len(fade_values):
                     try:
-                        dialog.after(14, lambda: _fade_step(index + 1))
+                        dialog.after(10, lambda: _fade_step(index + 1))
                     except Exception:
                         pass
 
             _fade_step(0)
+        else:
+            try:
+                dialog.attributes("-alpha", 1.0)
+            except Exception:
+                pass
 
         try:
             dialog.grab_set()

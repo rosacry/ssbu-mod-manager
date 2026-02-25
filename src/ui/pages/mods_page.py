@@ -579,6 +579,11 @@ class ModsPage(BasePage):
     def _show_rename_mod_dialog(self, initial_value: str):
         result = {"value": None, "rename_folder": False}
         dialog = ctk.CTkToplevel(self)
+        try:
+            dialog.geometry("1x1+-32000+-32000")
+            dialog.attributes("-alpha", 0.0)
+        except Exception:
+            pass
         dialog.withdraw()
         dialog.title("Rename Mod")
         dialog.resizable(False, False)
@@ -642,7 +647,7 @@ class ModsPage(BasePage):
         dialog.bind("<Escape>", lambda _e: close_with(None))
         dialog.bind("<Return>", lambda _e: close_with(entry.get()))
         self._center_dialog(dialog, width=460, height=270)
-        self._present_modal_dialog(dialog, focus_widget=entry)
+        self._present_modal_dialog(dialog, focus_widget=entry, animate_open=False)
         self.wait_window(dialog)
         if result["value"] is None:
             return None

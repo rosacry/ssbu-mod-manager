@@ -392,16 +392,13 @@ class ConflictsPage(BasePage):
         self._scanned = True
         self._conflicts = conflicts
         self._locale_msbts = locale_msbts or []
+        self._needs_render = False
 
+        # Always render once scan results land. Viewability checks on Windows
+        # can race during rapid navigation and leave the page blank.
         try:
-            if self.winfo_ismapped() and self.winfo_viewable():
-                self._needs_render = False
-                self._render()
-            else:
-                self._needs_render = True
-                logger.debug("Conflicts", "Page hidden, deferring render")
+            self.after_idle(self._render)
         except Exception:
-            self._needs_render = False
             self._render()
 
     def _render(self):
