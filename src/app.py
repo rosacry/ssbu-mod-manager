@@ -441,14 +441,19 @@ class ModManagerApp(ctk.CTk):
         if self._shutting_down:
             return
         try:
-            self.navigate("dashboard")
-            # MainWindow.navigate schedules work via after(0). Process one
-            # event pass during hidden startup so the first paint is complete.
             if pre_map:
                 try:
-                    self.update()
+                    if "dashboard" not in self.main_window.pages:
+                        self._create_page("dashboard")
+                    self.main_window.navigate_immediate("dashboard")
                 except Exception:
-                    pass
+                    self.navigate("dashboard")
+                    try:
+                        self.update()
+                    except Exception:
+                        pass
+            else:
+                self.navigate("dashboard")
             self.update_idletasks()
         except Exception:
             pass

@@ -287,7 +287,23 @@ class MainWindow(ctk.CTkFrame):
         self._show_navigation_overlay()
         self.after(0, lambda pid=page_id, t=token: self._complete_navigation(pid, t))
 
-    def _complete_navigation(self, page_id: str, token: int):
+    def navigate_immediate(self, page_id: str):
+        """Navigate synchronously without delayed overlay transitions."""
+        if page_id not in self.pages:
+            return
+        if page_id == self.current_page:
+            return
+        self._nav_token += 1
+        token = self._nav_token
+        try:
+            if self._nav_overlay_after_id:
+                self.after_cancel(self._nav_overlay_after_id)
+                self._nav_overlay_after_id = None
+        except Exception:
+            pass
+        self._complete_navigation(page_id, token, overlay_delay_ms=0)
+
+    def _complete_navigation(self, page_id: str, token: int, overlay_delay_ms: int = 36):
         if token != self._nav_token:
             return
         prev_page = self.pages.get(self.current_page) if self.current_page else None
@@ -335,7 +351,7 @@ class MainWindow(ctk.CTkFrame):
             page.after(150, page._patch_all_scroll_speeds)
         self._schedule_render_settle(page_id)
         self.sidebar.set_active(page_id)
-        self._hide_navigation_overlay(token)
+        self._hide_navigation_overlay(token, delay_ms=overlay_delay_ms)
 
     def _show_navigation_overlay(self):
         try:
@@ -351,7 +367,7 @@ class MainWindow(ctk.CTkFrame):
         except Exception:
             pass
 
-    def _hide_navigation_overlay(self, token: int):
+    def _hide_navigation_overlay(self, token: int, delay_ms: int = 36):
         def _clear():
             self._nav_overlay_after_id = None
             if token != self._nav_token:
@@ -366,7 +382,10 @@ class MainWindow(ctk.CTkFrame):
                 self.after_cancel(self._nav_overlay_after_id)
         except Exception:
             pass
-        self._nav_overlay_after_id = self.after(36, _clear)
+        if int(delay_ms) <= 0:
+            _clear()
+            return
+        self._nav_overlay_after_id = self.after(int(delay_ms), _clear)
 
     def _schedule_render_settle(self, page_id: str):
         """Run a delayed idle/layout settle pass for the visible page."""

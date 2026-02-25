@@ -66,6 +66,7 @@ class ConflictsPage(BasePage):
         self._initial_prompt_host = None
         self._initial_prompt_visible = False
         self._viewport_stabilize_after_ids = []
+        self.conflict_list = None
         self._build_ui()
 
     def _build_ui(self):
@@ -132,15 +133,30 @@ class ConflictsPage(BasePage):
         self._results_stack = ctk.CTkFrame(self, fg_color="transparent")
         self._results_stack.pack(fill="both", expand=True, padx=30, pady=(0, 10))
 
-        self.conflict_list = ctk.CTkScrollableFrame(self._results_stack, fg_color="transparent")
-        self.conflict_list.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+        self._create_conflict_list()
 
         # Keep initial prompt in a separate non-scroll host so prompt placement
         # cannot corrupt the scrollable canvas region for real results.
         self._initial_prompt_host = ctk.CTkFrame(self._results_stack, fg_color="transparent")
         self._initial_prompt_host.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
         self.bind("<Configure>", self._on_page_configure, add="+")
+
+    def _create_conflict_list(self):
+        """Create the scrollable conflict results host."""
+        self.conflict_list = ctk.CTkScrollableFrame(self._results_stack, fg_color="transparent")
+        self.conflict_list.pack(fill="both", expand=True)
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
+
+    def _recreate_conflict_list(self):
+        """Hard-reset the scroll host to avoid stale canvas/scrollregion state."""
+        try:
+            if self.conflict_list is not None and bool(self.conflict_list.winfo_exists()):
+                self.conflict_list.destroy()
+        except Exception:
+            pass
+        self._create_conflict_list()
+        self._show_conflict_list()
+        self._reset_conflict_canvas_view()
 
     def on_show(self):
         if self._scanning:
@@ -236,7 +252,7 @@ class ConflictsPage(BasePage):
     def _show_conflict_list(self):
         try:
             if not self.conflict_list.winfo_manager():
-                self.conflict_list.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+                self.conflict_list.pack(fill="both", expand=True)
             self.conflict_list.lift()
             if self._initial_prompt_host.winfo_manager():
                 self._initial_prompt_host.lower()
@@ -325,6 +341,7 @@ class ConflictsPage(BasePage):
         current_gen = getattr(self, "_scan_generation", 0)
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
+        self._recreate_conflict_list()
         self._show_conflict_list()
         self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
 
@@ -431,6 +448,7 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
+        self._recreate_conflict_list()
         self._show_conflict_list()
 
         # Normalize scan outputs so malformed rows never break rendering.
