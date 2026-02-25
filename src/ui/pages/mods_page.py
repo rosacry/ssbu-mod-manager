@@ -463,12 +463,7 @@ class ModsPage(BasePage):
         menu.geometry(f"{menu_w}x{menu_h}+{x}+{y}")
         menu.deiconify()
         menu.lift()
-        try:
-            menu.focus_force()
-        except Exception:
-            pass
         menu.bind("<Escape>", lambda _e: self._close_context_menu(), add="+")
-        menu.bind("<FocusOut>", lambda _e: self.after(10, self._close_context_menu), add="+")
         self._context_menu = menu
         return "break"
 
