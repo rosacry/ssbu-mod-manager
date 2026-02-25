@@ -559,6 +559,7 @@ class ConflictsPage(BasePage):
         rendered_conflict_rows = 0
         rendered_section_blocks = 0
         for ext, conflicts in sorted_groups:
+            type_header = None
             try:
                 conflicts.sort(key=lambda c: (
                     severity_rank.get(getattr(c, "severity", None), 99),
@@ -621,6 +622,29 @@ class ConflictsPage(BasePage):
                         ).pack(fill="x", padx=10, pady=8)
             except Exception as e:
                 logger.warn("Conflicts", f"Failed to render conflict section '{ext}': {e}")
+                try:
+                    if type_header is not None and bool(type_header.winfo_exists()):
+                        type_header.destroy()
+                except Exception:
+                    pass
+                fallback_row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
+                fallback_row.pack(fill="x", pady=2)
+                ctk.CTkLabel(
+                    fallback_row,
+                    text=f"Could not render section {ext}; falling back to minimal row(s).",
+                    font=ctk.CTkFont(size=12),
+                    text_color="#d4a017",
+                    anchor="w",
+                ).pack(fill="x", padx=10, pady=(8, 4))
+                for conflict in conflicts[:8]:
+                    ctk.CTkLabel(
+                        fallback_row,
+                        text=f"  - {getattr(conflict, 'relative_path', 'unknown')}",
+                        font=ctk.CTkFont(size=11),
+                        text_color="#bbbbcc",
+                        anchor="w",
+                    ).pack(fill="x", padx=10, pady=1)
+                ctk.CTkFrame(fallback_row, height=4, fg_color="transparent").pack()
 
         # Render locale-specific MSBT section if any were found
         if self._locale_msbts:
@@ -688,6 +712,7 @@ class ConflictsPage(BasePage):
             ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
 
         self.conflict_list.update_idletasks()
+        self._prune_empty_conflict_blocks()
         logger.debug(
             "Conflicts",
             f"Render complete: sections={rendered_section_blocks}, rows={rendered_conflict_rows}, "
@@ -695,6 +720,8 @@ class ConflictsPage(BasePage):
         )
         self._reset_conflict_canvas_view()
         self._stabilize_conflict_viewport()
+        self.after(30, self._compact_leading_conflict_gap)
+        self.after(150, self._compact_leading_conflict_gap)
         self.after(22, self._ensure_results_not_blank)
         # Re-patch scroll speed after rendering new widgets
         self.after(100, self._patch_all_scroll_speeds)
@@ -751,6 +778,7 @@ class ConflictsPage(BasePage):
         ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
         self._reset_conflict_canvas_view()
         self._stabilize_conflict_viewport()
+        self.after(30, self._compact_leading_conflict_gap)
 
     def _reset_conflict_canvas_view(self):
         """Normalize list canvas view after prompt/results mode changes."""
@@ -763,6 +791,78 @@ class ConflictsPage(BasePage):
                 except Exception:
                     pass
                 canvas.yview_moveto(0.0)
+        except Exception:
+            pass
+
+    def _prune_empty_conflict_blocks(self):
+        """Remove orphan top-level frames left by partial render failures."""
+        try:
+            children = list(self.conflict_list.winfo_children())
+        except Exception:
+            return
+        for child in children:
+            try:
+                if not bool(child.winfo_exists()):
+                    continue
+                # Remove only clearly orphaned rows (large, childless blocks).
+                if not child.winfo_children() and int(child.winfo_reqheight()) >= 40:
+                    child.destroy()
+            except Exception:
+                continue
+
+    def _compact_leading_conflict_gap(self):
+        """Collapse abnormal leading blank space before first rendered block."""
+        if self._scanning:
+            return
+        if not (self._conflicts or self._locale_msbts):
+            return
+        try:
+            self.conflict_list.update_idletasks()
+            canvas = getattr(self.conflict_list, "_parent_canvas", None)
+            if canvas is None:
+                return
+            children = [w for w in self.conflict_list.winfo_children() if bool(w.winfo_exists())]
+            if not children:
+                return
+
+            first_content = None
+            for w in children:
+                try:
+                    if isinstance(w, ConflictCard):
+                        first_content = w
+                        break
+                    if w.winfo_children():
+                        first_content = w
+                        break
+                except Exception:
+                    continue
+            if first_content is None:
+                return
+
+            first_y = int(first_content.winfo_y())
+            # Normal renders start near the top (~0-30px). If we detect a large
+            # leading gap, jump to the first real block.
+            if first_y <= 120:
+                return
+
+            scrollregion = canvas.cget("scrollregion")
+            total_h = 0.0
+            if scrollregion:
+                parts = [float(p) for p in str(scrollregion).split()]
+                if len(parts) == 4:
+                    total_h = max(0.0, parts[3] - parts[1])
+            if total_h <= 1.0:
+                bbox = canvas.bbox("all")
+                if bbox:
+                    total_h = max(0.0, float(bbox[3] - bbox[1]))
+            view_h = max(1.0, float(canvas.winfo_height()))
+            scroll_h = max(1.0, total_h - view_h)
+            target_px = max(0.0, min(scroll_h, float(first_y - 8)))
+            canvas.yview_moveto(target_px / scroll_h)
+            logger.warn(
+                "Conflicts",
+                f"Compacted leading gap (first_y={first_y}, target_px={target_px:.1f})",
+            )
         except Exception:
             pass
 
