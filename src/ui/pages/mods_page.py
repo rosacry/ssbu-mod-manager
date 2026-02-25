@@ -579,11 +579,6 @@ class ModsPage(BasePage):
     def _show_rename_mod_dialog(self, initial_value: str):
         result = {"value": None, "rename_folder": False}
         dialog = ctk.CTkToplevel(self)
-        try:
-            dialog.geometry("1x1+-32000+-32000")
-            dialog.attributes("-alpha", 0.0)
-        except Exception:
-            pass
         dialog.withdraw()
         dialog.title("Rename Mod")
         dialog.resizable(False, False)

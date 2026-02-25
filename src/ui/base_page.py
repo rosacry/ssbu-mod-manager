@@ -152,10 +152,20 @@ class BasePage(ctk.CTkFrame):
             pass
 
         fade_supported = False
+        alpha_hidden = False
         if animate_open:
             try:
                 dialog.attributes("-alpha", 0.0)
                 fade_supported = True
+                alpha_hidden = True
+            except Exception:
+                pass
+        else:
+            try:
+                # Keep dialog invisible until one full draw pass finishes so
+                # users never see half-rendered controls.
+                dialog.attributes("-alpha", 0.0)
+                alpha_hidden = True
             except Exception:
                 pass
 
@@ -192,10 +202,11 @@ class BasePage(ctk.CTkFrame):
 
             _fade_step(0)
         else:
-            try:
-                dialog.attributes("-alpha", 1.0)
-            except Exception:
-                pass
+            if alpha_hidden:
+                try:
+                    dialog.attributes("-alpha", 1.0)
+                except Exception:
+                    pass
 
         try:
             dialog.grab_set()

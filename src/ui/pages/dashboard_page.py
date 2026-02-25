@@ -19,6 +19,7 @@ class DashboardPage(BasePage):
         self._startup_scan_scheduled = False
         self._spinner_active = False
         self._spinner_index = 0
+        self._stats_refresh_after_id = None
         self._build_ui()
 
     def _build_ui(self):
@@ -172,13 +173,19 @@ class DashboardPage(BasePage):
         self.after(100, self._animate_spinner)
 
     def on_show(self):
-        logger.debug("Dashboard", "Page shown, refreshing stats")
-        self._refresh_stats_fast()
+        logger.debug("Dashboard", "Page shown, scheduling stats refresh")
+        if self._stats_refresh_after_id:
+            try:
+                self.after_cancel(self._stats_refresh_after_id)
+            except Exception:
+                pass
+        delay = 260 if self._conflict_cache is None else 40
+        self._stats_refresh_after_id = self.after(delay, self._refresh_stats_fast)
         # Auto-scan conflicts in background if we haven't yet
         if self._conflict_cache is None and not self._startup_scan_scheduled:
             # Defer first heavy scan briefly so startup can fully settle.
             self._startup_scan_scheduled = True
-            self.after(1500, self._startup_refresh)
+            self.after(1800, self._startup_refresh)
 
     def _startup_refresh(self):
         """Run delayed first refresh after app startup settles."""
@@ -188,8 +195,17 @@ class DashboardPage(BasePage):
         if self._conflict_cache is None and not self._loading:
             self._force_refresh()
 
+    def on_hide(self):
+        if self._stats_refresh_after_id:
+            try:
+                self.after_cancel(self._stats_refresh_after_id)
+            except Exception:
+                pass
+            self._stats_refresh_after_id = None
+
     def _refresh_stats_fast(self):
         """Quick refresh using cached data."""
+        self._stats_refresh_after_id = None
         try:
             settings = self.app.config_manager.settings
             configured = bool(settings.eden_sdmc_path)

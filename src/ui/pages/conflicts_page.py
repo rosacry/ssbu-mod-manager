@@ -407,6 +407,22 @@ class ConflictsPage(BasePage):
         self._hide_initial_prompt()
         self._show_conflict_list()
 
+        # Normalize scan outputs so malformed rows never break rendering.
+        safe_conflicts = []
+        for conflict in self._conflicts or []:
+            if conflict is not None:
+                safe_conflicts.append(conflict)
+        self._conflicts = safe_conflicts
+
+        safe_locale = []
+        for item in self._locale_msbts or []:
+            try:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    safe_locale.append(item)
+            except Exception:
+                continue
+        self._locale_msbts = safe_locale
+
         for w in self.conflict_list.winfo_children():
             w.destroy()
         self.auto_resolve_btn.pack_forget()
@@ -431,11 +447,26 @@ class ConflictsPage(BasePage):
             return
 
         total = len(self._conflicts)
-        mergeable = sum(1 for c in self._conflicts if c.is_mergeable and not c.resolved) if self._conflicts else 0
-        resolved = sum(1 for c in self._conflicts if c.resolved) if self._conflicts else 0
+        mergeable = (
+            sum(
+                1
+                for c in self._conflicts
+                if bool(getattr(c, "is_mergeable", False)) and not bool(getattr(c, "resolved", False))
+            )
+            if self._conflicts
+            else 0
+        )
+        resolved = (
+            sum(1 for c in self._conflicts if bool(getattr(c, "resolved", False)))
+            if self._conflicts
+            else 0
+        )
         mods = set()
         for c in self._conflicts:
-            mods.update(c.mods_involved)
+            try:
+                mods.update(m for m in (getattr(c, "mods_involved", None) or []) if m)
+            except Exception:
+                pass
 
         # Count by type
         type_counts = {}
@@ -571,7 +602,12 @@ class ConflictsPage(BasePage):
                          anchor="w", wraplength=800, justify="left").pack(anchor="w", pady=(4, 0))
 
             # List each locale MSBT file
-            for mod_name, filename, fpath in self._locale_msbts:
+            for entry in self._locale_msbts:
+                try:
+                    mod_name = entry[0]
+                    filename = entry[1]
+                except Exception:
+                    continue
                 row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
                 row.pack(fill="x", pady=2, padx=4)
 

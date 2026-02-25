@@ -32,16 +32,16 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 72
+    _ZOOM_APPLY_DEBOUNCE_MS = 140
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _RESIZE_SETTLE_MS = 84
-    _DRAG_REDRAW_INTERVAL_MS = 12
+    _DRAG_REDRAW_INTERVAL_MS = 10
     _SCROLL_REFRESH_INTERVAL_MS = 8
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
-    _PAGE_WARMUP_INITIAL_DELAY_MS = 1200
-    _PAGE_WARMUP_STEP_DELAY_MS = 170
+    _PAGE_WARMUP_INITIAL_DELAY_MS = 3200
+    _PAGE_WARMUP_STEP_DELAY_MS = 260
     _PAGE_WARMUP_PAGE_IDS = (
         "mods",
         "plugins",
@@ -113,6 +113,7 @@ class ModManagerApp(ctk.CTk):
         self._icon_bitmap_path = None
         self._app_icon_photo = None
         self._window_fade_after_id = None
+        self._startup_nav_after_id = None
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -277,11 +278,10 @@ class ModManagerApp(ctk.CTk):
         # Lazy page registry - pages are created on first navigation
         self._page_classes = {}
         self._register_page_classes()
-
-        # Navigate to dashboard (creates only the dashboard page)
-        _dbg("navigating to dashboard...")
-        self.navigate("dashboard")
-        _dbg("dashboard navigated")
+        try:
+            self.main_window.show_startup_overlay("Initializing UI...")
+        except Exception:
+            pass
 
         # Update status bar in background
         self.after(100, self._update_status)
@@ -377,8 +377,12 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
-        # Warm selected light pages in the background after startup settles.
-        self.after(self._PAGE_WARMUP_INITIAL_DELAY_MS, self._start_background_page_warmup)
+        # Defer first real page navigation until after the window is mapped so
+        # startup appears immediately instead of freezing on dashboard setup.
+        try:
+            self._startup_nav_after_id = self.after(40, self._complete_startup_navigation)
+        except Exception:
+            self._complete_startup_navigation()
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
@@ -406,6 +410,33 @@ class ModManagerApp(ctk.CTk):
         # Then try the in-app logger (less critical)
         try:
             logger.error("TkCallback", msg)
+        except Exception:
+            pass
+
+    def _complete_startup_navigation(self):
+        """Finish initial page setup after the root window is visible."""
+        self._startup_nav_after_id = None
+        if self._shutting_down:
+            return
+        try:
+            if hasattr(self, "main_window"):
+                self.main_window.show_startup_overlay("Loading dashboard...")
+        except Exception:
+            pass
+        try:
+            self.navigate("dashboard")
+            self.update_idletasks()
+        except Exception:
+            pass
+        finally:
+            try:
+                if hasattr(self, "main_window"):
+                    self.main_window.hide_startup_overlay()
+            except Exception:
+                pass
+        # Warm selected light pages only after the first page is shown.
+        try:
+            self.after(self._PAGE_WARMUP_INITIAL_DELAY_MS, self._start_background_page_warmup)
         except Exception:
             pass
 
@@ -665,7 +696,7 @@ class ModManagerApp(ctk.CTk):
         try:
             # A second idletask pass on the root helps CTk label/canvas text
             # keep up when users drag the scrollbar thumb rapidly.
-            self.update_idletasks()
+            self.update()
         except Exception:
             pass
         self._ensure_drag_redraw_loop()
@@ -1055,7 +1086,10 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            self.update_idletasks()
+            if self._pointer_left_down and self._scrollbar_drag_active:
+                self.update()
+            else:
+                self.update_idletasks()
         except Exception:
             pass
         try:
@@ -1302,6 +1336,29 @@ class ModManagerApp(ctk.CTk):
             "wm_iconbitmap",
             original_iconbitmap,
         )
+        original_windows_set_titlebar_icon = getattr(
+            _ctk_toplevel.CTkToplevel,
+            "_windows_set_titlebar_icon",
+            None,
+        )
+
+        def _windows_set_titlebar_color_noop(_toplevel, *_args, **_kwargs):
+            return None
+
+        def _windows_set_titlebar_icon_with_app(toplevel):
+            # Prevent CTk's late default icon assignment from ever replacing
+            # the app icon on transient dialogs.
+            try:
+                app.apply_window_icon(toplevel)
+                return
+            except Exception:
+                pass
+            if callable(original_windows_set_titlebar_icon):
+                try:
+                    return original_windows_set_titlebar_icon(toplevel)
+                except Exception:
+                    return None
+            return None
 
         # Disable CTk header manipulation for transient dialogs. This avoids
         # withdraw/deiconify flashes while popup windows are being created.
@@ -1365,6 +1422,8 @@ class ModManagerApp(ctk.CTk):
         _ctk_toplevel.CTkToplevel.__init__ = _init_with_icon
         _ctk_toplevel.CTkToplevel.iconbitmap = _iconbitmap_with_override
         _ctk_toplevel.CTkToplevel.wm_iconbitmap = _wm_iconbitmap_with_override
+        _ctk_toplevel.CTkToplevel._windows_set_titlebar_color = _windows_set_titlebar_color_noop
+        _ctk_toplevel.CTkToplevel._windows_set_titlebar_icon = _windows_set_titlebar_icon_with_app
         _ctk_toplevel.CTkToplevel._ssbumm_icon_patch = True
 
     def apply_window_icon(self, window):
@@ -1471,6 +1530,11 @@ class ModManagerApp(ctk.CTk):
         try:
             if self._window_fade_after_id:
                 self.after_cancel(self._window_fade_after_id)
+        except Exception:
+            pass
+        try:
+            if self._startup_nav_after_id:
+                self.after_cancel(self._startup_nav_after_id)
         except Exception:
             pass
 

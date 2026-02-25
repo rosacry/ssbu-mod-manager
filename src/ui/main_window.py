@@ -104,6 +104,7 @@ class MainWindow(ctk.CTkFrame):
 
         self.content = ctk.CTkFrame(right, fg_color="transparent", corner_radius=0)
         self.content.pack(fill="both", expand=True)
+        self._startup_overlay = None
 
         self.status_bar = StatusBar(right)
         self.status_bar.pack(fill="x", side="bottom")
@@ -247,6 +248,39 @@ class MainWindow(ctk.CTkFrame):
             except Exception:
                 pass
 
+    def show_startup_overlay(self, text: str = "Loading..."):
+        """Display a full-size startup mask above page content."""
+        if self._startup_overlay is None:
+            overlay = ctk.CTkFrame(self.content, fg_color="#0e0e1a", corner_radius=0)
+            label = ctk.CTkLabel(
+                overlay,
+                text=text,
+                font=ctk.CTkFont(size=18, weight="bold"),
+                text_color="#d0d4e8",
+            )
+            label.pack(expand=True)
+            overlay._label = label  # keep handle without extra attribute boilerplate
+            self._startup_overlay = overlay
+        try:
+            self._startup_overlay._label.configure(text=text)
+        except Exception:
+            pass
+        try:
+            self._startup_overlay.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
+            self._startup_overlay.lift()
+            self._startup_overlay.update_idletasks()
+        except Exception:
+            pass
+
+    def hide_startup_overlay(self):
+        overlay = self._startup_overlay
+        if overlay is None:
+            return
+        try:
+            overlay.place_forget()
+        except Exception:
+            pass
+
     def prime_page_layout(self, page_id: str):
         """Prime widget layout for a hidden page without running page data loads."""
         page = self.pages.get(page_id)
@@ -274,6 +308,9 @@ class MainWindow(ctk.CTkFrame):
         prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
         first_visit = page_id not in self._shown_pages
+        if first_visit:
+            pretty_name = page_id.replace("_", " ").title()
+            self.show_startup_overlay(f"Loading {pretty_name}...")
         self._map_page(page)
         try:
             page.lower()
@@ -298,7 +335,7 @@ class MainWindow(ctk.CTkFrame):
             except Exception:
                 pass
             try:
-                prev_page.place_forget()
+                prev_page.lower()
             except Exception:
                 prev_page.lower()
 
@@ -317,6 +354,8 @@ class MainWindow(ctk.CTkFrame):
         if hasattr(page, '_patch_all_scroll_speeds'):
             page.after(150, page._patch_all_scroll_speeds)
         self.sidebar.set_active(page_id)
+        if first_visit:
+            self._safe_after(30, self.hide_startup_overlay)
 
     def update_status(self, text: str):
         self.status_bar.set_status(text)
