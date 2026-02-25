@@ -14,7 +14,7 @@ CONFLICT_EXPLANATIONS = {
         "Folder Structure Conflicts",
         "A mod folder contains an extra wrapper subfolder. ARCropolis may not load "
         "the mod correctly until its actual content folders (fighter/ui/sound/etc.) "
-        "are moved up one level. Use Mods > Fix Nesting to repair it.",
+        "are moved up one level.",
         False,
     ),
     ".xmsbt": (
@@ -149,9 +149,7 @@ class ConflictsPage(BasePage):
     def _show_initial_prompt(self):
         """Show initial centered scan prompt and keep results list hidden/cleared."""
         self._set_rescan_visible(False)
-        self.summary_label.configure(
-            text="Click 'Scan for Conflicts' to check for mod file conflicts.",
-            text_color="#999999")
+        self._set_results_chrome_visible(False)
         self.auto_resolve_btn.pack_forget()
         self.fix_locale_btn.pack_forget()
         for w in self.conflict_list.winfo_children():
@@ -185,6 +183,7 @@ class ConflictsPage(BasePage):
 
     def _hide_initial_prompt(self):
         self._initial_prompt_visible = False
+        self._set_results_chrome_visible(True)
         if self._initial_prompt_frame is not None:
             try:
                 self._initial_prompt_frame.destroy()
@@ -197,6 +196,21 @@ class ConflictsPage(BasePage):
         except Exception:
             pass
         self._show_conflict_list()
+
+    def _set_results_chrome_visible(self, visible: bool):
+        try:
+            if visible:
+                if not self.summary_label.winfo_manager():
+                    self.summary_label.pack(fill="x", padx=30, pady=(0, 5))
+                if not self.auto_btn_frame.winfo_manager():
+                    self.auto_btn_frame.pack(fill="x", padx=30, pady=(0, 8))
+            else:
+                if self.summary_label.winfo_manager():
+                    self.summary_label.pack_forget()
+                if self.auto_btn_frame.winfo_manager():
+                    self.auto_btn_frame.pack_forget()
+        except Exception:
+            pass
 
     def _show_empty_state_host(self):
         try:

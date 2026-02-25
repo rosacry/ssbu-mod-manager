@@ -246,6 +246,7 @@ class MainWindow(ctk.CTkFrame):
         try:
             page.on_show()
             page.update_idletasks()
+            self.content.update_idletasks()
         except Exception:
             pass
 
@@ -258,6 +259,10 @@ class MainWindow(ctk.CTkFrame):
 
         self.current_page = page_id
         page.lift()
+        try:
+            page.update_idletasks()
+        except Exception:
+            pass
         # Set focus on the page so the user doesn't have to click it
         # after selecting a sidebar item.
         page.focus_set()

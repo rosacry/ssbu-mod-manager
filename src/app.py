@@ -32,10 +32,11 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 120
-    _ZOOM_PERSIST_DEBOUNCE_MS = 700
-    _RESIZE_SETTLE_MS = 90
-    _DRAG_REDRAW_INTERVAL_MS = 55
+    _ZOOM_APPLY_DEBOUNCE_MS = 90
+    _ZOOM_PERSIST_DEBOUNCE_MS = 850
+    _RESIZE_SETTLE_MS = 70
+    _DRAG_REDRAW_INTERVAL_MS = 24
+    _SCROLL_REFRESH_INTERVAL_MS = 16
 
     def __init__(self):
         import sys as _sys
@@ -89,9 +90,14 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_widgets = set()
         self._scroll_refresh_full_counter = 0
         self._drag_refresh_after_id = None
+        self._scrollbar_drag_active = False
         self._pointer_left_down = False
         self._suppress_scroll_refresh_until = 0.0
         self._last_window_activity_size = (0, 0)
+        self._page_warmup_after_id = None
+        self._page_warmup_queue = []
+        self._icon_bitmap_path = None
+        self._app_icon_photo = None
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -115,6 +121,7 @@ class ModManagerApp(ctk.CTk):
             logo_path = resource_path("assets/logo.png")
             loaded_any = False
             if Path(icon_path).exists():
+                self._icon_bitmap_path = str(icon_path)
                 self.iconbitmap(icon_path)
                 loaded_any = True
                 logger.info("App", f"Window icon loaded from {icon_path}")
@@ -124,6 +131,7 @@ class ModManagerApp(ctk.CTk):
                 self.iconphoto(True, self._app_icon_photo)
                 loaded_any = True
                 logger.info("App", f"Window icon photo loaded from {logo_path}")
+            self._patch_ctk_toplevel_icon_behavior()
             if not loaded_any:
                 logger.warn("App", f"Icon files not found: {icon_path} / {logo_path}")
         except Exception as e:
@@ -259,8 +267,8 @@ class ModManagerApp(ctk.CTk):
         self.bind("<Control-KP_Subtract>", lambda e: (self._zoom_out(), "break")[-1])
         self.bind("<Control-KP_0>", lambda e: (self._zoom_reset(), "break")[-1])
         self.bind("<Configure>", self._on_window_activity, add="+")
-        self.bind_all("<ButtonPress-1>", lambda _e: self._set_left_button_down(True), add="+")
-        self.bind_all("<ButtonRelease-1>", lambda _e: self._set_left_button_down(False), add="+")
+        self.bind_all("<ButtonPress-1>", self._on_global_left_press, add="+")
+        self.bind_all("<ButtonRelease-1>", self._on_global_left_release, add="+")
 
         _dbg("binding scroll...")
         # Global fast-scroll: intercept ALL MouseWheel events application-wide
@@ -320,6 +328,9 @@ class ModManagerApp(ctk.CTk):
             logger.debug("App", f"Startup geometry: {self.geometry()}")
         except Exception:
             pass
+
+        # Warm lazy pages in the background so first navigation is seamless.
+        self.after(1100, self._start_background_page_warmup)
 
         logger.info("App", "Application startup complete")
         _dbg("startup complete")
@@ -383,16 +394,11 @@ class ModManagerApp(ctk.CTk):
         if save:
             self._persist_scale(scale)
         zoom_percent = self._scale_to_display_percent(scale)
-        logger.info("App", f"UI scale set to {zoom_percent}%")
-        # Show brief zoom indicator in status bar
+        logger.debug("App", f"UI scale set to {zoom_percent}%")
+        # Keep zoom feedback lightweight to avoid stutter during key repeats.
         if hasattr(self, "main_window"):
-            self.main_window.update_status(f"Zoom: {zoom_percent}%")
             if hasattr(self.main_window, "status_bar"):
                 self.main_window.status_bar.set_zoom(zoom_percent)
-            # Clear the status message after a short delay
-            if self._zoom_indicator_id:
-                self.after_cancel(self._zoom_indicator_id)
-            self._zoom_indicator_id = self.after(2000, self._update_status)
 
     def _zoom_in(self):
         """Increase visual zoom by 10% (relative to the 100%=old120 baseline)."""
@@ -520,9 +526,54 @@ class ModManagerApp(ctk.CTk):
     _LONGFORM_SCROLL_SPEED = 6           # Long-form text/list widgets
     _LONGFORM_CANVAS_SCROLL_PIXELS = 120 # Online Guide/Migration boost
 
-    def _set_left_button_down(self, pressed: bool):
+    def _on_global_left_press(self, event):
+        try:
+            self._set_left_button_down(True, source_widget=getattr(event, "widget", None))
+        except Exception:
+            pass
+
+    def _on_global_left_release(self, event):
+        try:
+            self._set_left_button_down(False, source_widget=getattr(event, "widget", None))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _widget_belongs_to_scrollbar(widget) -> bool:
+        w = widget
+        while w is not None:
+            try:
+                if isinstance(w, ctk.CTkScrollbar) or w.__class__.__name__ == "CTkScrollbar":
+                    return True
+                w = w.master
+            except Exception:
+                break
+        return False
+
+    def _on_scrollbar_drag_start(self):
+        self._scrollbar_drag_active = True
+        self._suppress_scroll_refresh_until = max(
+            self._suppress_scroll_refresh_until, time.monotonic() + 0.02
+        )
+        self._ensure_drag_redraw_loop()
+
+    def _on_scrollbar_drag_end(self):
+        self._scrollbar_drag_active = False
+        if self._drag_refresh_after_id:
+            try:
+                self.after_cancel(self._drag_refresh_after_id)
+            except Exception:
+                pass
+            self._drag_refresh_after_id = None
+        try:
+            self.after(8, self._refresh_after_pointer_release)
+        except Exception:
+            pass
+
+    def _set_left_button_down(self, pressed: bool, source_widget=None):
         self._pointer_left_down = bool(pressed)
         if pressed:
+            self._scrollbar_drag_active = self._widget_belongs_to_scrollbar(source_widget)
             self._suppress_scroll_refresh_until = time.monotonic() + 0.12
             # Drop pending refreshes before scrollbar dragging starts.
             if self._scroll_refresh_after_id:
@@ -532,21 +583,13 @@ class ModManagerApp(ctk.CTk):
                     pass
                 self._scroll_refresh_after_id = None
             self._scroll_refresh_widgets.clear()
-            self._ensure_drag_redraw_loop()
+            if self._scrollbar_drag_active:
+                self._on_scrollbar_drag_start()
         else:
-            if self._drag_refresh_after_id:
-                try:
-                    self.after_cancel(self._drag_refresh_after_id)
-                except Exception:
-                    pass
-                self._drag_refresh_after_id = None
-            try:
-                self.after(16, self._refresh_after_pointer_release)
-            except Exception:
-                pass
+            self._on_scrollbar_drag_end()
 
     def _ensure_drag_redraw_loop(self):
-        if self._drag_refresh_after_id or not self._pointer_left_down:
+        if self._drag_refresh_after_id or not self._pointer_left_down or not self._scrollbar_drag_active:
             return
         try:
             self._drag_refresh_after_id = self.after(
@@ -557,7 +600,7 @@ class ModManagerApp(ctk.CTk):
 
     def _drag_redraw_tick(self):
         self._drag_refresh_after_id = None
-        if not self._pointer_left_down or self._shutting_down:
+        if not self._pointer_left_down or not self._scrollbar_drag_active or self._shutting_down:
             return
         try:
             self.update_idletasks()
@@ -588,7 +631,7 @@ class ModManagerApp(ctk.CTk):
             self._last_window_activity_size = size
             self._suppress_scroll_refresh_until = max(
                 self._suppress_scroll_refresh_until,
-                time.monotonic() + 0.16,
+                time.monotonic() + 0.12,
             )
             if self._resize_after_id:
                 try:
@@ -684,6 +727,7 @@ class ModManagerApp(ctk.CTk):
                 )
 
                 if is_press:
+                    app._on_scrollbar_drag_start()
                     if corr_start <= value <= corr_end:
                         # Clicked inside thumb: preserve relative click offset.
                         scrollbar._drag_anchor_corrected = value - corr_start
@@ -736,7 +780,10 @@ class ModManagerApp(ctk.CTk):
                     scrollbar._canvas.bind("<Button-1>", scrollbar._clicked, add="+")
                     scrollbar._canvas.bind(
                         "<ButtonRelease-1>",
-                        lambda _e, sb=scrollbar: setattr(sb, "_drag_anchor_corrected", None),
+                        lambda _e, sb=scrollbar: (
+                            setattr(sb, "_drag_anchor_corrected", None),
+                            app._on_scrollbar_drag_end(),
+                        ),
                         add="+",
                     )
                     scrollbar._ssbumm_drag_bindings = True
@@ -920,7 +967,9 @@ class ModManagerApp(ctk.CTk):
             self._scroll_refresh_widgets.add(widget)
             if self._scroll_refresh_after_id:
                 return
-            self._scroll_refresh_after_id = self.after(32, self._flush_scroll_refresh)
+            self._scroll_refresh_after_id = self.after(
+                self._SCROLL_REFRESH_INTERVAL_MS, self._flush_scroll_refresh
+            )
         except Exception:
             pass
 
@@ -938,7 +987,11 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
         try:
-            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 12
+            self.update_idletasks()
+        except Exception:
+            pass
+        try:
+            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 6
             if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
                 for widget in widgets:
                     try:
@@ -1090,6 +1143,47 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
+    def _patch_ctk_toplevel_icon_behavior(self):
+        """Apply app icon assets to every CTkToplevel automatically."""
+        try:
+            from customtkinter.windows import ctk_toplevel as _ctk_toplevel
+        except Exception:
+            return
+
+        if getattr(_ctk_toplevel.CTkToplevel, "_ssbumm_icon_patch", False):
+            return
+
+        app = self
+        original_init = _ctk_toplevel.CTkToplevel.__init__
+
+        def _init_with_icon(toplevel, *args, **kwargs):
+            original_init(toplevel, *args, **kwargs)
+            try:
+                app.apply_window_icon(toplevel)
+            except Exception:
+                pass
+
+        _ctk_toplevel.CTkToplevel.__init__ = _init_with_icon
+        _ctk_toplevel.CTkToplevel._ssbumm_icon_patch = True
+
+    def apply_window_icon(self, window):
+        """Apply current app icon assets to a child window."""
+        if window is None:
+            return
+        try:
+            icon_path = getattr(self, "_icon_bitmap_path", None)
+            if icon_path and Path(icon_path).exists():
+                window.iconbitmap(icon_path)
+        except Exception:
+            pass
+        try:
+            icon_photo = getattr(self, "_app_icon_photo", None)
+            if icon_photo is not None:
+                window.iconphoto(True, icon_photo)
+                setattr(window, "_ssbumm_icon_ref", icon_photo)
+        except Exception:
+            pass
+
     def _on_close(self):
         """Clean shutdown - prompt for unsaved changes, stop threads and audio."""
         import sys as _sys
@@ -1157,6 +1251,11 @@ class ModManagerApp(ctk.CTk):
                 self.after_cancel(self._drag_refresh_after_id)
         except Exception:
             pass
+        try:
+            if self._page_warmup_after_id:
+                self.after_cancel(self._page_warmup_after_id)
+        except Exception:
+            pass
 
         # Destroy the window
         try:
@@ -1197,25 +1296,64 @@ class ModManagerApp(ctk.CTk):
             "developer": ("src.ui.pages.developer_page", "DeveloperPage"),
         }
 
+    def _create_page(self, page_id: str):
+        """Create and register a page instance if it does not already exist."""
+        if page_id in self.main_window.pages:
+            return self.main_window.pages[page_id]
+        if page_id not in self._page_classes:
+            return None
+        module_name, class_name = self._page_classes[page_id]
+        module = importlib.import_module(module_name)
+        page_class = getattr(module, class_name)
+        page = page_class(self.main_window.content, self)
+        self.main_window.register_page(page_id, page)
+        logger.info("App", f"Created page: {page_id}")
+
+        def _safe_neutralize():
+            try:
+                self._neutralize_ctk_scroll_management()
+            except Exception as e:
+                logger.warn("App", f"Failed to neutralize CTk scroll on page: {e}")
+
+        self.after(80, _safe_neutralize)
+        return page
+
+    def _start_background_page_warmup(self):
+        """Create lazy pages in the background to reduce first-navigation pop-in."""
+        if self._shutting_down or not hasattr(self, "main_window"):
+            return
+        if self._page_warmup_after_id is not None:
+            return
+        current = getattr(self.main_window, "current_page", None)
+        self._page_warmup_queue = [pid for pid in self._page_classes.keys() if pid != current]
+        self._page_warmup_after_id = self.after(40, self._run_page_warmup_step)
+
+    def _run_page_warmup_step(self):
+        self._page_warmup_after_id = None
+        if self._shutting_down:
+            self._page_warmup_queue = []
+            return
+        if not self._page_warmup_queue:
+            return
+        page_id = self._page_warmup_queue.pop(0)
+        page = self._create_page(page_id)
+        # Pre-kick the migration page data probe so first visit is less jarring.
+        if page_id == "migration" and page is not None:
+            try:
+                page.on_show()
+                page.on_hide()
+            except Exception:
+                pass
+        if self._page_warmup_queue:
+            self._page_warmup_after_id = self.after(120, self._run_page_warmup_step)
+
     def navigate(self, page_id: str):
         """Navigate to a page, creating it lazily if needed."""
         if self._shutting_down:
             return
         # Lazy page creation
-        if page_id not in self.main_window.pages and page_id in self._page_classes:
-            module_name, class_name = self._page_classes[page_id]
-            module = importlib.import_module(module_name)
-            page_class = getattr(module, class_name)
-            page = page_class(self.main_window.content, self)
-            self.main_window.register_page(page_id, page)
-            logger.info("App", f"Created page: {page_id}")
-            # Neutralize CTkScrollableFrame scroll management on new page
-            def _safe_neutralize():
-                try:
-                    self._neutralize_ctk_scroll_management()
-                except Exception as e:
-                    logger.warn("App", f"Failed to neutralize CTk scroll on page: {e}")
-            self.after(100, _safe_neutralize)
+        if page_id not in self.main_window.pages:
+            self._create_page(page_id)
         logger.info("App", f"Navigate to: {page_id}")
         self.main_window.navigate(page_id)
 

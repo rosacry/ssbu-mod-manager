@@ -93,12 +93,6 @@ class ModsPage(BasePage):
                                        corner_radius=8, height=34)
         enable_all_btn.pack(side="right", padx=(5, 0))
 
-        fix_nesting_btn = ctk.CTkButton(header_frame, text="Fix Nesting", width=100,
-                                        command=self._fix_nesting,
-                                        fg_color="#6b5b2e", hover_color="#554824",
-                                        corner_radius=8, height=34)
-        fix_nesting_btn.pack(side="right", padx=(5, 0))
-
         # Search, filter, and group toggle
         filter_frame = ctk.CTkFrame(self, fg_color="transparent")
         filter_frame.pack(fill="x", padx=30, pady=(0, 6))
@@ -508,8 +502,9 @@ class ModsPage(BasePage):
     def _invoke_context_action(self, callback):
         self._close_context_menu()
         try:
-            # Let context menu teardown finish before opening rename dialog.
-            self.after_idle(callback)
+            # Give context-menu teardown one frame so rename dialogs
+            # never show partially during focus handoff on Windows.
+            self.after(28, callback)
         except Exception:
             callback()
 
@@ -652,6 +647,10 @@ class ModsPage(BasePage):
         except Exception:
             pass
         try:
+            self.app.apply_window_icon(dialog)
+        except Exception:
+            pass
+        try:
             dialog.update_idletasks()
         except Exception:
             pass
@@ -659,6 +658,10 @@ class ModsPage(BasePage):
         dialog.lift()
         try:
             dialog.wait_visibility()
+        except Exception:
+            pass
+        try:
+            self.app.apply_window_icon(dialog)
         except Exception:
             pass
         try:
@@ -794,35 +797,6 @@ class ModsPage(BasePage):
         except Exception as e:
             logger.error("Mods", f"Disable all failed: {e}")
             messagebox.showerror("Error", f"Failed to disable all mods: {e}")
-
-    def _fix_nesting(self):
-        """Detect and fix unnecessarily nested mod folders."""
-        nested = self.app.mod_manager.detect_nested_mods()
-        if not nested:
-            messagebox.showinfo("Info", "No unnecessarily nested mods found.")
-            return
-
-        names = "\n".join(f"  - {m.original_name}" for m in nested[:15])
-        if len(nested) > 15:
-            names += f"\n  ... and {len(nested) - 15} more"
-
-        confirm = messagebox.askyesno(
-            "Fix Nested Folders",
-            f"Found {len(nested)} mod(s) with unnecessary subfolder nesting:\n\n"
-            f"{names}\n\n"
-            "This will move content up one directory level.\n"
-            "Continue?")
-        if not confirm:
-            return
-
-        try:
-            count = self.app.mod_manager.flatten_all_nested()
-            logger.info("Mods", f"Flattened {count} nested mods")
-            messagebox.showinfo("Done", f"Fixed {count} mod(s).")
-            self._force_refresh()
-        except Exception as e:
-            logger.error("Mods", f"Fix nesting failed: {e}")
-            messagebox.showerror("Error", f"Failed to fix nesting: {e}")
 
     def _open_folder(self):
         from src.utils.file_utils import open_folder

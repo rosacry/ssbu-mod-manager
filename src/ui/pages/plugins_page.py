@@ -509,9 +509,9 @@ class PluginsPage(BasePage):
     def _invoke_context_action(self, callback):
         self._close_context_menu()
         try:
-            # Open dialogs on the next UI tick so menu teardown and focus changes
-            # complete first, avoiding a visible flash/remap on Windows.
-            self.after_idle(callback)
+            # Give context-menu teardown one frame so rename dialogs
+            # never show partially during focus handoff on Windows.
+            self.after(28, callback)
         except Exception:
             callback()
 
@@ -655,6 +655,10 @@ class PluginsPage(BasePage):
         except Exception:
             pass
         try:
+            self.app.apply_window_icon(dialog)
+        except Exception:
+            pass
+        try:
             dialog.update_idletasks()
         except Exception:
             pass
@@ -662,6 +666,10 @@ class PluginsPage(BasePage):
         dialog.lift()
         try:
             dialog.wait_visibility()
+        except Exception:
+            pass
+        try:
+            self.app.apply_window_icon(dialog)
         except Exception:
             pass
         try:
