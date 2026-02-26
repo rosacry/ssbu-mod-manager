@@ -33,13 +33,13 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 96
-    _ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS = 220
+    _ZOOM_APPLY_DEBOUNCE_MS = 220
+    _ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS = 340
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _RESIZE_SETTLE_MS = 84
     _DRAG_REDRAW_INTERVAL_MS = 16
     _SCROLL_REFRESH_INTERVAL_MS = 16
-    _DRAG_FORCE_UPDATE_EVERY_TICKS = 2
+    _DRAG_FORCE_UPDATE_EVERY_TICKS = 1
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
@@ -48,21 +48,10 @@ class ModManagerApp(ctk.CTk):
     _PAGE_WARMUP_STEP_DELAY_MS = 260
     _PAGE_WARMUP_IDLE_REQUIRED_MS = 1600
     _PAGE_WARMUP_RETRY_DELAY_MS = 320
-    _PAGE_WARMUP_PAGE_IDS = (
-        "mods",
-        "plugins",
-        "conflicts",
-        "settings",
-        "developer",
-        "css",
-    )
+    _PAGE_WARMUP_PAGE_IDS = ()
     _STARTUP_PREWARM_PAGE_IDS = (
         "mods",
         "plugins",
-        "conflicts",
-        "settings",
-        "developer",
-        "css",
     )
     _STARTUP_PREWARM_ON_SHOW_PAGE_IDS = (
         "mods",
@@ -807,6 +796,8 @@ class ModManagerApp(ctk.CTk):
 
     def _on_scrollbar_drag_start(self):
         self._scrollbar_drag_active = True
+        self._drag_redraw_counter = 0
+        self._last_drag_widget_refresh_monotonic = 0.0
         if self._active_drag_scroll_widget is None:
             try:
                 pointed = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
@@ -848,6 +839,32 @@ class ModManagerApp(ctk.CTk):
         if target is not None:
             self._schedule_scroll_refresh(target)
 
+    def _on_scrollbar_drag_motion(self, scrollbar):
+        """Force a targeted redraw while dragging a CTk scrollbar thumb."""
+        if self._shutting_down:
+            return
+        target = None
+        try:
+            cmd = getattr(scrollbar, "_command", None)
+            target = getattr(cmd, "__self__", None)
+        except Exception:
+            target = None
+        if target is None:
+            target = self._active_drag_scroll_widget
+        if target is None:
+            return
+        self._active_drag_scroll_widget = target
+        self._schedule_scroll_refresh(target)
+        try:
+            now = time.monotonic()
+            if now - float(getattr(self, "_last_drag_widget_refresh_monotonic", 0.0)) >= 0.012:
+                target.update()
+                if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
+                    self.main_window.content.update_idletasks()
+                self._last_drag_widget_refresh_monotonic = now
+        except Exception:
+            pass
+
     def _set_left_button_down(self, pressed: bool, source_widget=None):
         self._pointer_left_down = bool(pressed)
         if pressed:
@@ -888,7 +905,10 @@ class ModManagerApp(ctk.CTk):
         )
         try:
             if target is not None and bool(target.winfo_exists()):
+                target.update()
                 self._schedule_scroll_refresh(target)
+            else:
+                self.update_idletasks()
         except Exception:
             pass
         try:
@@ -1079,6 +1099,11 @@ class ModManagerApp(ctk.CTk):
             try:
                 if not getattr(scrollbar, "_ssbumm_drag_bindings", False):
                     scrollbar._canvas.bind("<Button-1>", scrollbar._clicked, add="+")
+                    scrollbar._canvas.bind(
+                        "<B1-Motion>",
+                        lambda _e, sb=scrollbar: app._on_scrollbar_drag_motion(sb),
+                        add="+",
+                    )
                     scrollbar._canvas.bind(
                         "<ButtonRelease-1>",
                         lambda _e, sb=scrollbar: (
