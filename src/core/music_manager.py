@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import Optional
 from src.models.music import MusicTrack, StagePlaylist, StageInfo
@@ -198,7 +199,7 @@ class MusicManager:
         self.stage_playlists: dict[str, StagePlaylist] = {}
         self.exclude_vanilla = False
 
-    def discover_tracks(self, mods_root: Path) -> list[MusicTrack]:
+    def discover_tracks(self, mods_root: Path, cancel_event: Optional[threading.Event] = None) -> list[MusicTrack]:
         """Discover all custom music tracks across all mod folders."""
         self.tracks = []
         seen_ids = set()
@@ -207,11 +208,17 @@ class MusicManager:
             return self.tracks
 
         for mod_folder in sorted(mods_root.iterdir()):
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("MusicManager", "Track discovery cancelled")
+                return self.tracks
             if not mod_folder.is_dir() or mod_folder.name.startswith(".") or mod_folder.name.startswith("_"):
                 continue
 
             # Scan for nus3audio files
             for audio_file in mod_folder.rglob("*.nus3audio"):
+                if cancel_event is not None and cancel_event.is_set():
+                    logger.info("MusicManager", "Track discovery cancelled")
+                    return self.tracks
                 track_id = audio_file.stem  # Filename without extension
                 if track_id in seen_ids:
                     continue
@@ -232,9 +239,15 @@ class MusicManager:
                 self.tracks.append(track)
 
             # Try to get track names from XMSBT and MSBT files
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("MusicManager", "Track discovery cancelled")
+                return self.tracks
             self._load_track_names_from_mod(mod_folder)
 
         # Auto-generate MSBT overlays so custom track names show in-game
+        if cancel_event is not None and cancel_event.is_set():
+            logger.info("MusicManager", "Track discovery cancelled")
+            return self.tracks
         self._auto_generate_msbt_overlays(mods_root)
 
         # Beautify display names for tracks that don't have XMSBT/MSBT names

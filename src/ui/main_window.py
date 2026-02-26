@@ -112,7 +112,7 @@ class MainWindow(ctk.CTkFrame):
         self._nav_overlay = ctk.CTkFrame(self.content, fg_color="#12121e", corner_radius=0)
         self._nav_overlay_label = ctk.CTkLabel(
             self._nav_overlay,
-            text="Loading...",
+            text="",
             font=ctk.CTkFont(size=13),
             text_color="#6a6a8a",
         )
@@ -312,9 +312,10 @@ class MainWindow(ctk.CTkFrame):
             return
         if page_id == self.current_page:
             return
+        self._show_navigation_overlay()
         self._nav_token += 1
         token = self._nav_token
-        self.after(0, lambda pid=page_id, t=token: self._complete_navigation(pid, t, overlay_delay_ms=0))
+        self.after(0, lambda pid=page_id, t=token: self._complete_navigation(pid, t, overlay_delay_ms=46))
 
     def navigate_immediate(self, page_id: str):
         """Navigate synchronously without delayed overlay transitions."""
@@ -338,6 +339,7 @@ class MainWindow(ctk.CTkFrame):
         prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
         first_visit = page_id not in self._shown_pages and page_id not in self._primed_pages
+        settle_overlay_delay = max(int(overlay_delay_ms), 62 if first_visit else 26)
         self._map_page(page)
         try:
             page.lower()
@@ -372,7 +374,7 @@ class MainWindow(ctk.CTkFrame):
             page.after(150, page._patch_all_scroll_speeds)
         self._schedule_render_settle(page_id)
         self.sidebar.set_active(page_id)
-        self._hide_navigation_overlay(token, delay_ms=overlay_delay_ms)
+        self._hide_navigation_overlay(token, delay_ms=settle_overlay_delay)
 
     def _show_navigation_overlay(self):
         try:

@@ -68,7 +68,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Zoom now coalesces post-apply key-repeat bursts and evicts hidden pages (when there are no unsaved changes) before scaling to keep `Ctrl +/-` responsive in long sessions.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
-- Page navigation now switches directly (no transition overlay) to avoid rare blank-content overlay races during fast tab switching.
+- Page navigation now uses a very short settle mask during tab switches to hide first-frame partial rendering on heavier pages.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.
 - Nested wrapper folders are auto-flattened on import and also surfaced as conflicts during scans.
@@ -93,12 +93,14 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
 - Fast scrollbar thumb dragging now uses a paced redraw loop with periodic full repaints to prevent missing/half-rendered text while dragging rapidly.
 - Global wheel scrolling now excludes decorative canvases, uses sticky same-page fallback targets, and uses pointer-aware page fallback routing to prevent intermittent "scroll stops until cursor moves" behavior across pages.
+- Global wheel scrolling now also keeps a per-page cached target and retries a fresh active-page target if a stale/non-scrollable widget is selected mid-scroll.
 - Conflicts page now includes a direct header-level `Fix Text Conflicts` action (merge XMSBT + locale MSBT rename + overlay regeneration), not only Dashboard quick actions.
 - Conflicts summary now distinguishes pending auto-fix vs already merged counts to reduce ambiguity about what is still actionable.
 - Conflicts merge status text now clearly shows `Already merged`/`Already resolved` for fixed items and keeps pending items separate.
 - Conflicts stabilization guard now yields immediately to explicit user wheel/scrollbar input to prevent scroll trapping after scans.
 - Scrollbar drag handling now accepts raw Tk callback argument variants under heavy drag load, preventing `_clicked_preserve_offset` event errors.
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
+- Music auto-scan is now deferred slightly on page show and cooperative-cancelled when leaving the Music tab, preventing heavy background track scans from stalling other pages.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
 - App status-bar mod/plugin counts now refresh off the UI thread to reduce startup hitching and early frame drops.

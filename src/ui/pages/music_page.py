@@ -27,6 +27,11 @@ class MusicPage(BasePage):
         self._spinner_active = False
         self._track_filter_after_id = None
         self._stage_filter_after_id = None
+        self._deferred_ui_apply = False
+        self._scan_generation = 0
+        self._auto_scan_after_id = None
+        self._scan_cancel_event = None
+        self._auto_scan_delay_ms = 260
         self._pending_volume_value = 0.7
         self._track_data_revision = 0
         self._last_track_render_signature = None
@@ -272,19 +277,30 @@ class MusicPage(BasePage):
 
     def on_show(self):
         if not self._loaded:
-            self._scan_tracks()
+            if not self._scan_in_progress:
+                self._schedule_auto_scan()
         else:
-            self._update_summary()
-            self._render_available_tracks()
-            self._populate_stages()
-            # Re-render the playlist if a stage was previously selected
-            if self._selected_stage:
-                self._render_playlist()
+            if self._deferred_ui_apply:
+                self._apply_loaded_tracks_ui()
+            else:
+                self._update_summary()
+                self._render_available_tracks()
+                self._populate_stages()
+                # Re-render the playlist if a stage was previously selected
+                if self._selected_stage:
+                    self._render_playlist()
         # Sync play button state with actual audio player
         self._sync_play_state()
 
     def on_hide(self):
         """Clean up playlist widgets for smoother page transitions."""
+        self._cancel_auto_scan()
+        if self._scan_in_progress and self._scan_cancel_event is not None:
+            try:
+                self._scan_cancel_event.set()
+                logger.info("Music", "Cancelling background track scan while page is hidden")
+            except Exception:
+                pass
         for attr in ("_track_filter_after_id", "_stage_filter_after_id"):
             aid = getattr(self, attr, None)
             if aid:
@@ -295,6 +311,27 @@ class MusicPage(BasePage):
                 setattr(self, attr, None)
         for w in self.playlist_frame.winfo_children():
             w.destroy()
+
+    def _schedule_auto_scan(self):
+        self._cancel_auto_scan()
+
+        def _run():
+            self._auto_scan_after_id = None
+            if self._loaded or self._scan_in_progress:
+                return
+            if not self._is_music_page_active():
+                return
+            self._scan_tracks()
+
+        self._auto_scan_after_id = self.after(int(self._auto_scan_delay_ms), _run)
+
+    def _cancel_auto_scan(self):
+        if self._auto_scan_after_id:
+            try:
+                self.after_cancel(self._auto_scan_after_id)
+            except Exception:
+                pass
+            self._auto_scan_after_id = None
 
     def _sync_play_state(self):
         """Keep play toggle button in sync with actual audio player state."""
@@ -332,6 +369,7 @@ class MusicPage(BasePage):
         self.after(100, self._animate_spinner)
 
     def _force_scan(self):
+        self._cancel_auto_scan()
         if self._scan_in_progress:
             self._pending_rescan = True
             self.loading_label.configure(text="Rescan queued...")
@@ -340,6 +378,7 @@ class MusicPage(BasePage):
         self._scan_tracks()
 
     def _scan_tracks(self):
+        self._cancel_auto_scan()
         if self._scan_in_progress:
             return
         settings = self.app.config_manager.settings
@@ -349,6 +388,10 @@ class MusicPage(BasePage):
 
         self._scan_in_progress = True
         self._pending_rescan = False
+        self._scan_generation += 1
+        current_gen = self._scan_generation
+        self._scan_cancel_event = threading.Event()
+        cancel_event = self._scan_cancel_event
         self._start_spinner("Scanning tracks")
         logger.info("Music", f"Scanning for tracks in: {settings.mods_path}")
 
@@ -356,45 +399,62 @@ class MusicPage(BasePage):
 
         def scan():
             try:
-                tracks = self.app.music_manager.discover_tracks(mods_path)
+                tracks = self.app.music_manager.discover_tracks(mods_path, cancel_event=cancel_event)
+                if cancel_event.is_set():
+                    logger.info("Music", "Track scan cancelled")
+                    return
                 logger.info("Music", f"Found {len(tracks)} tracks")
                 if not self.app.shutting_down:
                     try:
-                        self.app.after(0, lambda t=tracks: self._on_tracks_loaded(t))
+                        self.app.after(0, lambda t=tracks, gen=current_gen: self._on_tracks_loaded(t, gen))
                     except Exception:
                         pass
             except Exception as e:
                 logger.error("Music", f"Track scan failed: {e}")
                 if not self.app.shutting_down:
                     try:
-                        self.app.after(0, lambda err=str(e): self._on_scan_error(err))
+                        self.app.after(0, lambda err=str(e), gen=current_gen: self._on_scan_error(err, gen))
                     except Exception:
                         pass
             finally:
                 if not self.app.shutting_down:
                     try:
-                        self.app.after(0, self._on_scan_finished)
+                        self.app.after(0, lambda gen=current_gen: self._on_scan_finished(gen))
                     except Exception:
                         pass
 
         threading.Thread(target=scan, daemon=True).start()
 
-    def _on_scan_finished(self):
+    def _on_scan_finished(self, scan_gen: int | None = None):
         """Mark scan complete and run queued rescan requests."""
+        if scan_gen is not None and scan_gen != self._scan_generation:
+            return
         self._scan_in_progress = False
+        self._scan_cancel_event = None
+        if self._spinner_active and not self._loaded and not self._pending_rescan:
+            self._stop_spinner()
+            if self._is_music_page_active():
+                self.track_count_label.configure(text="Scan cancelled")
         if self._pending_rescan:
             self._pending_rescan = False
             self._loaded = False
             self._scan_tracks()
 
-    def _on_scan_error(self, error_msg: str):
+    def _on_scan_error(self, error_msg: str, scan_gen: int | None = None):
         """Handle track scan failure on the main thread."""
+        if scan_gen is not None and scan_gen != self._scan_generation:
+            return
         self._stop_spinner()
         self.track_count_label.configure(text="Scan failed")
-        from tkinter import messagebox
-        messagebox.showerror("Scan Error", f"Failed to scan tracks: {error_msg}")
+        if self._is_music_page_active():
+            from tkinter import messagebox
+            messagebox.showerror("Scan Error", f"Failed to scan tracks: {error_msg}")
+        else:
+            logger.warn("Music", f"Track scan failed while page hidden: {error_msg}")
 
-    def _on_tracks_loaded(self, tracks):
+    def _on_tracks_loaded(self, tracks, scan_gen: int | None = None):
+        if scan_gen is not None and scan_gen != self._scan_generation:
+            return
         self._loaded = True
         self._all_tracks = tracks
         self._track_data_revision += 1
@@ -402,10 +462,13 @@ class MusicPage(BasePage):
         try:
             self._stop_spinner()
             self.track_count_label.configure(text=f"{len(tracks)} tracks")
-            self.exclude_var.set(self.app.music_manager.exclude_vanilla)
-            self._update_summary()
-            self._render_available_tracks()
-            self._populate_stages()
+            if self._is_music_page_active():
+                self._apply_loaded_tracks_ui()
+            else:
+                # Avoid heavy listbox repaints on hidden tabs; render when the
+                # user navigates back to Music.
+                self._deferred_ui_apply = True
+                logger.info("Music", "Track scan finished in background; deferred UI render until Music is visible")
 
             # Invalidate the dashboard conflict cache because
             # generate_msbt_overlays() may have changed _MergedResources
@@ -415,6 +478,23 @@ class MusicPage(BasePage):
                 dash._conflict_cache = None
         except Exception as e:
             logger.warn("Music", f"Track scan finished but UI update was deferred: {e}")
+
+    def _is_music_page_active(self) -> bool:
+        try:
+            return getattr(self.app.main_window, "current_page", None) == "music"
+        except Exception:
+            return False
+
+    def _apply_loaded_tracks_ui(self):
+        """Apply loaded track data to visible UI widgets."""
+        self._deferred_ui_apply = False
+        self.track_count_label.configure(text=f"{len(self._all_tracks)} tracks")
+        self.exclude_var.set(self.app.music_manager.exclude_vanilla)
+        self._update_summary()
+        self._render_available_tracks()
+        self._populate_stages()
+        if self._selected_stage:
+            self._render_playlist()
 
     def _update_summary(self):
         summary = self.app.music_manager.get_assignment_summary()

@@ -87,7 +87,7 @@ class BasePage(ctk.CTkFrame):
         # ModManagerApp._global_fast_scroll (bind_all), so we only patch
         # tk.Listbox / tk.Text / tk.Canvas here to override their slower
         # class-level default scrolling.
-        self.after(50, self._patch_all_scroll_speeds)
+        # Per-widget mouse-wheel bindings are intentionally disabled.
 
     def _patch_all_scroll_speeds(self):
         """Find and patch standalone scrollable widgets for faster scrolling.
@@ -98,7 +98,7 @@ class BasePage(ctk.CTkFrame):
         on CTkScrollableFrame children that return ``"break"`` would block
         the bind_all handler from ever firing, completely breaking scroll.
         """
-        self._recursive_patch_scroll(self)
+        return
 
     def _recursive_patch_scroll(self, widget):
         """Recursively patch scroll speed on standalone scrollable widgets.

@@ -42,10 +42,12 @@ class ModManagerApp(ctk.CTk):
     _ZOOM_PAGE_EVICT_MIN_PAGE_COUNT = 4
     _ENABLE_ZOOM_OVERLAY = False
     _RESIZE_SETTLE_MS = 84
-    _DRAG_REDRAW_INTERVAL_MS = 12
-    _SCROLL_REFRESH_INTERVAL_MS = 12
-    _DRAG_FULL_REPAINT_INTERVAL_MS = 42
+    _DRAG_REDRAW_INTERVAL_MS = 10
+    _SCROLL_REFRESH_INTERVAL_MS = 10
+    _DRAG_FULL_REPAINT_INTERVAL_MS = 24
     _DRAG_FORCE_UPDATE_EVERY_TICKS = 1
+    _STARTUP_REVEAL_DELAY_MS = 210
+    _STARTUP_REVEAL_SETTLE_PASSES = 4
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
@@ -126,6 +128,7 @@ class ModManagerApp(ctk.CTk):
         self._last_wheel_scroll_widget = None
         self._last_wheel_scroll_page_id = None
         self._last_wheel_scroll_monotonic = 0.0
+        self._page_scroll_targets = {}
         self._drag_refresh_after_id = None
         self._drag_redraw_counter = 0
         self._drag_motion_pending = False
@@ -146,6 +149,7 @@ class ModManagerApp(ctk.CTk):
         self._app_icon_photo = None
         self._window_fade_after_id = None
         self._startup_nav_after_id = None
+        self._startup_reveal_after_id = None
         self._scale_layout_settle_after_id = None
         self._zoom_overlay = None
         self._zoom_overlay_label = None
@@ -420,11 +424,6 @@ class ModManagerApp(ctk.CTk):
                 fade_in_supported = True
             except Exception:
                 pass
-        else:
-            try:
-                self.attributes("-alpha", 1.0)
-            except Exception:
-                pass
         # Avoid aggressive focus_force() during startup; it can trigger
         # unstable behavior on some Windows setups.
         try:
@@ -433,6 +432,8 @@ class ModManagerApp(ctk.CTk):
             pass
         if fade_in_supported and self._ENABLE_WINDOW_FADE:
             self.after(25, self._fade_in_window)
+        else:
+            self._schedule_startup_reveal(force_alpha_hidden=force_alpha_hidden)
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
         try:
             logger.debug("App", f"Startup geometry: {self.geometry()}")
@@ -1011,6 +1012,8 @@ class ModManagerApp(ctk.CTk):
             self._last_wheel_scroll_widget = widget
             self._last_wheel_scroll_page_id = page_id
             self._last_wheel_scroll_monotonic = time.monotonic()
+            if page_id:
+                self._page_scroll_targets[page_id] = widget
         except Exception:
             pass
 
@@ -1029,7 +1032,25 @@ class ModManagerApp(ctk.CTk):
                 return None
             if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
                 return None
+            # Keep same-page fallback sticky even when a canvas briefly reports
+            # stale/zero scroll metrics during relayout.
+            if same_page:
+                return widget
             if not self._widget_can_scroll_vertically(widget):
+                return None
+            return widget
+        except Exception:
+            return None
+
+    def _get_cached_page_scroll_target(self, page_id):
+        if not page_id:
+            return None
+        try:
+            widget = self._page_scroll_targets.get(page_id)
+            if widget is None:
+                return None
+            if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
+                self._page_scroll_targets.pop(page_id, None)
                 return None
             return widget
         except Exception:
@@ -1079,9 +1100,14 @@ class ModManagerApp(ctk.CTk):
             try:
                 if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
                     return
+                try:
+                    widget.update_idletasks()
+                except Exception:
+                    pass
+                if not self._widget_can_scroll_vertically(widget):
+                    return
                 score = int(base_score)
-                if self._widget_can_scroll_vertically(widget):
-                    score += 10000
+                score += 10000
                 if _contains_pointer(widget):
                     score += 20000
                 candidates.append((score, widget))
@@ -1177,6 +1203,13 @@ class ModManagerApp(ctk.CTk):
             return
         self._active_drag_scroll_widget = target
         self._drag_motion_pending = True
+        try:
+            if bool(target.winfo_exists()):
+                target.update_idletasks()
+                if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
+                    self.main_window.content.update_idletasks()
+        except Exception:
+            pass
         self._schedule_scroll_refresh(target)
         self._ensure_drag_redraw_loop()
 
@@ -1231,11 +1264,20 @@ class ModManagerApp(ctk.CTk):
                 self._schedule_scroll_refresh(target)
                 # Force an occasional full repaint while dragging so text
                 # never remains partially rasterized after rapid thumb jumps.
-                if full_repaint_due and self._drag_motion_pending:
+                if full_repaint_due:
                     try:
                         target.update()
                     except Exception:
                         target.update_idletasks()
+                    try:
+                        if hasattr(self, "main_window"):
+                            self.main_window.content.update()
+                    except Exception:
+                        pass
+                    try:
+                        self.update_idletasks()
+                    except Exception:
+                        pass
                     self._last_drag_full_repaint_monotonic = now
                     self._drag_motion_pending = False
                 self._last_drag_widget_refresh_monotonic = now
@@ -1256,9 +1298,11 @@ class ModManagerApp(ctk.CTk):
         try:
             if widget is not None and bool(widget.winfo_exists()):
                 widget.update_idletasks()
+                self.after(8, widget.update)
                 self.after(14, widget.update_idletasks)
                 self.after(30, widget.update_idletasks)
             self.update_idletasks()
+            self.after(8, self.update_idletasks)
             self.after(14, self.update_idletasks)
             self.after(30, self.update_idletasks)
         except Exception:
@@ -1392,6 +1436,33 @@ class ModManagerApp(ctk.CTk):
             return True
         except Exception:
             return False
+
+    def _apply_scroll_delta(self, widget, delta: float) -> bool:
+        """Apply one wheel step and report whether the viewport moved."""
+        import tkinter as tk
+
+        before = None
+        after = None
+        try:
+            before = widget.yview()
+        except Exception:
+            before = None
+        try:
+            if isinstance(widget, tk.Canvas):
+                moved = self._scroll_canvas_pixels(widget, delta)
+                if not moved:
+                    widget.yview_scroll(int(delta), "units")
+            else:
+                widget.yview_scroll(int(delta), "units")
+        except Exception:
+            return False
+        try:
+            after = widget.yview()
+        except Exception:
+            after = None
+        if before is not None and after is not None and len(before) == 2 and len(after) == 2:
+            return abs(float(after[0]) - float(before[0])) > 1e-6
+        return True
 
     def _patch_ctk_scrollbar_drag_behavior(self):
         """Make CTk scrollbar thumb dragging preserve click offset.
@@ -1676,6 +1747,8 @@ class ModManagerApp(ctk.CTk):
             # child as event source mid-wheel burst.
             scrollable = self._get_recent_wheel_scroll_target(page_id)
         if scrollable is None:
+            scrollable = self._get_cached_page_scroll_target(page_id)
+        if scrollable is None:
             scrollable = self._resolve_active_page_scroll_target(
                 page_id,
                 x_root=getattr(event, "x_root", None),
@@ -1730,12 +1803,16 @@ class ModManagerApp(ctk.CTk):
                     self._scroll_debug_keys.add(key)
                     logger.debug("App", f"Long-form scroll boost active ({key})")
             delta = direction * speed * ticks
-            if isinstance(scrollable, tk.Canvas):
-                moved = self._scroll_canvas_pixels(scrollable, delta)
-                if not moved:
-                    scrollable.yview_scroll(int(delta), "units")
-            else:
-                scrollable.yview_scroll(int(delta), "units")
+            moved = self._apply_scroll_delta(scrollable, delta)
+            # If a stale/non-scrollable target was selected, retry once with a
+            # fresh active-page probe so wheel scrolling never "dies" until the
+            # pointer is moved.
+            if (not moved) and (not self._widget_can_scroll_vertically(scrollable)):
+                alt = self._resolve_active_page_scroll_target(page_id)
+                if alt is not None and alt is not scrollable:
+                    alt_moved = self._apply_scroll_delta(alt, delta)
+                    if alt_moved or self._widget_can_scroll_vertically(alt):
+                        scrollable = alt
             self._remember_wheel_scroll_target(scrollable, page_id)
             self._schedule_scroll_refresh(scrollable)
         except tk.TclError:
@@ -1785,7 +1862,7 @@ class ModManagerApp(ctk.CTk):
                     if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
                         continue
                     if dragging and force_update:
-                        widget.update_idletasks()
+                        widget.update()
                     else:
                         widget.update_idletasks()
                 except Exception:
@@ -1930,6 +2007,60 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
             self._window_fade_after_id = None
+
+    def _schedule_startup_reveal(self, force_alpha_hidden: bool = False):
+        """Reveal startup window only after a short post-map settle window."""
+        try:
+            if force_alpha_hidden:
+                self.attributes("-alpha", 0.0)
+        except Exception:
+            pass
+        if self._startup_reveal_after_id:
+            try:
+                self.after_cancel(self._startup_reveal_after_id)
+            except Exception:
+                pass
+            self._startup_reveal_after_id = None
+        try:
+            self._startup_reveal_after_id = self.after(
+                int(self._STARTUP_REVEAL_DELAY_MS),
+                self._finalize_startup_reveal,
+            )
+        except Exception:
+            self._startup_reveal_after_id = None
+            self._finalize_startup_reveal()
+
+    def _finalize_startup_reveal(self):
+        """Perform final settle passes then reveal the startup window."""
+        self._startup_reveal_after_id = None
+        if self._shutting_down:
+            return
+        try:
+            passes = max(1, int(self._STARTUP_REVEAL_SETTLE_PASSES))
+        except Exception:
+            passes = 1
+        for _ in range(passes):
+            try:
+                self.update_idletasks()
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "main_window"):
+                    self.main_window.content.update_idletasks()
+            except Exception:
+                pass
+        try:
+            self.update()
+        except Exception:
+            pass
+        try:
+            self.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+        try:
+            self.lift()
+        except Exception:
+            pass
 
     def _fade_in_window(self):
         """Fade startup from transparent to fully visible."""
@@ -2257,6 +2388,11 @@ class ModManagerApp(ctk.CTk):
         try:
             if self._startup_nav_after_id:
                 self.after_cancel(self._startup_nav_after_id)
+        except Exception:
+            pass
+        try:
+            if self._startup_reveal_after_id:
+                self.after_cancel(self._startup_reveal_after_id)
         except Exception:
             pass
 
