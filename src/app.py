@@ -63,6 +63,16 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
 
+        # CustomTkinter's Windows header manipulation temporarily withdraws/
+        # re-shows windows. For the main app window this can cause a visible
+        # top-left flash before final centering.
+        try:
+            if _sys.platform.startswith("win"):
+                from customtkinter.windows import ctk_tk as _ctk_tk
+                _ctk_tk.CTk._deactivate_windows_window_header_manipulation = True
+        except Exception:
+            pass
+
         _dbg("super().__init__() ...")
         super().__init__()
         _dbg("super().__init__() OK")
@@ -398,8 +408,6 @@ class ModManagerApp(ctk.CTk):
             pass
         if fade_in_supported and self._ENABLE_WINDOW_FADE:
             self.after(25, self._fade_in_window)
-        if self._startup_hidden_withdraw:
-            self.after(120, lambda: self._ensure_window_visible(attempt=1))
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
         try:
             logger.debug("App", f"Startup geometry: {self.geometry()}")
@@ -1122,10 +1130,9 @@ class ModManagerApp(ctk.CTk):
                 page_id = self.main_window.current_page
             except Exception:
                 pass
-            # Conflicts page is intentionally pinned to top right after scan
-            # until user explicitly interacts. Ignore wheel deltas during that
-            # short guard window so delayed wheel events cannot introduce a
-            # false initial offset.
+            # Conflicts page is intentionally pinned to top for a short
+            # post-render guard window. Ignore wheel deltas during that guard
+            # so delayed wheel events cannot introduce a false initial offset.
             if page_id == "conflicts":
                 try:
                     conflicts_page = self.main_window.pages.get("conflicts")

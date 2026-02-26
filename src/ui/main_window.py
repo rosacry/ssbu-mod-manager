@@ -289,8 +289,7 @@ class MainWindow(ctk.CTkFrame):
             return
         self._nav_token += 1
         token = self._nav_token
-        self._show_navigation_overlay()
-        self.after(0, lambda pid=page_id, t=token: self._complete_navigation(pid, t))
+        self.after(0, lambda pid=page_id, t=token: self._complete_navigation(pid, t, overlay_delay_ms=0))
 
     def navigate_immediate(self, page_id: str):
         """Navigate synchronously without delayed overlay transitions."""

@@ -66,7 +66,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Zoom changes are throttled for smoother repeated `Ctrl +/-` use with less jitter.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
-- Page navigation now uses an isolated transition overlay to avoid mixed/partial page paints during fast tab switching.
+- Page navigation now switches directly (no transition overlay) to avoid rare blank-content overlay races during fast tab switching.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.
 - Nested wrapper folders are auto-flattened on import and also surfaced as conflicts during scans.
@@ -80,8 +80,10 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts initial prompt and scan results now use isolated hosts with explicit show/hide transitions to prevent blank-result overlay races.
 - Startup geometry is centered before first paint and no delayed post-show recenter is used.
 - Startup now pre-renders the initial dashboard while hidden so first visible paint does not show partial widgets.
+- Windows startup now disables CustomTkinter header withdraw/deiconify manipulation for the root window to prevent top-left first-frame flash/recenter.
 - Conflicts results viewport now runs a short multi-pass settle to prevent intermittent mid-list gaps after scan completion.
 - Conflicts scan/render now rebuilds the scroll host each pass to eliminate stale scrollregion state that could cause intermittent large top gaps.
+- Conflicts post-scan top-anchor guard is now a short fixed stabilization window to block delayed wheel drift without relying on intent heuristics.
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
