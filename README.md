@@ -63,7 +63,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 
 - Default visual density is tuned so current **100% zoom** matches the old 120% look.
 - `Ctrl +`, `Ctrl -`, and `Ctrl 0` adjust UI zoom.
-- Zoom changes are throttled for smoother repeated `Ctrl +/-` use with less jitter.
+- Zoom shortcut repeats are burst-coalesced so held `Ctrl +/-` input does not trigger repeated expensive reflows.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
 - Page navigation now switches directly (no transition overlay) to avoid rare blank-content overlay races during fast tab switching.
@@ -89,7 +89,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts rendering now logs compact child-geometry snapshots in developer mode to diagnose rare invisible-gap states.
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
-- Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
+- Fast scrollbar thumb dragging now refreshes the active scroll target on a steady frame cadence to reduce text smearing/tearing.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
 - App status-bar mod/plugin counts now refresh off the UI thread to reduce startup hitching and early frame drops.

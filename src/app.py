@@ -33,11 +33,13 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 160
+    _ZOOM_APPLY_DEBOUNCE_MS = 96
+    _ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS = 220
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _RESIZE_SETTLE_MS = 84
     _DRAG_REDRAW_INTERVAL_MS = 16
-    _SCROLL_REFRESH_INTERVAL_MS = 14
+    _SCROLL_REFRESH_INTERVAL_MS = 16
+    _DRAG_FORCE_UPDATE_EVERY_TICKS = 2
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
@@ -138,6 +140,8 @@ class ModManagerApp(ctk.CTk):
         self._last_window_activity_size = (0, 0)
         self._last_user_activity_monotonic = time.monotonic()
         self._last_scale_apply_monotonic = 0.0
+        self._last_zoom_input_monotonic = 0.0
+        self._last_drag_widget_refresh_monotonic = 0.0
         self._page_warmup_after_id = None
         self._page_warmup_queue = []
         self._icon_bitmap_path = None
@@ -571,7 +575,7 @@ class ModManagerApp(ctk.CTk):
         self._queue_scale_change(self._DEFAULT_VISUAL_SCALE)
 
     def _queue_scale_change(self, scale: float):
-        """Debounce scale changes so rapid key repeats don't stutter."""
+        """Throttle scale changes for responsiveness without reflow spam."""
         scale = max(self._MIN_SCALE, min(self._MAX_SCALE, float(scale)))
         effective = self._pending_scale_apply
         if effective is None:
@@ -580,13 +584,17 @@ class ModManagerApp(ctk.CTk):
             return
         self._note_user_activity()
         self._pending_scale_apply = scale
+        try:
+            self._last_zoom_input_monotonic = time.monotonic()
+        except Exception:
+            self._last_zoom_input_monotonic = 0.0
         if self._zoom_apply_after_id:
             try:
                 self.after_cancel(self._zoom_apply_after_id)
             except Exception:
                 pass
             self._zoom_apply_after_id = None
-        # Apply once input settles so held key repeats don't stutter.
+        # Coalesce rapid key repeats into one expensive scaling pass.
         self._zoom_apply_after_id = self.after(self._ZOOM_APPLY_DEBOUNCE_MS, self._flush_pending_scale)
         try:
             if hasattr(self, "main_window") and hasattr(self.main_window, "status_bar"):
@@ -608,7 +616,7 @@ class ModManagerApp(ctk.CTk):
         self._schedule_scale_persist(pending)
 
     def _schedule_scale_layout_settle(self):
-        """Run a short delayed reflow pass after scale changes."""
+        """Debounce expensive scale reflow until zoom input settles."""
         if self._scale_layout_settle_after_id:
             try:
                 self.after_cancel(self._scale_layout_settle_after_id)
@@ -616,7 +624,9 @@ class ModManagerApp(ctk.CTk):
                 pass
             self._scale_layout_settle_after_id = None
         try:
-            self._scale_layout_settle_after_id = self.after(20, self._flush_scale_layout_settle)
+            self._scale_layout_settle_after_id = self.after(
+                self._ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS, self._flush_scale_layout_settle
+            )
         except Exception:
             self._scale_layout_settle_after_id = None
 
@@ -624,6 +634,22 @@ class ModManagerApp(ctk.CTk):
         self._scale_layout_settle_after_id = None
         if self._shutting_down or not hasattr(self, "main_window"):
             return
+        if self._zoom_apply_after_id is not None or self._pending_scale_apply is not None:
+            self._schedule_scale_layout_settle()
+            return
+        try:
+            quiet_ms = (time.monotonic() - self._last_scale_apply_monotonic) * 1000.0
+            input_quiet_ms = (time.monotonic() - self._last_zoom_input_monotonic) * 1000.0
+            if quiet_ms < float(self._ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS):
+                remaining = max(12, int(float(self._ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS) - quiet_ms))
+                self._scale_layout_settle_after_id = self.after(remaining, self._flush_scale_layout_settle)
+                return
+            if input_quiet_ms < float(self._ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS):
+                remaining = max(12, int(float(self._ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS) - input_quiet_ms))
+                self._scale_layout_settle_after_id = self.after(remaining, self._flush_scale_layout_settle)
+                return
+        except Exception:
+            pass
         try:
             self.main_window.update_idletasks()
         except Exception:
@@ -632,18 +658,13 @@ class ModManagerApp(ctk.CTk):
             page_id = getattr(self.main_window, "current_page", None)
             if page_id and page_id in self.main_window.pages:
                 page = self.main_window.pages[page_id]
-                if not page.winfo_manager():
-                    page.place(
-                        in_=self.main_window.content,
-                        x=0,
-                        y=0,
-                        relwidth=1,
-                        relheight=1,
-                    )
                 page.update_idletasks()
                 self.main_window.content.update_idletasks()
-                page.after_idle(page.update_idletasks)
-            self._reset_all_canvas_xview(self.main_window)
+                try:
+                    page.after_idle(page.update_idletasks)
+                except Exception:
+                    pass
+                self._reset_all_canvas_xview(page)
         except Exception:
             pass
 
@@ -767,8 +788,33 @@ class ModManagerApp(ctk.CTk):
                 break
         return False
 
+    @staticmethod
+    def _resolve_scroll_target_from_scrollbar(widget):
+        """Best-effort scroll target lookup from a CTk scrollbar widget tree."""
+        w = widget
+        while w is not None:
+            try:
+                if isinstance(w, ctk.CTkScrollbar) or w.__class__.__name__ == "CTkScrollbar":
+                    cmd = getattr(w, "_command", None)
+                    target = getattr(cmd, "__self__", None)
+                    if target is not None:
+                        return target
+                    break
+                w = w.master
+            except Exception:
+                break
+        return None
+
     def _on_scrollbar_drag_start(self):
         self._scrollbar_drag_active = True
+        if self._active_drag_scroll_widget is None:
+            try:
+                pointed = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+                target = self._resolve_scroll_target_from_scrollbar(pointed)
+                if target is not None:
+                    self._active_drag_scroll_widget = target
+            except Exception:
+                pass
         try:
             if getattr(self.main_window, "current_page", None) == "conflicts":
                 conflicts_page = self.main_window.pages.get("conflicts")
@@ -781,6 +827,8 @@ class ModManagerApp(ctk.CTk):
         self._suppress_scroll_refresh_until = max(
             self._suppress_scroll_refresh_until, time.monotonic() + 0.02
         )
+        if self._active_drag_scroll_widget is not None:
+            self._schedule_scroll_refresh(self._active_drag_scroll_widget)
         self._ensure_drag_redraw_loop()
 
     def _on_scrollbar_drag_end(self):
@@ -794,7 +842,7 @@ class ModManagerApp(ctk.CTk):
                 pass
             self._drag_refresh_after_id = None
         try:
-            self.after(8, self._refresh_after_pointer_release)
+            self.after(8, lambda w=target: self._refresh_after_pointer_release(w))
         except Exception:
             pass
         if target is not None:
@@ -805,6 +853,8 @@ class ModManagerApp(ctk.CTk):
         if pressed:
             self._scrollbar_drag_active = self._widget_belongs_to_scrollbar(source_widget)
             self._suppress_scroll_refresh_until = time.monotonic() + 0.05
+            if self._scrollbar_drag_active:
+                self._active_drag_scroll_widget = self._resolve_scroll_target_from_scrollbar(source_widget)
             # Drop pending refreshes before scrollbar dragging starts.
             if self._scroll_refresh_after_id:
                 try:
@@ -833,32 +883,32 @@ class ModManagerApp(ctk.CTk):
         if not self._pointer_left_down or not self._scrollbar_drag_active or self._shutting_down:
             return
         target = self._active_drag_scroll_widget
-        self._drag_redraw_counter = (self._drag_redraw_counter + 1) % 3
+        self._drag_redraw_counter = (self._drag_redraw_counter + 1) % max(
+            1, int(self._DRAG_FORCE_UPDATE_EVERY_TICKS)
+        )
         try:
             if target is not None and bool(target.winfo_exists()):
-                if self._drag_redraw_counter == 0:
-                    target.update()
-                else:
-                    target.update_idletasks()
-                    target.after_idle(target.update_idletasks)
-            else:
-                if self._drag_redraw_counter == 0:
-                    self.update()
-                else:
-                    self.update_idletasks()
+                self._schedule_scroll_refresh(target)
         except Exception:
             pass
         try:
-            self.update_idletasks()
+            if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
+                self.main_window.content.update_idletasks()
         except Exception:
             pass
         self._ensure_drag_redraw_loop()
 
-    def _refresh_after_pointer_release(self):
+    def _refresh_after_pointer_release(self, widget=None):
         if self._pointer_left_down or self._shutting_down:
             return
         try:
+            if widget is not None and bool(widget.winfo_exists()):
+                widget.update_idletasks()
+                self.after(14, widget.update_idletasks)
+                self.after(30, widget.update_idletasks)
             self.update_idletasks()
+            self.after(14, self.update_idletasks)
+            self.after(30, self.update_idletasks)
         except Exception:
             pass
 
@@ -1013,6 +1063,10 @@ class ModManagerApp(ctk.CTk):
                         target_widget = getattr(scrollbar._command, "__self__", None)
                         if target_widget is not None:
                             app._active_drag_scroll_widget = target_widget
+                            now = time.monotonic()
+                            if now - float(getattr(app, "_last_drag_widget_refresh_monotonic", 0.0)) >= 0.014:
+                                target_widget.update_idletasks()
+                                app._last_drag_widget_refresh_monotonic = now
                             app._schedule_scroll_refresh(target_widget)
                     except Exception:
                         pass
@@ -1228,6 +1282,8 @@ class ModManagerApp(ctk.CTk):
 
     def _schedule_scroll_refresh(self, widget):
         """Throttle redraws while wheel-scrolling to avoid transient text artifacts."""
+        if widget is None:
+            return
         try:
             # Keep refreshes active while dragging a scrollbar thumb so text
             # in long-form pages does not smear during rapid movement.
@@ -1249,34 +1305,43 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_after_id = None
         widgets = list(self._scroll_refresh_widgets)
         self._scroll_refresh_widgets.clear()
+        dragging = bool(self._pointer_left_down and self._scrollbar_drag_active)
+        active_widget = self._active_drag_scroll_widget if dragging else None
+        if dragging and active_widget is not None:
+            widgets = [active_widget]
         if not widgets:
             return
-        for widget in widgets:
-            try:
-                if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
+        try:
+            force_update = False
+            if dragging:
+                self._scroll_refresh_drag_counter = (
+                    self._scroll_refresh_drag_counter + 1
+                ) % max(1, int(self._DRAG_FORCE_UPDATE_EVERY_TICKS))
+                force_update = self._scroll_refresh_drag_counter == 0
+            for widget in widgets:
+                try:
+                    if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
+                        continue
+                    if dragging and force_update:
+                        widget.update()
+                    else:
+                        widget.update_idletasks()
+                except Exception:
                     continue
-                widget.update_idletasks()
-            except Exception:
-                pass
-        try:
-            if self._pointer_left_down and self._scrollbar_drag_active:
-                self._scroll_refresh_drag_counter = (self._scroll_refresh_drag_counter + 1) % 3
-                if self._scroll_refresh_drag_counter == 0:
-                    self.update()
-                else:
-                    self.update_idletasks()
-            else:
+            if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
+                self.main_window.content.update_idletasks()
+            elif not dragging:
                 self.update_idletasks()
-        except Exception:
-            pass
-        try:
-            self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 6
-            if self._scroll_refresh_full_counter == 0 and not self._pointer_left_down:
-                for widget in widgets:
-                    try:
-                        widget.after_idle(widget.update_idletasks)
-                    except Exception:
-                        pass
+            if dragging and active_widget is not None:
+                self._schedule_scroll_refresh(active_widget)
+            else:
+                self._scroll_refresh_full_counter = (self._scroll_refresh_full_counter + 1) % 6
+                if self._scroll_refresh_full_counter == 0:
+                    for widget in widgets:
+                        try:
+                            widget.after_idle(widget.update_idletasks)
+                        except Exception:
+                            pass
         except Exception:
             pass
 
