@@ -33,9 +33,13 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 120
+    _ZOOM_APPLY_DEBOUNCE_MS = 90
+    _ZOOM_FIRST_TAP_DELAY_MS = 1
+    _ZOOM_MIN_REPEAT_DELAY_MS = 70
+    _ZOOM_MAX_REPEAT_DELAY_MS = 180
     _ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS = 340
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
+    _ZOOM_PAGE_EVICT_MIN_PAGE_COUNT = 4
     _ENABLE_ZOOM_OVERLAY = False
     _RESIZE_SETTLE_MS = 84
     _DRAG_REDRAW_INTERVAL_MS = 10
@@ -110,6 +114,7 @@ class ModManagerApp(ctk.CTk):
         self._zoom_indicator_id = None
         self._zoom_apply_after_id = None
         self._zoom_persist_after_id = None
+        self._zoom_refresh_after_id = None
         self._pending_scale_apply = None
         self._pending_scale_save = None
         self._scroll_debug_keys = set()
@@ -126,6 +131,7 @@ class ModManagerApp(ctk.CTk):
         self._last_window_activity_size = (0, 0)
         self._last_user_activity_monotonic = time.monotonic()
         self._last_scale_apply_monotonic = 0.0
+        self._last_scale_apply_duration_ms = 0.0
         self._last_zoom_input_monotonic = 0.0
         self._last_drag_widget_refresh_monotonic = 0.0
         self._page_warmup_after_id = None
@@ -531,6 +537,7 @@ class ModManagerApp(ctk.CTk):
             overlay_shown = self._show_zoom_overlay(self._scale_to_display_percent(scale))
         try:
             self._current_scale = scale
+            self._prune_invalid_scaling_callbacks()
             ctk.set_widget_scaling(scale)
             # Update minimum window size for new scale
             screen_w, screen_h = self._get_primary_screen_size()
@@ -591,11 +598,28 @@ class ModManagerApp(ctk.CTk):
             except Exception:
                 pass
             self._zoom_apply_after_id = None
-        # Coalesce rapid key repeats into one expensive scaling pass.
+        # Coalesce rapid repeats and adapt delay to the observed cost of
+        # recent scale applications to reduce jitter under heavy pages.
         delay_ms = int(self._ZOOM_APPLY_DEBOUNCE_MS)
         try:
+            since_last_apply_ms = 0.0
+            if self._last_scale_apply_monotonic > 0.0:
+                since_last_apply_ms = max(0.0, (now - self._last_scale_apply_monotonic) * 1000.0)
             if previous_input <= 0.0 or (now - previous_input) >= 0.35:
-                delay_ms = 18
+                # If we're immediately after a heavy scale apply, give Tk a
+                # short breath to drain queued key-repeat events so they can
+                # coalesce into one target zoom step.
+                if since_last_apply_ms and since_last_apply_ms < 220.0:
+                    delay_ms = max(42, int(self._ZOOM_MIN_REPEAT_DELAY_MS))
+                else:
+                    delay_ms = int(self._ZOOM_FIRST_TAP_DELAY_MS)
+            else:
+                recent_cost = max(0.0, float(getattr(self, "_last_scale_apply_duration_ms", 0.0)))
+                adaptive = int(round(recent_cost * 1.15))
+                delay_ms = max(
+                    int(self._ZOOM_MIN_REPEAT_DELAY_MS),
+                    min(int(self._ZOOM_MAX_REPEAT_DELAY_MS), adaptive or int(self._ZOOM_APPLY_DEBOUNCE_MS)),
+                )
         except Exception:
             delay_ms = int(self._ZOOM_APPLY_DEBOUNCE_MS)
         self._zoom_apply_after_id = self.after(delay_ms, self._flush_pending_scale)
@@ -647,32 +671,140 @@ class ModManagerApp(ctk.CTk):
             return
         pending = self._pending_scale_apply
         self._pending_scale_apply = None
+        self._evict_hidden_pages_for_zoom()
+        apply_started = time.perf_counter()
         self._apply_scale(pending, save=False)
+        self._last_scale_apply_duration_ms = max(
+            0.0, (time.perf_counter() - apply_started) * 1000.0
+        )
         self._refresh_visible_page_after_scale()
         self._last_scale_apply_monotonic = time.monotonic()
         self._schedule_scale_layout_settle()
         self._schedule_scale_persist(pending)
 
     def _refresh_visible_page_after_scale(self):
-        """Force a lightweight refresh of the current page after a zoom apply."""
+        """Schedule a lightweight refresh of the current page after zoom apply."""
         if self._shutting_down or not hasattr(self, "main_window"):
             return
-        try:
-            page_id = getattr(self.main_window, "current_page", None)
-            if not page_id:
-                return
-            page = self.main_window.pages.get(page_id)
-            if page is None or not bool(page.winfo_exists()):
-                return
-            page.lift()
-            page.update_idletasks()
-            self.main_window.content.update_idletasks()
+        if self._zoom_refresh_after_id:
             try:
-                page.after_idle(page.update_idletasks)
+                self.after_cancel(self._zoom_refresh_after_id)
             except Exception:
                 pass
+            self._zoom_refresh_after_id = None
+
+        def _refresh():
+            self._zoom_refresh_after_id = None
+            if self._shutting_down or not hasattr(self, "main_window"):
+                return
+            try:
+                page_id = getattr(self.main_window, "current_page", None)
+                if not page_id:
+                    return
+                page = self.main_window.pages.get(page_id)
+                if page is None or not bool(page.winfo_exists()):
+                    return
+                page.lift()
+                page.update_idletasks()
+                self.main_window.content.update_idletasks()
+            except Exception:
+                pass
+
+        try:
+            self._zoom_refresh_after_id = self.after_idle(_refresh)
+        except Exception:
+            self._zoom_refresh_after_id = None
+
+    def _prune_invalid_scaling_callbacks(self):
+        """Drop stale CTk scaling callbacks bound to destroyed widgets."""
+        try:
+            from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
+        except Exception:
+            return
+        try:
+            for window, callback_list in list(ScalingTracker.window_widgets_dict.items()):
+                window_alive = True
+                try:
+                    window_alive = bool(window.winfo_exists())
+                except Exception:
+                    window_alive = False
+                if not window_alive:
+                    try:
+                        ScalingTracker.window_widgets_dict.pop(window, None)
+                    except Exception:
+                        pass
+                    try:
+                        ScalingTracker.window_dpi_scaling_dict.pop(window, None)
+                    except Exception:
+                        pass
+                    continue
+                cleaned = []
+                for cb in list(callback_list):
+                    owner = getattr(cb, "__self__", None)
+                    if owner is None:
+                        cleaned.append(cb)
+                        continue
+                    try:
+                        if hasattr(owner, "winfo_exists") and not bool(owner.winfo_exists()):
+                            continue
+                    except Exception:
+                        continue
+                    cleaned.append(cb)
+                ScalingTracker.window_widgets_dict[window] = cleaned
         except Exception:
             pass
+
+    def _evict_hidden_pages_for_zoom(self):
+        """Drop hidden page widgets before global scaling to keep zoom responsive.
+
+        CustomTkinter's global scaling updates every existing widget. As users
+        navigate around, hidden pages accumulate large widget trees and can make
+        Ctrl+/- scaling progressively slower. Evicting hidden pages keeps zoom
+        work bounded to the active page.
+        """
+        if self._shutting_down or not hasattr(self, "main_window"):
+            return
+        if bool(getattr(self, "_has_unsaved_changes", False)):
+            return
+        pages = getattr(self.main_window, "pages", None)
+        if not isinstance(pages, dict) or len(pages) < int(self._ZOOM_PAGE_EVICT_MIN_PAGE_COUNT):
+            return
+        current = getattr(self.main_window, "current_page", None)
+        if not current:
+            return
+        removed = []
+        for page_id, page in list(pages.items()):
+            if page_id == current:
+                continue
+            try:
+                if hasattr(page, "on_hide"):
+                    page.on_hide()
+            except Exception:
+                pass
+            try:
+                page.place_forget()
+            except Exception:
+                pass
+            try:
+                page.destroy()
+            except Exception:
+                pass
+            pages.pop(page_id, None)
+            removed.append(page_id)
+            try:
+                self.main_window._shown_pages.discard(page_id)
+            except Exception:
+                pass
+            try:
+                self.main_window._primed_pages.discard(page_id)
+            except Exception:
+                pass
+        if removed:
+            self._prune_invalid_scaling_callbacks()
+            try:
+                logger.debug("App", f"Zoom evicted hidden pages: {', '.join(removed)}")
+            except Exception:
+                pass
 
     def _schedule_scale_layout_settle(self):
         """Debounce expensive scale reflow until zoom input settles."""
@@ -1890,6 +2022,11 @@ class ModManagerApp(ctk.CTk):
         try:
             if self._zoom_persist_after_id:
                 self.after_cancel(self._zoom_persist_after_id)
+        except Exception:
+            pass
+        try:
+            if self._zoom_refresh_after_id:
+                self.after_cancel(self._zoom_refresh_after_id)
         except Exception:
             pass
         try:

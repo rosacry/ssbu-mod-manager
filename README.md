@@ -65,6 +65,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - `Ctrl +`, `Ctrl -`, and `Ctrl 0` adjust UI zoom.
 - Zoom shortcut repeats now coalesce aggressively, with quick first-tap response and reduced repeated `Ctrl +/-` reflow churn.
 - Zoom now updates in-place (no full-page "Applying zoom..." cover), so the active page remains visible while scaling.
+- Zoom now coalesces post-apply key-repeat bursts and evicts hidden pages (when there are no unsaved changes) before scaling to keep `Ctrl +/-` responsive in long sessions.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
 - Page navigation now switches directly (no transition overlay) to avoid rare blank-content overlay races during fast tab switching.
