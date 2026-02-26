@@ -153,24 +153,67 @@ class ConflictsPage(BasePage):
     def _create_conflict_list(self):
         """Create the scrollable conflict results host."""
         self.conflict_list = ctk.CTkScrollableFrame(self._results_stack, fg_color="transparent")
+        # Mark parent container so stale leaked hosts can be force-pruned.
+        try:
+            setattr(self.conflict_list._parent_frame, "_ssbum_conflicts_scroll_host", True)
+        except Exception:
+            pass
         self.conflict_list.pack(fill="both", expand=True)
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
-    def _recreate_conflict_list(self):
-        """Hard-reset the scroll host to avoid stale canvas/scrollregion state."""
+    def _destroy_conflict_list_host(self, host):
+        """Destroy a CTkScrollableFrame and its outer parent container."""
+        if host is None:
+            return
+        parent_frame = None
         try:
-            stale_hosts = [
-                w for w in self._results_stack.winfo_children()
-                if isinstance(w, ctk.CTkScrollableFrame)
-            ]
-            for host in stale_hosts:
-                try:
-                    if bool(host.winfo_exists()):
-                        host.destroy()
-                except Exception:
-                    pass
+            parent_frame = getattr(host, "_parent_frame", None)
+        except Exception:
+            parent_frame = None
+        try:
+            if bool(host.winfo_exists()):
+                host.destroy()
         except Exception:
             pass
+        # CustomTkinter's CTkScrollableFrame.destroy() does NOT destroy
+        # _parent_frame; explicitly tear it down to avoid stale stacked hosts.
+        try:
+            if parent_frame is not None and bool(parent_frame.winfo_exists()):
+                parent_frame.destroy()
+        except Exception:
+            pass
+
+    def _prune_stale_conflict_scroll_hosts(self):
+        """Remove leaked/stacked scroll host containers from results stack."""
+        try:
+            children = list(self._results_stack.winfo_children())
+        except Exception:
+            return
+        removed = 0
+        for widget in children:
+            try:
+                if widget is self._initial_prompt_host:
+                    continue
+                marked = bool(getattr(widget, "_ssbum_conflicts_scroll_host", False))
+                if not marked:
+                    continue
+                if self.conflict_list is not None:
+                    current_parent = getattr(self.conflict_list, "_parent_frame", None)
+                    if widget is current_parent:
+                        continue
+                if bool(widget.winfo_exists()):
+                    widget.destroy()
+                    removed += 1
+            except Exception:
+                continue
+        if removed:
+            logger.warn("Conflicts", f"Removed stale scroll hosts: {removed}")
+
+    def _recreate_conflict_list(self):
+        """Hard-reset the scroll host to avoid stale canvas/scrollregion state."""
+        self._destroy_conflict_list_host(self.conflict_list)
+        self.conflict_list = None
+        self._prune_stale_conflict_scroll_hosts()
         self._create_conflict_list()
         self._show_conflict_list()
         self._reset_conflict_canvas_view()

@@ -86,6 +86,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts post-scan top-anchor guard is now a short fixed stabilization window to block delayed wheel drift without relying on intent heuristics.
 - Conflicts post-scan top-anchor guard now holds until first explicit scroll/scrollbar interaction (after a short minimum hold) to prevent delayed drift without trapping intentional scrolling.
 - Conflicts rendering now logs compact child-geometry snapshots in developer mode to diagnose rare invisible-gap states.
+- Conflicts scroll host teardown now explicitly destroys CustomTkinter's hidden `_parent_frame` container to prevent stale duplicate scrollbars/scan placeholders from stacking.
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
