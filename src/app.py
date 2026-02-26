@@ -1020,18 +1020,22 @@ class ModManagerApp(ctk.CTk):
             return None
         try:
             age = time.monotonic() - float(self._last_wheel_scroll_monotonic or 0.0)
-            if age > float(max_age_sec):
-                return None
             remembered_page = self._last_wheel_scroll_page_id
+            same_page = bool(page_id and remembered_page and remembered_page == page_id)
+            # Keep the fallback sticky while the user remains on the same page.
+            if (not same_page) and age > float(max_age_sec):
+                return None
             if remembered_page and page_id and remembered_page != page_id:
                 return None
             if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
+                return None
+            if not self._widget_can_scroll_vertically(widget):
                 return None
             return widget
         except Exception:
             return None
 
-    def _resolve_active_page_scroll_target(self, page_id):
+    def _resolve_active_page_scroll_target(self, page_id, x_root=None, y_root=None):
         """Fallback: pick the most likely vertical scroll target on the active page."""
         import tkinter as tk
 
@@ -1049,27 +1053,51 @@ class ModManagerApp(ctk.CTk):
 
         candidates = []
 
+        pointer_x = None
+        pointer_y = None
+        try:
+            if x_root is not None and y_root is not None:
+                pointer_x = int(x_root)
+                pointer_y = int(y_root)
+        except Exception:
+            pointer_x = None
+            pointer_y = None
+
+        def _contains_pointer(widget) -> bool:
+            if pointer_x is None or pointer_y is None:
+                return False
+            try:
+                x0 = int(widget.winfo_rootx())
+                y0 = int(widget.winfo_rooty())
+                x1 = x0 + max(1, int(widget.winfo_width()))
+                y1 = y0 + max(1, int(widget.winfo_height()))
+                return x0 <= pointer_x <= x1 and y0 <= pointer_y <= y1
+            except Exception:
+                return False
+
+        def _add_candidate(widget, base_score: int):
+            try:
+                if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
+                    return
+                score = int(base_score)
+                if self._widget_can_scroll_vertically(widget):
+                    score += 10000
+                if _contains_pointer(widget):
+                    score += 20000
+                candidates.append((score, widget))
+            except Exception:
+                pass
+
         def _walk(widget):
             try:
                 if isinstance(widget, ctk.CTkScrollableFrame):
                     canvas = getattr(widget, "_parent_canvas", None)
-                    if canvas is not None and bool(canvas.winfo_exists()) and bool(canvas.winfo_ismapped()):
-                        score = int(canvas.winfo_height()) + 6000
-                        if self._widget_can_scroll_vertically(canvas):
-                            score += 10000
-                        candidates.append((score, canvas))
+                    if canvas is not None:
+                        _add_candidate(canvas, int(canvas.winfo_height()) + 6000)
                 elif isinstance(widget, tk.Canvas):
-                    if bool(widget.winfo_exists()) and bool(widget.winfo_ismapped()):
-                        score = int(widget.winfo_height())
-                        if self._widget_can_scroll_vertically(widget):
-                            score += 10000
-                        candidates.append((score, widget))
+                    _add_candidate(widget, int(widget.winfo_height()))
                 elif isinstance(widget, (tk.Text, tk.Listbox)):
-                    if bool(widget.winfo_exists()) and bool(widget.winfo_ismapped()):
-                        score = int(widget.winfo_height()) + 3000
-                        if self._widget_can_scroll_vertically(widget):
-                            score += 10000
-                        candidates.append((score, widget))
+                    _add_candidate(widget, int(widget.winfo_height()) + 3000)
             except Exception:
                 pass
             try:
@@ -1536,52 +1564,54 @@ class ModManagerApp(ctk.CTk):
                 widget = pointed
         except Exception:
             pass
-        if widget is None:
-            return
-
-        # Walk up the hierarchy looking for a scrollable widget
-        w = widget
         scrollable = None
         in_longform_page = False
-        while w is not None:
-            if w.__class__.__name__ in ("OnlineCompatPage", "MigrationPage"):
-                in_longform_page = True
-            if isinstance(w, tk.Listbox):
-                if self._widget_can_scroll_vertically(w):
-                    scrollable = w
-                    break
-            if isinstance(w, tk.Text):
-                if self._widget_can_scroll_vertically(w):
-                    scrollable = w
-                    break
-            # CTkScrollableFrame - its internal canvas is NOT in the
-            # ancestor chain of child widgets, so we must detect the
-            # frame itself and grab its _parent_canvas.
-            if isinstance(w, ctk.CTkScrollableFrame):
-                try:
-                    parent_canvas = w._parent_canvas
-                    if self._widget_can_scroll_vertically(parent_canvas):
-                        scrollable = parent_canvas
+        if widget is not None:
+            # Walk up the hierarchy looking for a scrollable widget.
+            w = widget
+            while w is not None:
+                if w.__class__.__name__ in ("OnlineCompatPage", "MigrationPage"):
+                    in_longform_page = True
+                if isinstance(w, tk.Listbox):
+                    if self._widget_can_scroll_vertically(w):
+                        scrollable = w
                         break
-                except AttributeError:
-                    pass
-            if isinstance(w, tk.Canvas):
-                # Skip decorative CTk canvases (labels/buttons) and only use
-                # canvases that actually have a vertical scroll range.
-                if self._widget_can_scroll_vertically(w):
-                    scrollable = w
+                if isinstance(w, tk.Text):
+                    if self._widget_can_scroll_vertically(w):
+                        scrollable = w
+                        break
+                # CTkScrollableFrame - its internal canvas is NOT in the
+                # ancestor chain of child widgets, so we must detect the
+                # frame itself and grab its _parent_canvas.
+                if isinstance(w, ctk.CTkScrollableFrame):
+                    try:
+                        parent_canvas = w._parent_canvas
+                        if self._widget_can_scroll_vertically(parent_canvas):
+                            scrollable = parent_canvas
+                            break
+                    except AttributeError:
+                        pass
+                if isinstance(w, tk.Canvas):
+                    # Skip decorative CTk canvases (labels/buttons) and only
+                    # use canvases that actually have a vertical scroll range.
+                    if self._widget_can_scroll_vertically(w):
+                        scrollable = w
+                        break
+                try:
+                    w = w.master
+                except Exception:
                     break
-            try:
-                w = w.master
-            except Exception:
-                break
 
         if scrollable is None:
             # Keep scrolling consistent even when Tk reports a non-scrollable
             # child as event source mid-wheel burst.
             scrollable = self._get_recent_wheel_scroll_target(page_id)
         if scrollable is None:
-            scrollable = self._resolve_active_page_scroll_target(page_id)
+            scrollable = self._resolve_active_page_scroll_target(
+                page_id,
+                x_root=getattr(event, "x_root", None),
+                y_root=getattr(event, "y_root", None),
+            )
         if scrollable is None:
             return
 
