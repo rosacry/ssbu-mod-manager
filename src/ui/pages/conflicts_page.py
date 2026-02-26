@@ -57,8 +57,8 @@ CONFLICT_EXPLANATIONS = {
 
 class ConflictsPage(BasePage):
     _TOP_ANCHOR_GUARD_INTERVAL_MS = 140
-    _TOP_ANCHOR_GUARD_MAX_SECONDS = 45.0
-    _TOP_ANCHOR_MIN_HOLD_SECONDS = 0.45
+    _TOP_ANCHOR_GUARD_MAX_SECONDS = 8.0
+    _TOP_ANCHOR_MIN_HOLD_SECONDS = 0.15
 
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
@@ -96,13 +96,13 @@ class ConflictsPage(BasePage):
                                       command=self._force_scan, corner_radius=8, height=34)
         self.fix_text_btn_header = ctk.CTkButton(
             self.header_btn_frame, text="Fix Text Conflicts",
-            fg_color="#2fa572", hover_color="#106a43",
+            fg_color="#b08a2a", hover_color="#8a6a1a",
             command=self._fix_text_conflicts, width=185,
             corner_radius=8, height=34,
         )
         self.restore_btn_header = ctk.CTkButton(
             self.header_btn_frame, text="Restore Originals",
-            fg_color="#b08a2a", hover_color="#8a6b1f",
+            fg_color="#7a2f3a", hover_color="#5f2530",
             command=self._restore_originals, width=165,
             corner_radius=8, height=34,
         )
@@ -137,7 +137,7 @@ class ConflictsPage(BasePage):
 
         self.auto_resolve_btn = ctk.CTkButton(
             self.auto_btn_frame, text="Fix Text Conflicts",
-            fg_color="#2fa572", hover_color="#106a43",
+            fg_color="#b08a2a", hover_color="#8a6a1a",
             command=self._fix_text_conflicts, width=210,
             corner_radius=8, height=34,
         )
@@ -455,9 +455,9 @@ class ConflictsPage(BasePage):
         except Exception:
             return True
 
-    def release_top_anchor_guard(self, reason: str = "external") -> bool:
-        """Release top-anchor guard after minimum hold window has passed."""
-        if not self._can_release_top_anchor_guard():
+    def release_top_anchor_guard(self, reason: str = "external", force: bool = False) -> bool:
+        """Release top-anchor guard after minimum hold window or immediately when forced."""
+        if not force and not self._can_release_top_anchor_guard():
             return False
         self._cancel_top_anchor_guard()
         logger.debug("Conflicts", f"Top-anchor guard released ({reason})")
@@ -732,12 +732,7 @@ class ConflictsPage(BasePage):
             return
 
         total = len(self._conflicts)
-        mergeable_total = (
-            sum(1 for c in self._conflicts if bool(getattr(c, "is_mergeable", False)))
-            if self._conflicts
-            else 0
-        )
-        mergeable = (
+        mergeable_pending = (
             sum(
                 1
                 for c in self._conflicts
@@ -746,12 +741,23 @@ class ConflictsPage(BasePage):
             if self._conflicts
             else 0
         )
-        mergeable_resolved = max(0, mergeable_total - mergeable)
-        resolved = (
+        already_merged = (
+            sum(
+                1
+                for c in self._conflicts
+                if bool(getattr(c, "resolved", False))
+                and bool(getattr(c, "is_mergeable", False))
+                and getattr(c, "resolution", None) == ResolutionStrategy.MERGE
+            )
+            if self._conflicts
+            else 0
+        )
+        already_resolved = (
             sum(1 for c in self._conflicts if bool(getattr(c, "resolved", False)))
             if self._conflicts
             else 0
         )
+        already_resolved_other = max(0, already_resolved - already_merged)
         mods = set()
         for c in self._conflicts:
             try:
@@ -772,23 +778,25 @@ class ConflictsPage(BasePage):
         if total:
             summary_parts.append(f"{total} conflicts across {len(mods)} mods")
             summary_parts.append(type_info)
-            summary_parts.append(f"{mergeable} pending auto-fix")
-            if mergeable_resolved > 0:
-                summary_parts.append(f"{mergeable_resolved} already merged")
-            summary_parts.append(f"{resolved} resolved")
+            if mergeable_pending > 0:
+                summary_parts.append(f"{mergeable_pending} can be auto-fixed")
+            if already_merged > 0:
+                summary_parts.append(f"{already_merged} already merged")
+            if already_resolved_other > 0:
+                summary_parts.append(f"{already_resolved_other} already resolved")
         if locale_count:
             summary_parts.append(f"{locale_count} locale MSBT file(s) to fix")
         summary_text = " | ".join(summary_parts) if summary_parts else "No conflicts found."
         self.summary_label.configure(
             text=summary_text,
-            text_color="#e94560" if (mergeable > 0 or locale_count > 0) else "#2fa572")
+            text_color="#e94560" if (mergeable_pending > 0 or locale_count > 0) else "#2fa572")
 
-        if mergeable > 0 or locale_count > 0:
+        if mergeable_pending > 0 or locale_count > 0:
             self.auto_resolve_btn.pack(side="left")
 
         if locale_count > 0:
             self.fix_locale_btn.pack(side="left", padx=(10, 0))
-        self._set_auto_actions_visible(bool(mergeable > 0 or locale_count > 0))
+        self._set_auto_actions_visible(bool(mergeable_pending > 0 or locale_count > 0))
 
         # Group conflicts by type and render with explanations
         by_ext = {}
@@ -847,8 +855,26 @@ class ConflictsPage(BasePage):
                              anchor="w", wraplength=800, justify="left").pack(anchor="w")
 
                 if can_merge:
+                    pending_in_group = sum(
+                        1 for c in conflicts
+                        if bool(getattr(c, "is_mergeable", False)) and not bool(getattr(c, "resolved", False))
+                    )
+                    merged_in_group = sum(
+                        1 for c in conflicts
+                        if bool(getattr(c, "is_mergeable", False))
+                        and bool(getattr(c, "resolved", False))
+                        and getattr(c, "resolution", None) == ResolutionStrategy.MERGE
+                    )
+                    if pending_in_group > 0:
+                        merge_hint = (
+                            f"{pending_in_group} conflict(s) can be automatically merged."
+                        )
+                    elif merged_in_group > 0:
+                        merge_hint = "These conflicts are already merged."
+                    else:
+                        merge_hint = "These conflicts are already resolved."
                     ctk.CTkLabel(header_inner,
-                                 text="These conflicts can be automatically merged.",
+                                 text=merge_hint,
                                  font=ctk.CTkFont(size=11), text_color="#2fa572",
                                  anchor="w").pack(anchor="w")
 

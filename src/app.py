@@ -1092,10 +1092,11 @@ class ModManagerApp(ctk.CTk):
             try:
                 if isinstance(widget, ctk.CTkScrollableFrame):
                     canvas = getattr(widget, "_parent_canvas", None)
-                    if canvas is not None:
+                    if canvas is not None and self._canvas_accepts_vertical_scroll(canvas):
                         _add_candidate(canvas, int(canvas.winfo_height()) + 6000)
                 elif isinstance(widget, tk.Canvas):
-                    _add_candidate(widget, int(widget.winfo_height()))
+                    if self._canvas_accepts_vertical_scroll(widget):
+                        _add_candidate(widget, int(widget.winfo_height()))
                 elif isinstance(widget, (tk.Text, tk.Listbox)):
                     _add_candidate(widget, int(widget.winfo_height()) + 3000)
             except Exception:
@@ -1132,7 +1133,7 @@ class ModManagerApp(ctk.CTk):
                 if conflicts_page is not None and bool(
                     getattr(conflicts_page, "_top_anchor_guard_active", False)
                 ):
-                    conflicts_page.release_top_anchor_guard("scrollbar-drag")
+                    conflicts_page.release_top_anchor_guard("scrollbar-drag", force=True)
         except Exception:
             pass
         self._suppress_scroll_refresh_until = max(
@@ -1290,8 +1291,70 @@ class ModManagerApp(ctk.CTk):
             pass
 
     @staticmethod
+    def _canvas_accepts_vertical_scroll(canvas) -> bool:
+        """Best-effort check for canvases that are real vertical scroll hosts."""
+        import tkinter as tk
+
+        try:
+            if not isinstance(canvas, tk.Canvas):
+                return False
+        except Exception:
+            return False
+        try:
+            if bool(getattr(canvas, "_ssbum_force_scroll_canvas", False)):
+                return True
+        except Exception:
+            pass
+        try:
+            ycmd = str(canvas.cget("yscrollcommand") or "").strip()
+            if ycmd:
+                return True
+        except Exception:
+            pass
+        try:
+            scrollregion = str(canvas.cget("scrollregion") or "").strip()
+            if scrollregion:
+                parts = [float(p) for p in scrollregion.split()]
+                if len(parts) == 4:
+                    total_h = max(0.0, parts[3] - parts[1])
+                    if total_h > (float(canvas.winfo_height()) + 1.0):
+                        return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
     def _widget_can_scroll_vertically(widget) -> bool:
         """Return True only for widgets that currently have vertical range."""
+        import tkinter as tk
+
+        if isinstance(widget, tk.Canvas):
+            if not ModManagerApp._canvas_accepts_vertical_scroll(widget):
+                return False
+            try:
+                # Fast-path: direct yview says range exists.
+                y0, y1 = widget.yview()
+                if (y1 - y0) < 0.999999:
+                    return True
+            except Exception:
+                pass
+            try:
+                # Fallback: derive range from scrollregion/bbox. Some canvases
+                # temporarily report full yview even with pending range updates.
+                scrollregion = widget.cget("scrollregion")
+                total_h = 0.0
+                if scrollregion:
+                    parts = [float(p) for p in str(scrollregion).split()]
+                    if len(parts) == 4:
+                        total_h = max(0.0, parts[3] - parts[1])
+                if total_h <= 1.0:
+                    bbox = widget.bbox("all")
+                    if bbox:
+                        total_h = max(0.0, float(bbox[3] - bbox[1]))
+                view_h = max(1.0, float(widget.winfo_height()))
+                return (total_h - view_h) > 1.0
+            except Exception:
+                return False
         try:
             y0, y1 = widget.yview()
             return (y1 - y0) < 0.999999
@@ -1302,9 +1365,13 @@ class ModManagerApp(ctk.CTk):
     def _scroll_canvas_pixels(canvas, delta_pixels: float) -> bool:
         """Scroll a canvas by pixel distance for consistent speed across pages."""
         try:
-            y0, y1 = canvas.yview()
-            if (y1 - y0) >= 0.999999:
+            if not ModManagerApp._canvas_accepts_vertical_scroll(canvas):
                 return False
+            y0 = 0.0
+            try:
+                y0, _y1 = canvas.yview()
+            except Exception:
+                y0 = 0.0
             scrollregion = canvas.cget("scrollregion")
             total_h = 0.0
             if scrollregion:
@@ -1316,7 +1383,9 @@ class ModManagerApp(ctk.CTk):
                 if bbox:
                     total_h = max(0.0, float(bbox[3] - bbox[1]))
             view_h = max(1.0, float(canvas.winfo_height()))
-            scroll_h = max(1.0, total_h - view_h)
+            scroll_h = total_h - view_h
+            if scroll_h <= 1.0:
+                return False
             current_px = float(y0) * scroll_h
             target_px = max(0.0, min(scroll_h, current_px + float(delta_pixels)))
             canvas.yview_moveto(target_px / scroll_h)
@@ -1594,7 +1663,7 @@ class ModManagerApp(ctk.CTk):
                 if isinstance(w, tk.Canvas):
                     # Skip decorative CTk canvases (labels/buttons) and only
                     # use canvases that actually have a vertical scroll range.
-                    if self._widget_can_scroll_vertically(w):
+                    if self._canvas_accepts_vertical_scroll(w) and self._widget_can_scroll_vertically(w):
                         scrollable = w
                         break
                 try:
@@ -1639,14 +1708,9 @@ class ModManagerApp(ctk.CTk):
                     if conflicts_page is not None and bool(
                         getattr(conflicts_page, "_top_anchor_guard_active", False)
                     ):
-                        can_release = True
-                        try:
-                            can_release = bool(conflicts_page._can_release_top_anchor_guard())
-                        except Exception:
-                            can_release = True
-                        if not can_release:
-                            return "break"
-                        conflicts_page.release_top_anchor_guard("wheel")
+                        # User wheel input must always win; never let the
+                        # stabilization guard trap scroll interaction.
+                        conflicts_page.release_top_anchor_guard("wheel", force=True)
                 except Exception:
                     pass
             longform = in_longform_page or page_id in ("online_compat", "migration")

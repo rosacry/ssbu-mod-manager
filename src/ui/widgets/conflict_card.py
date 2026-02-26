@@ -74,11 +74,11 @@ class ConflictCard(ctk.CTkFrame):
         # Status info
         if conflict.is_mergeable:
             if conflict.resolved and conflict.resolution == ResolutionStrategy.MERGE:
-                merge_text = "Auto-mergeable (already merged)"
+                merge_text = "Already merged"
             elif conflict.resolved:
-                merge_text = "Merge-capable (already resolved)"
+                merge_text = "Already resolved"
             else:
-                merge_text = "Auto-mergeable (non-overlapping entries can be combined)"
+                merge_text = "Can be merged automatically (non-overlapping entries)"
             merge_info = ctk.CTkLabel(
                 self, text=merge_text,
                 font=ctk.CTkFont(size=11),

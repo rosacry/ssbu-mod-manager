@@ -92,9 +92,11 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
 - Fast scrollbar thumb dragging now uses a paced redraw loop with periodic full repaints to prevent missing/half-rendered text while dragging rapidly.
-- Global wheel scrolling now keeps a sticky same-page fallback scroll target (plus pointer-aware active-page fallback) to prevent intermittent "scroll stops until cursor moves" behavior on dense pages.
+- Global wheel scrolling now excludes decorative canvases, uses sticky same-page fallback targets, and uses pointer-aware page fallback routing to prevent intermittent "scroll stops until cursor moves" behavior across pages.
 - Conflicts page now includes a direct header-level `Fix Text Conflicts` action (merge XMSBT + locale MSBT rename + overlay regeneration), not only Dashboard quick actions.
 - Conflicts summary now distinguishes pending auto-fix vs already merged counts to reduce ambiguity about what is still actionable.
+- Conflicts merge status text now clearly shows `Already merged`/`Already resolved` for fixed items and keeps pending items separate.
+- Conflicts stabilization guard now yields immediately to explicit user wheel/scrollbar input to prevent scroll trapping after scans.
 - Scrollbar drag handling now accepts raw Tk callback argument variants under heavy drag load, preventing `_clicked_preserve_offset` event errors.
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
