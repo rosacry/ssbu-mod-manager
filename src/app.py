@@ -37,8 +37,8 @@ class ModManagerApp(ctk.CTk):
     _ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS = 340
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _RESIZE_SETTLE_MS = 84
-    _DRAG_REDRAW_INTERVAL_MS = 16
-    _SCROLL_REFRESH_INTERVAL_MS = 16
+    _DRAG_REDRAW_INTERVAL_MS = 10
+    _SCROLL_REFRESH_INTERVAL_MS = 10
     _DRAG_FORCE_UPDATE_EVERY_TICKS = 1
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
@@ -50,12 +50,8 @@ class ModManagerApp(ctk.CTk):
     _PAGE_WARMUP_RETRY_DELAY_MS = 320
     _PAGE_WARMUP_PAGE_IDS = ()
     _STARTUP_PREWARM_PAGE_IDS = (
-        "mods",
-        "plugins",
     )
     _STARTUP_PREWARM_ON_SHOW_PAGE_IDS = (
-        "mods",
-        "plugins",
     )
 
     def __init__(self):
@@ -138,6 +134,8 @@ class ModManagerApp(ctk.CTk):
         self._window_fade_after_id = None
         self._startup_nav_after_id = None
         self._scale_layout_settle_after_id = None
+        self._zoom_overlay = None
+        self._zoom_overlay_label = None
         self._status_refresh_generation = 0
         self._status_refresh_thread_active = False
         self._status_refresh_pending = False
@@ -527,21 +525,29 @@ class ModManagerApp(ctk.CTk):
     def _apply_scale(self, scale: float, save: bool = False):
         """Apply UI scaling factor and optionally persist it."""
         scale = max(self._MIN_SCALE, min(self._MAX_SCALE, float(scale)))
-        self._current_scale = scale
-        ctk.set_widget_scaling(scale)
-        # Update minimum window size for new scale
-        screen_w, screen_h = self._get_primary_screen_size()
-        min_w = min(int(self._MIN_WIDTH * scale), screen_w - 40)
-        min_h = min(int(self._MIN_HEIGHT * scale), screen_h - 80)
-        self.minsize(min_w, min_h)
-        if save:
-            self._persist_scale(scale)
-        zoom_percent = self._scale_to_display_percent(scale)
-        logger.debug("App", f"UI scale set to {zoom_percent}%")
-        # Keep zoom feedback lightweight to avoid stutter during key repeats.
-        if hasattr(self, "main_window"):
-            if hasattr(self.main_window, "status_bar"):
-                self.main_window.status_bar.set_zoom(zoom_percent)
+        overlay_shown = self._show_zoom_overlay(self._scale_to_display_percent(scale))
+        try:
+            self._current_scale = scale
+            ctk.set_widget_scaling(scale)
+            # Update minimum window size for new scale
+            screen_w, screen_h = self._get_primary_screen_size()
+            min_w = min(int(self._MIN_WIDTH * scale), screen_w - 40)
+            min_h = min(int(self._MIN_HEIGHT * scale), screen_h - 80)
+            self.minsize(min_w, min_h)
+            if save:
+                self._persist_scale(scale)
+            zoom_percent = self._scale_to_display_percent(scale)
+            logger.debug("App", f"UI scale set to {zoom_percent}%")
+            # Keep zoom feedback lightweight to avoid stutter during key repeats.
+            if hasattr(self, "main_window"):
+                if hasattr(self.main_window, "status_bar"):
+                    self.main_window.status_bar.set_zoom(zoom_percent)
+        finally:
+            if overlay_shown:
+                try:
+                    self.after(28, self._hide_zoom_overlay)
+                except Exception:
+                    self._hide_zoom_overlay()
 
     def _zoom_in(self):
         """Increase visual zoom by 10% (relative to the 100%=old120 baseline)."""
@@ -572,11 +578,10 @@ class ModManagerApp(ctk.CTk):
         if abs(scale - effective) < 1e-6:
             return
         self._note_user_activity()
+        now = time.monotonic()
+        previous_input = self._last_zoom_input_monotonic
         self._pending_scale_apply = scale
-        try:
-            self._last_zoom_input_monotonic = time.monotonic()
-        except Exception:
-            self._last_zoom_input_monotonic = 0.0
+        self._last_zoom_input_monotonic = now
         if self._zoom_apply_after_id:
             try:
                 self.after_cancel(self._zoom_apply_after_id)
@@ -584,11 +589,51 @@ class ModManagerApp(ctk.CTk):
                 pass
             self._zoom_apply_after_id = None
         # Coalesce rapid key repeats into one expensive scaling pass.
-        self._zoom_apply_after_id = self.after(self._ZOOM_APPLY_DEBOUNCE_MS, self._flush_pending_scale)
+        delay_ms = int(self._ZOOM_APPLY_DEBOUNCE_MS)
+        try:
+            if previous_input <= 0.0 or (now - previous_input) >= 0.35:
+                delay_ms = 60
+        except Exception:
+            delay_ms = int(self._ZOOM_APPLY_DEBOUNCE_MS)
+        self._zoom_apply_after_id = self.after(delay_ms, self._flush_pending_scale)
         try:
             if hasattr(self, "main_window") and hasattr(self.main_window, "status_bar"):
                 target_pct = self._scale_to_display_percent(scale)
                 self.main_window.status_bar.set_zoom(target_pct)
+        except Exception:
+            pass
+
+    def _show_zoom_overlay(self, target_percent: int) -> bool:
+        """Cover content during scale churn to prevent transient misrender artifacts."""
+        if self._shutting_down or not hasattr(self, "main_window"):
+            return False
+        try:
+            if self._zoom_overlay is None or not bool(self._zoom_overlay.winfo_exists()):
+                self._zoom_overlay = ctk.CTkFrame(
+                    self.main_window.content,
+                    fg_color="#12121e",
+                    corner_radius=0,
+                )
+                self._zoom_overlay_label = ctk.CTkLabel(
+                    self._zoom_overlay,
+                    text="",
+                    font=ctk.CTkFont(size=13),
+                    text_color="#7a7a9a",
+                )
+                self._zoom_overlay_label.place(relx=0.5, rely=0.5, anchor="center")
+            if self._zoom_overlay_label is not None and bool(self._zoom_overlay_label.winfo_exists()):
+                self._zoom_overlay_label.configure(text=f"Applying zoom {int(target_percent)}%...")
+            self._zoom_overlay.place(in_=self.main_window.content, x=0, y=0, relwidth=1, relheight=1)
+            self._zoom_overlay.lift()
+            self._zoom_overlay.update_idletasks()
+            return True
+        except Exception:
+            return False
+
+    def _hide_zoom_overlay(self):
+        try:
+            if self._zoom_overlay is not None and bool(self._zoom_overlay.winfo_exists()):
+                self._zoom_overlay.place_forget()
         except Exception:
             pass
 
@@ -856,12 +901,13 @@ class ModManagerApp(ctk.CTk):
         self._active_drag_scroll_widget = target
         self._schedule_scroll_refresh(target)
         try:
-            now = time.monotonic()
-            if now - float(getattr(self, "_last_drag_widget_refresh_monotonic", 0.0)) >= 0.012:
-                target.update()
-                if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
-                    self.main_window.content.update_idletasks()
-                self._last_drag_widget_refresh_monotonic = now
+            # During rapid thumb drags, force immediate paint each motion event.
+            target.update()
+            if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
+                self.main_window.content.update()
+            else:
+                self.update_idletasks()
+            self._last_drag_widget_refresh_monotonic = time.monotonic()
         except Exception:
             pass
 
@@ -1083,11 +1129,8 @@ class ModManagerApp(ctk.CTk):
                         target_widget = getattr(scrollbar._command, "__self__", None)
                         if target_widget is not None:
                             app._active_drag_scroll_widget = target_widget
-                            now = time.monotonic()
-                            if now - float(getattr(app, "_last_drag_widget_refresh_monotonic", 0.0)) >= 0.014:
-                                target_widget.update_idletasks()
-                                app._last_drag_widget_refresh_monotonic = now
                             app._schedule_scroll_refresh(target_widget)
+                            app._on_scrollbar_drag_motion(scrollbar)
                     except Exception:
                         pass
             except Exception:

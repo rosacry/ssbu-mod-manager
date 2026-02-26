@@ -63,7 +63,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 
 - Default visual density is tuned so current **100% zoom** matches the old 120% look.
 - `Ctrl +`, `Ctrl -`, and `Ctrl 0` adjust UI zoom.
-- Zoom shortcut repeats now apply after a short input-settle window, reducing repeated `Ctrl +/-` stutter.
+- Zoom shortcut repeats now coalesce aggressively, with quick first-tap response and reduced repeated `Ctrl +/-` reflow churn.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
 - Page navigation now switches directly (no transition overlay) to avoid rare blank-content overlay races during fast tab switching.
@@ -74,7 +74,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Page switches pre-render target content before reveal to reduce mid-transition pop-in.
 - Rename dialogs use a fully prepared modal show path to avoid first-frame flash.
 - Windows titlebar/taskbar icon now comes from a shared multi-resolution icon asset.
-- Key pages (Mods, Plugins, Conflicts, Settings, Developer, CSS) are prewarmed while the window is still hidden so first tab switches appear fully rendered.
+- Startup now keeps non-active pages lazy (no hidden prewarm pass) to reduce launch and zoom reflow pressure.
 - Main window now opens and closes without fade animations.
 - Conflicts scan rendering now includes a resilient fallback so results never appear blank after a successful scan.
 - Conflicts initial prompt and scan results now use isolated hosts with explicit show/hide transitions to prevent blank-result overlay races.
@@ -89,7 +89,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts rendering now logs compact child-geometry snapshots in developer mode to diagnose rare invisible-gap states.
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
-- Fast scrollbar thumb dragging now runs direct motion-cadenced redraws on the active scroll target to reduce text smearing/tearing.
+- Fast scrollbar thumb dragging now forces immediate motion-time redraws on the active scroll target to reduce text smearing/tearing.
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
