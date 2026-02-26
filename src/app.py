@@ -2,6 +2,7 @@
 import customtkinter as ctk
 import importlib
 import re
+import threading
 import time
 from pathlib import Path
 from tkinter import PhotoImage, messagebox
@@ -41,10 +42,10 @@ class ModManagerApp(ctk.CTk):
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
     _ENABLE_WINDOW_FADE = False
-    _PAGE_WARMUP_INITIAL_DELAY_MS = 900
-    _PAGE_WARMUP_STEP_DELAY_MS = 220
-    _PAGE_WARMUP_IDLE_REQUIRED_MS = 900
-    _PAGE_WARMUP_RETRY_DELAY_MS = 260
+    _PAGE_WARMUP_INITIAL_DELAY_MS = 2600
+    _PAGE_WARMUP_STEP_DELAY_MS = 260
+    _PAGE_WARMUP_IDLE_REQUIRED_MS = 1600
+    _PAGE_WARMUP_RETRY_DELAY_MS = 320
     _PAGE_WARMUP_PAGE_IDS = (
         "mods",
         "plugins",
@@ -52,6 +53,18 @@ class ModManagerApp(ctk.CTk):
         "settings",
         "developer",
         "css",
+    )
+    _STARTUP_PREWARM_PAGE_IDS = (
+        "mods",
+        "plugins",
+        "conflicts",
+        "settings",
+        "developer",
+        "css",
+    )
+    _STARTUP_PREWARM_ON_SHOW_PAGE_IDS = (
+        "mods",
+        "plugins",
     )
 
     def __init__(self):
@@ -132,6 +145,9 @@ class ModManagerApp(ctk.CTk):
         self._window_fade_after_id = None
         self._startup_nav_after_id = None
         self._scale_layout_settle_after_id = None
+        self._status_refresh_generation = 0
+        self._status_refresh_thread_active = False
+        self._status_refresh_pending = False
 
         # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
@@ -201,7 +217,6 @@ class ModManagerApp(ctk.CTk):
             logger.warn("App", f"Failed to set window icon: {e}")
 
         # Load param labels in background to avoid blocking startup
-        import threading
         def _load_labels_bg():
             if not load_param_labels():
                 logger.warn("App", "ParamLabels.csv not found. Hash resolution will be limited.")
@@ -360,6 +375,12 @@ class ModManagerApp(ctk.CTk):
             self._complete_startup_navigation(pre_map=True)
         except Exception:
             pass
+        # Prewarm common pages while still hidden so first tab switches do not
+        # reveal half-built layouts.
+        try:
+            self._run_hidden_startup_prewarm()
+        except Exception as e:
+            logger.warn("App", f"Startup prewarm failed: {e}")
         self.update_idletasks()
 
         # Center before first show.
@@ -415,6 +436,10 @@ class ModManagerApp(ctk.CTk):
             pass
 
         logger.info("App", "Application startup complete")
+        try:
+            self.after(self._PAGE_WARMUP_INITIAL_DELAY_MS, self._start_background_page_warmup)
+        except Exception:
+            pass
         _dbg("startup complete")
         _dbg("__init__ complete")
 
@@ -465,11 +490,26 @@ class ModManagerApp(ctk.CTk):
             self.update_idletasks()
         except Exception:
             pass
-        # Warm selected light pages only after the first page is shown.
-        try:
-            self.after(self._PAGE_WARMUP_INITIAL_DELAY_MS, self._start_background_page_warmup)
-        except Exception:
-            pass
+
+    def _run_hidden_startup_prewarm(self):
+        """Create and prime key pages while the window is still hidden."""
+        if self._shutting_down or not hasattr(self, "main_window"):
+            return
+        warmed = []
+        for page_id in self._STARTUP_PREWARM_PAGE_IDS:
+            if self._shutting_down:
+                break
+            if page_id not in self._page_classes:
+                continue
+            try:
+                self._create_page(page_id)
+                run_on_show = page_id in self._STARTUP_PREWARM_ON_SHOW_PAGE_IDS
+                self.main_window.prime_page_layout(page_id, run_on_show=run_on_show)
+                warmed.append(page_id)
+            except Exception as e:
+                logger.warn("App", f"Startup prewarm step failed for {page_id}: {e}")
+        if warmed:
+            logger.info("App", f"Startup prewarmed pages: {', '.join(warmed)}")
 
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
@@ -1890,26 +1930,63 @@ class ModManagerApp(ctk.CTk):
         logger.info("App", "Managers updated with new paths")
 
     def _update_status(self):
-        """Update the status bar with current stats."""
+        """Update status text immediately and stats asynchronously."""
         settings = self.config_manager.settings
         try:
-            mods = 0
-            plugins = 0
-            if settings.mods_path and settings.mods_path.exists():
-                mod_list = self.mod_manager.list_mods()
-                mods = sum(1 for m in mod_list if m.status == ModStatus.ENABLED)
-            if settings.plugins_path and settings.plugins_path.exists():
-                plugin_list = self.plugin_manager.list_plugins()
-                plugins = sum(1 for p in plugin_list if p.status == PluginStatus.ENABLED)
-
             emu_name = settings.emulator or "Emulator"
             if settings.eden_sdmc_path:
                 self.main_window.update_status(f"{emu_name}: {settings.eden_sdmc_path}")
             else:
                 self.main_window.update_status("Emulator not configured")
-
-            self.main_window.update_stats(mods=mods, plugins=plugins)
         except Exception as e:
-            logger.warn("App", f"Status bar update failed: {e}")
-            self.main_window.update_status("Ready")
+            logger.warn("App", f"Status text update failed: {e}")
+
+        self._status_refresh_generation += 1
+        generation = self._status_refresh_generation
+        if self._status_refresh_thread_active:
+            self._status_refresh_pending = True
+            return
+
+        self._status_refresh_thread_active = True
+        self._status_refresh_pending = False
+
+        def collect():
+            mods = 0
+            plugins = 0
+            try:
+                local_settings = self.config_manager.settings
+                if local_settings.mods_path and local_settings.mods_path.exists():
+                    mod_list = self.mod_manager.list_mods()
+                    mods = sum(1 for m in mod_list if m.status == ModStatus.ENABLED)
+                if local_settings.plugins_path and local_settings.plugins_path.exists():
+                    plugin_list = self.plugin_manager.list_plugins()
+                    plugins = sum(1 for p in plugin_list if p.status == PluginStatus.ENABLED)
+            except Exception as e:
+                logger.warn("App", f"Status stats collection failed: {e}")
+
+            def apply():
+                self._status_refresh_thread_active = False
+                if self._shutting_down:
+                    return
+                if generation == self._status_refresh_generation:
+                    try:
+                        self.main_window.update_stats(mods=mods, plugins=plugins)
+                    except Exception as e:
+                        logger.warn("App", f"Status stats apply failed: {e}")
+                if self._status_refresh_pending:
+                    self._status_refresh_pending = False
+                    try:
+                        self.after(20, self._update_status)
+                    except Exception:
+                        pass
+
+            try:
+                if not self._shutting_down:
+                    self.after(0, apply)
+                else:
+                    self._status_refresh_thread_active = False
+            except Exception:
+                self._status_refresh_thread_active = False
+
+        threading.Thread(target=collect, daemon=True).start()
 

@@ -12,6 +12,7 @@ class MainWindow(ctk.CTkFrame):
         self.pages = {}
         self.current_page = None
         self._shown_pages = set()
+        self._primed_pages = set()
         self._render_settle_after_id = None
         self._render_settle_page_id = None
         self._nav_token = 0
@@ -119,6 +120,25 @@ class MainWindow(ctk.CTkFrame):
 
         self.status_bar = StatusBar(right)
         self.status_bar.pack(fill="x", side="bottom")
+
+    def _settle_page_layout(self, page, passes: int = 1):
+        """Force a small layout settle pass before/after page reveal."""
+        loops = max(0, int(passes))
+        if loops == 0:
+            return
+        for _ in range(loops):
+            try:
+                page.update_idletasks()
+            except Exception:
+                pass
+            try:
+                self.content.update_idletasks()
+            except Exception:
+                pass
+            try:
+                self.update_idletasks()
+            except Exception:
+                pass
 
     def _safe_after(self, ms, callback):
         """Schedule a callback, catching TclError if widget is destroyed."""
@@ -259,8 +279,8 @@ class MainWindow(ctk.CTkFrame):
             except Exception:
                 pass
 
-    def prime_page_layout(self, page_id: str):
-        """Prime widget layout for a hidden page without running page data loads."""
+    def prime_page_layout(self, page_id: str, run_on_show: bool = False):
+        """Prime widget layout for a hidden page, optionally running on_show()."""
         page = self.pages.get(page_id)
         if page is None:
             return
@@ -270,8 +290,12 @@ class MainWindow(ctk.CTkFrame):
         self._map_page(page)
         page.lower()
         try:
-            page.update_idletasks()
-            self.content.update_idletasks()
+            if run_on_show:
+                try:
+                    page.on_show()
+                except Exception:
+                    pass
+            self._settle_page_layout(page, passes=2 if run_on_show else 1)
         except Exception:
             pass
         if page_id == self.current_page:
@@ -280,6 +304,7 @@ class MainWindow(ctk.CTkFrame):
             page.place_forget()
         except Exception:
             pass
+        self._primed_pages.add(page_id)
 
     def navigate(self, page_id: str):
         """Navigate to a page."""
@@ -312,7 +337,7 @@ class MainWindow(ctk.CTkFrame):
             return
         prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
-        first_visit = page_id not in self._shown_pages
+        first_visit = page_id not in self._shown_pages and page_id not in self._primed_pages
         self._map_page(page)
         try:
             page.lower()
@@ -320,13 +345,9 @@ class MainWindow(ctk.CTkFrame):
             pass
         try:
             page.on_show()
-            page.update_idletasks()
-            self.content.update_idletasks()
-            if first_visit:
-                page.update_idletasks()
-                self.content.update_idletasks()
         except Exception:
             pass
+        self._settle_page_layout(page, passes=2 if first_visit else 0)
 
         if prev_page is not None:
             try:
@@ -340,11 +361,7 @@ class MainWindow(ctk.CTkFrame):
             page.lift()
         except Exception:
             pass
-        try:
-            page.update_idletasks()
-            self.content.update_idletasks()
-        except Exception:
-            pass
+        self._settle_page_layout(page, passes=2 if first_visit else 0)
         if prev_page is not None and prev_page is not page:
             try:
                 prev_page.place_forget()

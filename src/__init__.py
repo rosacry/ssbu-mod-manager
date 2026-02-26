@@ -1,3 +1,3 @@
 """SSBU Mod Manager package."""
 
-__version__ = "3.1.39"
+__version__ = "3.1.40"

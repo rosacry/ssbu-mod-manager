@@ -74,7 +74,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Page switches pre-render target content before reveal to reduce mid-transition pop-in.
 - Rename dialogs use a fully prepared modal show path to avoid first-frame flash.
 - Windows titlebar/taskbar icon now comes from a shared multi-resolution icon asset.
-- Lazy pages are background-warmed after startup to reduce first-open tab hitching.
+- Key pages (Mods, Plugins, Conflicts, Settings, Developer, CSS) are prewarmed while the window is still hidden so first tab switches appear fully rendered.
 - Main window now opens and closes without fade animations.
 - Conflicts scan rendering now includes a resilient fallback so results never appear blank after a successful scan.
 - Conflicts initial prompt and scan results now use isolated hosts with explicit show/hide transitions to prevent blank-result overlay races.
@@ -92,6 +92,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
+- App status-bar mod/plugin counts now refresh off the UI thread to reduce startup hitching and early frame drops.
 - Primary page headers now match sidebar navigation labels exactly (no redundant "Manager/Management" suffixes).
 
 ## Repository Layout
