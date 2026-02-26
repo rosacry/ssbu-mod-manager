@@ -33,9 +33,10 @@ class ModManagerApp(ctk.CTk):
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
-    _ZOOM_APPLY_DEBOUNCE_MS = 220
+    _ZOOM_APPLY_DEBOUNCE_MS = 120
     _ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS = 340
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
+    _ENABLE_ZOOM_OVERLAY = False
     _RESIZE_SETTLE_MS = 84
     _DRAG_REDRAW_INTERVAL_MS = 10
     _SCROLL_REFRESH_INTERVAL_MS = 10
@@ -525,7 +526,9 @@ class ModManagerApp(ctk.CTk):
     def _apply_scale(self, scale: float, save: bool = False):
         """Apply UI scaling factor and optionally persist it."""
         scale = max(self._MIN_SCALE, min(self._MAX_SCALE, float(scale)))
-        overlay_shown = self._show_zoom_overlay(self._scale_to_display_percent(scale))
+        overlay_shown = False
+        if self._ENABLE_ZOOM_OVERLAY:
+            overlay_shown = self._show_zoom_overlay(self._scale_to_display_percent(scale))
         try:
             self._current_scale = scale
             ctk.set_widget_scaling(scale)
@@ -592,7 +595,7 @@ class ModManagerApp(ctk.CTk):
         delay_ms = int(self._ZOOM_APPLY_DEBOUNCE_MS)
         try:
             if previous_input <= 0.0 or (now - previous_input) >= 0.35:
-                delay_ms = 60
+                delay_ms = 18
         except Exception:
             delay_ms = int(self._ZOOM_APPLY_DEBOUNCE_MS)
         self._zoom_apply_after_id = self.after(delay_ms, self._flush_pending_scale)
@@ -645,9 +648,31 @@ class ModManagerApp(ctk.CTk):
         pending = self._pending_scale_apply
         self._pending_scale_apply = None
         self._apply_scale(pending, save=False)
+        self._refresh_visible_page_after_scale()
         self._last_scale_apply_monotonic = time.monotonic()
         self._schedule_scale_layout_settle()
         self._schedule_scale_persist(pending)
+
+    def _refresh_visible_page_after_scale(self):
+        """Force a lightweight refresh of the current page after a zoom apply."""
+        if self._shutting_down or not hasattr(self, "main_window"):
+            return
+        try:
+            page_id = getattr(self.main_window, "current_page", None)
+            if not page_id:
+                return
+            page = self.main_window.pages.get(page_id)
+            if page is None or not bool(page.winfo_exists()):
+                return
+            page.lift()
+            page.update_idletasks()
+            self.main_window.content.update_idletasks()
+            try:
+                page.after_idle(page.update_idletasks)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _schedule_scale_layout_settle(self):
         """Debounce expensive scale reflow until zoom input settles."""

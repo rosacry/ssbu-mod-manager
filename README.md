@@ -64,6 +64,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Default visual density is tuned so current **100% zoom** matches the old 120% look.
 - `Ctrl +`, `Ctrl -`, and `Ctrl 0` adjust UI zoom.
 - Zoom shortcut repeats now coalesce aggressively, with quick first-tap response and reduced repeated `Ctrl +/-` reflow churn.
+- Zoom now updates in-place (no full-page "Applying zoom..." cover), so the active page remains visible while scaling.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
 - Page navigation now switches directly (no transition overlay) to avoid rare blank-content overlay races during fast tab switching.
