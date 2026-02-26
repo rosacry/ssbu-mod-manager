@@ -115,7 +115,13 @@ class BasePage(ctk.CTkFrame):
         elif isinstance(widget, tk.Text):
             _patch_text_scroll_speed(widget)
         elif isinstance(widget, tk.Canvas):
-            _patch_canvas_scroll_speed(widget)
+            try:
+                if bool(getattr(widget, "_ssbum_skip_base_scroll_patch", False)):
+                    pass
+                else:
+                    _patch_canvas_scroll_speed(widget)
+            except Exception:
+                _patch_canvas_scroll_speed(widget)
 
         # PanedWindow.winfo_children() may not include panes added
         # via .add(); explicitly iterate panes as well.

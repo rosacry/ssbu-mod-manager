@@ -4,6 +4,7 @@ import traceback
 import time
 from pathlib import Path
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import messagebox
 from src.ui.base_page import BasePage
 from src.ui.widgets.conflict_card import ConflictCard
@@ -76,6 +77,10 @@ class ConflictsPage(BasePage):
         self._top_anchor_guard_active = False
         self._top_anchor_guard_armed_at = 0.0
         self.conflict_list = None
+        self._conflict_list_host = None
+        self._conflict_canvas = None
+        self._conflict_scrollbar = None
+        self._conflict_window_id = None
         self._build_ui()
 
     def _build_ui(self):
@@ -151,40 +156,75 @@ class ConflictsPage(BasePage):
         self.bind("<Configure>", self._on_page_configure, add="+")
 
     def _create_conflict_list(self):
-        """Create the scrollable conflict results host."""
-        self.conflict_list = ctk.CTkScrollableFrame(self._results_stack, fg_color="transparent")
-        # Mark parent container so stale leaked hosts can be force-pruned.
+        """Create a deterministic scroll host for conflict results."""
+        if self._conflict_list_host is not None:
+            try:
+                if bool(self._conflict_list_host.winfo_exists()):
+                    return
+            except Exception:
+                pass
+
+        # Host wrapper (pack/lift target)
+        self._conflict_list_host = ctk.CTkFrame(self._results_stack, fg_color="transparent")
         try:
-            setattr(self.conflict_list._parent_frame, "_ssbum_conflicts_scroll_host", True)
+            setattr(self._conflict_list_host, "_ssbum_conflicts_scroll_host", True)
         except Exception:
             pass
-        self.conflict_list.pack(fill="both", expand=True)
+        self._conflict_list_host.pack(fill="both", expand=True)
+
+        # Canvas + scrollbar
+        self._conflict_canvas = tk.Canvas(
+            self._conflict_list_host,
+            highlightthickness=0,
+            borderwidth=0,
+            bg="#12121e",
+        )
+        # Exclude this canvas from BasePage's direct tk.Canvas wheel patch;
+        # global scroll handling in App must remain the source of truth.
+        try:
+            setattr(self._conflict_canvas, "_ssbum_skip_base_scroll_patch", True)
+        except Exception:
+            pass
+        self._conflict_scrollbar = ctk.CTkScrollbar(
+            self._conflict_list_host,
+            orientation="vertical",
+            command=self._conflict_canvas.yview,
+        )
+        self._conflict_canvas.configure(yscrollcommand=self._conflict_scrollbar.set)
+
+        self._conflict_list_host.grid_columnconfigure(0, weight=1)
+        self._conflict_list_host.grid_rowconfigure(0, weight=1)
+        self._conflict_canvas.grid(row=0, column=0, sticky="nsew")
+        self._conflict_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # Inner content frame that receives all conflict widgets
+        self.conflict_list = ctk.CTkFrame(self._conflict_canvas, fg_color="transparent")
+        self._conflict_window_id = self._conflict_canvas.create_window(
+            0, 0, window=self.conflict_list, anchor="nw"
+        )
+
+        # Keep scrollregion and content width in sync.
+        self.conflict_list.bind(
+            "<Configure>",
+            lambda _e: self._conflict_canvas.configure(scrollregion=self._conflict_canvas.bbox("all")),
+            add="+",
+        )
+        self._conflict_canvas.bind(
+            "<Configure>",
+            lambda _e: self._conflict_canvas.itemconfigure(
+                self._conflict_window_id, width=self._conflict_canvas.winfo_width()
+            ),
+            add="+",
+        )
         self.conflict_list.bind("<Configure>", self._on_page_configure, add="+")
 
-    def _destroy_conflict_list_host(self, host):
-        """Destroy a CTkScrollableFrame and its outer parent container."""
-        if host is None:
-            return
-        parent_frame = None
-        try:
-            parent_frame = getattr(host, "_parent_frame", None)
-        except Exception:
-            parent_frame = None
-        try:
-            if bool(host.winfo_exists()):
-                host.destroy()
-        except Exception:
-            pass
-        # CustomTkinter's CTkScrollableFrame.destroy() does NOT destroy
-        # _parent_frame; explicitly tear it down to avoid stale stacked hosts.
-        try:
-            if parent_frame is not None and bool(parent_frame.winfo_exists()):
-                parent_frame.destroy()
-        except Exception:
-            pass
+        # Preserve legacy attribute access used by existing helpers.
+        self.conflict_list._parent_canvas = self._conflict_canvas
+        self.conflict_list._scrollbar = self._conflict_scrollbar
+        self.conflict_list._create_window_id = self._conflict_window_id
 
-    def _prune_stale_conflict_scroll_hosts(self):
-        """Remove leaked/stacked scroll host containers from results stack."""
+    def _prune_stale_conflict_list_hosts(self):
+        """Ensure only the active conflict list host remains mounted."""
         try:
             children = list(self._results_stack.winfo_children())
         except Exception:
@@ -194,13 +234,10 @@ class ConflictsPage(BasePage):
             try:
                 if widget is self._initial_prompt_host:
                     continue
-                marked = bool(getattr(widget, "_ssbum_conflicts_scroll_host", False))
-                if not marked:
+                if not bool(getattr(widget, "_ssbum_conflicts_scroll_host", False)):
                     continue
-                if self.conflict_list is not None:
-                    current_parent = getattr(self.conflict_list, "_parent_frame", None)
-                    if widget is current_parent:
-                        continue
+                if self._conflict_list_host is not None and widget is self._conflict_list_host:
+                    continue
                 if bool(widget.winfo_exists()):
                     widget.destroy()
                     removed += 1
@@ -210,14 +247,12 @@ class ConflictsPage(BasePage):
             logger.warn("Conflicts", f"Removed stale scroll hosts: {removed}")
 
     def _recreate_conflict_list(self):
-        """Hard-reset the scroll host to avoid stale canvas/scrollregion state."""
-        self._destroy_conflict_list_host(self.conflict_list)
-        self.conflict_list = None
-        self._prune_stale_conflict_scroll_hosts()
+        """Reset list viewport and prune stale hosts without re-layering widgets."""
         self._create_conflict_list()
+        self._prune_stale_conflict_list_hosts()
         self._show_conflict_list()
         self._reset_conflict_canvas_view()
-        logger.debug("Conflicts", "Recreated scroll host")
+        logger.debug("Conflicts", "Reset scroll host")
 
     def on_show(self):
         if self._scanning:
@@ -320,9 +355,11 @@ class ConflictsPage(BasePage):
         try:
             if self.conflict_list is None or not bool(self.conflict_list.winfo_exists()):
                 self._create_conflict_list()
-            if not self.conflict_list.winfo_manager():
-                self.conflict_list.pack(fill="both", expand=True)
-            self.conflict_list.lift()
+            self._prune_stale_conflict_list_hosts()
+            if self._conflict_list_host is not None:
+                if not self._conflict_list_host.winfo_manager():
+                    self._conflict_list_host.pack(fill="both", expand=True)
+                self._conflict_list_host.lift()
             if self._initial_prompt_host.winfo_manager():
                 self._initial_prompt_host.lower()
         except Exception:
@@ -982,16 +1019,23 @@ class ConflictsPage(BasePage):
                 # Force canvas window origin/scrollregion to stay canonical.
                 # This prevents occasional top-gap drift where yview=0.0 but
                 # the embedded frame is visually offset downward.
+                canvas_w = max(1, int(canvas.winfo_width()))
                 try:
                     window_id = getattr(self.conflict_list, "_create_window_id", None)
                     if window_id is not None:
                         canvas.coords(window_id, 0, 0)
+                        canvas.itemconfigure(window_id, width=canvas_w)
                 except Exception:
                     pass
                 try:
                     bbox = canvas.bbox("all")
-                    if bbox:
-                        canvas.configure(scrollregion=bbox)
+                    if bbox and len(bbox) == 4:
+                        x0, y0, x1, y1 = [float(v) for v in bbox]
+                        x1 = max(float(canvas_w), x1)
+                        y1 = max(1.0, y1)
+                        canvas.configure(scrollregion=(x0, y0, x1, y1))
+                    else:
+                        canvas.configure(scrollregion=(0, 0, canvas_w, 1))
                 except Exception:
                     pass
                 try:
