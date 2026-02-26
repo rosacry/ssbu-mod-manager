@@ -901,10 +901,19 @@ class ModManagerApp(ctk.CTk):
         self._active_drag_scroll_widget = target
         self._schedule_scroll_refresh(target)
         try:
-            # During rapid thumb drags, force immediate paint each motion event.
-            target.update()
+            # During rapid thumb drags, push targeted paint without re-entrant
+            # full event-loop updates (which can destabilize callbacks).
+            target.update_idletasks()
+            try:
+                target.after_idle(target.update_idletasks)
+            except Exception:
+                pass
             if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
-                self.main_window.content.update()
+                self.main_window.content.update_idletasks()
+                try:
+                    self.main_window.content.after_idle(self.main_window.content.update_idletasks)
+                except Exception:
+                    pass
             else:
                 self.update_idletasks()
             self._last_drag_widget_refresh_monotonic = time.monotonic()
@@ -1055,7 +1064,29 @@ class ModManagerApp(ctk.CTk):
         original_clicked = _ctk_scrollbar.CTkScrollbar._clicked
         original_create_bindings = _ctk_scrollbar.CTkScrollbar._create_bindings
 
-        def _clicked_preserve_offset(scrollbar, event):
+        def _clicked_preserve_offset(scrollbar, *event_args):
+            event = event_args[0] if event_args else None
+            # Tk can occasionally pass raw substitution args instead of an
+            # Event object under heavy drag event pressure. Normalize safely.
+            if event is None or not hasattr(event, "x") or not hasattr(event, "y"):
+                class _Evt:
+                    pass
+                ev = _Evt()
+                try:
+                    raw = list(event_args)
+                    ev.x = int(raw[8]) if len(raw) > 8 else 0
+                    ev.y = int(raw[9]) if len(raw) > 9 else 0
+                    ev.type = raw[15] if len(raw) > 15 else None
+                except Exception:
+                    try:
+                        ev.x = max(0, int(scrollbar.winfo_pointerx() - scrollbar.winfo_rootx()))
+                        ev.y = max(0, int(scrollbar.winfo_pointery() - scrollbar.winfo_rooty()))
+                        ev.type = None
+                    except Exception:
+                        ev.x = 0
+                        ev.y = 0
+                        ev.type = None
+                event = ev
             try:
                 if scrollbar._orientation == "vertical":
                     denom = max(1e-6, (scrollbar._current_height - 2 * scrollbar._border_spacing))
@@ -1130,12 +1161,18 @@ class ModManagerApp(ctk.CTk):
                         if target_widget is not None:
                             app._active_drag_scroll_widget = target_widget
                             app._schedule_scroll_refresh(target_widget)
-                            app._on_scrollbar_drag_motion(scrollbar)
+                            try:
+                                app.after_idle(lambda sb=scrollbar: app._on_scrollbar_drag_motion(sb))
+                            except Exception:
+                                pass
                     except Exception:
                         pass
             except Exception:
                 # Fall back to stock behavior if anything unexpected happens.
-                return original_clicked(scrollbar, event)
+                try:
+                    return original_clicked(scrollbar, event)
+                except Exception:
+                    return None
 
         def _create_bindings_preserve_offset(scrollbar, sequence=None):
             original_create_bindings(scrollbar, sequence=sequence)
