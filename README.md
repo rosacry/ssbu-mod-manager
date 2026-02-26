@@ -83,6 +83,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Windows startup now disables CustomTkinter header withdraw/deiconify manipulation for the root window to prevent top-left first-frame flash/recenter.
 - Conflicts results viewport now runs a short multi-pass settle to prevent intermittent mid-list gaps after scan completion.
 - Conflicts scan/render now uses a single deterministic scroll host with stale-host pruning to prevent duplicate scrollbars, blank scan overlays, and intermittent large top gaps.
+- Conflicts action buttons row is now only shown when actions exist, preventing the large blank gap before results when all detected conflicts are already resolved/non-mergeable.
 - Conflicts post-scan top-anchor guard is now a short fixed stabilization window to block delayed wheel drift without relying on intent heuristics.
 - Conflicts post-scan top-anchor guard now holds until first explicit scroll/scrollbar interaction (after a short minimum hold) to prevent delayed drift without trapping intentional scrolling.
 - Conflicts rendering now logs compact child-geometry snapshots in developer mode to diagnose rare invisible-gap states.

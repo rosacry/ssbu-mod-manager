@@ -128,7 +128,6 @@ class ConflictsPage(BasePage):
         self.summary_label.pack(fill="x", padx=30, pady=(0, 5))
 
         self.auto_btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.auto_btn_frame.pack(fill="x", padx=30, pady=(0, 8))
 
         self.auto_resolve_btn = ctk.CTkButton(
             self.auto_btn_frame, text="Auto-Resolve All Mergeable",
@@ -333,11 +332,21 @@ class ConflictsPage(BasePage):
             if visible:
                 if not self.summary_label.winfo_manager():
                     self.summary_label.pack(fill="x", padx=30, pady=(0, 5), before=self._results_stack)
-                if not self.auto_btn_frame.winfo_manager():
-                    self.auto_btn_frame.pack(fill="x", padx=30, pady=(0, 8), before=self._results_stack)
+                has_actions = bool(self.auto_resolve_btn.winfo_manager() or self.fix_locale_btn.winfo_manager())
+                self._set_auto_actions_visible(has_actions)
             else:
                 if self.summary_label.winfo_manager():
                     self.summary_label.pack_forget()
+                self._set_auto_actions_visible(False)
+        except Exception:
+            pass
+
+    def _set_auto_actions_visible(self, visible: bool):
+        try:
+            if visible:
+                if not self.auto_btn_frame.winfo_manager():
+                    self.auto_btn_frame.pack(fill="x", padx=30, pady=(0, 8), before=self._results_stack)
+            else:
                 if self.auto_btn_frame.winfo_manager():
                     self.auto_btn_frame.pack_forget()
         except Exception:
@@ -565,6 +574,7 @@ class ConflictsPage(BasePage):
         current_gen = getattr(self, "_scan_generation", 0)
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
+        self._set_auto_actions_visible(False)
         self._recreate_conflict_list()
         self._show_conflict_list()
         self._arm_top_anchor_guard("scan-start")
@@ -621,6 +631,7 @@ class ConflictsPage(BasePage):
         self._needs_render = False
         self._set_rescan_visible(True)
         self._hide_initial_prompt()
+        self._set_auto_actions_visible(False)
         self._recreate_conflict_list()
         self._show_conflict_list()
         self.summary_label.configure(
@@ -691,6 +702,7 @@ class ConflictsPage(BasePage):
             w.destroy()
         self.auto_resolve_btn.pack_forget()
         self.fix_locale_btn.pack_forget()
+        self._set_auto_actions_visible(False)
 
         if not self._conflicts and not self._locale_msbts:
             self.summary_label.configure(
@@ -759,6 +771,7 @@ class ConflictsPage(BasePage):
 
         if locale_count > 0:
             self.fix_locale_btn.pack(side="left", padx=(10, 0))
+        self._set_auto_actions_visible(bool(mergeable > 0 or locale_count > 0))
 
         # Group conflicts by type and render with explanations
         by_ext = {}
