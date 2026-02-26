@@ -91,7 +91,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts rendering now logs compact child-geometry snapshots in developer mode to diagnose rare invisible-gap states.
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
-- Fast scrollbar thumb dragging now forces immediate motion-time redraws on the active scroll target to reduce text smearing/tearing.
+- Fast scrollbar thumb dragging now uses a paced redraw loop with periodic full repaints to prevent missing/half-rendered text while dragging rapidly.
 - Scrollbar drag handling now accepts raw Tk callback argument variants under heavy drag load, preventing `_clicked_preserve_offset` event errors.
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.

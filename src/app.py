@@ -42,8 +42,9 @@ class ModManagerApp(ctk.CTk):
     _ZOOM_PAGE_EVICT_MIN_PAGE_COUNT = 4
     _ENABLE_ZOOM_OVERLAY = False
     _RESIZE_SETTLE_MS = 84
-    _DRAG_REDRAW_INTERVAL_MS = 10
-    _SCROLL_REFRESH_INTERVAL_MS = 10
+    _DRAG_REDRAW_INTERVAL_MS = 12
+    _SCROLL_REFRESH_INTERVAL_MS = 12
+    _DRAG_FULL_REPAINT_INTERVAL_MS = 42
     _DRAG_FORCE_UPDATE_EVERY_TICKS = 1
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
@@ -124,6 +125,7 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_drag_counter = 0
         self._drag_refresh_after_id = None
         self._drag_redraw_counter = 0
+        self._drag_motion_pending = False
         self._scrollbar_drag_active = False
         self._active_drag_scroll_widget = None
         self._pointer_left_down = False
@@ -134,6 +136,7 @@ class ModManagerApp(ctk.CTk):
         self._last_scale_apply_duration_ms = 0.0
         self._last_zoom_input_monotonic = 0.0
         self._last_drag_widget_refresh_monotonic = 0.0
+        self._last_drag_full_repaint_monotonic = 0.0
         self._page_warmup_after_id = None
         self._page_warmup_queue = []
         self._icon_bitmap_path = None
@@ -999,7 +1002,9 @@ class ModManagerApp(ctk.CTk):
     def _on_scrollbar_drag_start(self):
         self._scrollbar_drag_active = True
         self._drag_redraw_counter = 0
+        self._drag_motion_pending = True
         self._last_drag_widget_refresh_monotonic = 0.0
+        self._last_drag_full_repaint_monotonic = 0.0
         if self._active_drag_scroll_widget is None:
             try:
                 pointed = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
@@ -1027,6 +1032,7 @@ class ModManagerApp(ctk.CTk):
     def _on_scrollbar_drag_end(self):
         target = self._active_drag_scroll_widget
         self._scrollbar_drag_active = False
+        self._drag_motion_pending = False
         self._active_drag_scroll_widget = None
         if self._drag_refresh_after_id:
             try:
@@ -1042,7 +1048,7 @@ class ModManagerApp(ctk.CTk):
             self._schedule_scroll_refresh(target)
 
     def _on_scrollbar_drag_motion(self, scrollbar):
-        """Force a targeted redraw while dragging a CTk scrollbar thumb."""
+        """Mark drag motion and let the paced redraw loop handle painting."""
         if self._shutting_down:
             return
         target = None
@@ -1056,26 +1062,9 @@ class ModManagerApp(ctk.CTk):
         if target is None:
             return
         self._active_drag_scroll_widget = target
+        self._drag_motion_pending = True
         self._schedule_scroll_refresh(target)
-        try:
-            # During rapid thumb drags, push targeted paint without re-entrant
-            # full event-loop updates (which can destabilize callbacks).
-            target.update_idletasks()
-            try:
-                target.after_idle(target.update_idletasks)
-            except Exception:
-                pass
-            if hasattr(self, "main_window") and hasattr(self.main_window, "content"):
-                self.main_window.content.update_idletasks()
-                try:
-                    self.main_window.content.after_idle(self.main_window.content.update_idletasks)
-                except Exception:
-                    pass
-            else:
-                self.update_idletasks()
-            self._last_drag_widget_refresh_monotonic = time.monotonic()
-        except Exception:
-            pass
+        self._ensure_drag_redraw_loop()
 
     def _set_left_button_down(self, pressed: bool, source_widget=None):
         self._pointer_left_down = bool(pressed)
@@ -1115,10 +1104,27 @@ class ModManagerApp(ctk.CTk):
         self._drag_redraw_counter = (self._drag_redraw_counter + 1) % max(
             1, int(self._DRAG_FORCE_UPDATE_EVERY_TICKS)
         )
+        now = time.monotonic()
+        full_repaint_due = (
+            self._last_drag_full_repaint_monotonic <= 0.0
+            or ((now - self._last_drag_full_repaint_monotonic) * 1000.0)
+            >= float(self._DRAG_FULL_REPAINT_INTERVAL_MS)
+        )
         try:
             if target is not None and bool(target.winfo_exists()):
-                target.update()
+                # Keep high-frequency passes lightweight.
+                target.update_idletasks()
                 self._schedule_scroll_refresh(target)
+                # Force an occasional full repaint while dragging so text
+                # never remains partially rasterized after rapid thumb jumps.
+                if full_repaint_due and self._drag_motion_pending:
+                    try:
+                        target.update()
+                    except Exception:
+                        target.update_idletasks()
+                    self._last_drag_full_repaint_monotonic = now
+                    self._drag_motion_pending = False
+                self._last_drag_widget_refresh_monotonic = now
             else:
                 self.update_idletasks()
         except Exception:
@@ -1585,7 +1591,7 @@ class ModManagerApp(ctk.CTk):
                     if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
                         continue
                     if dragging and force_update:
-                        widget.update()
+                        widget.update_idletasks()
                     else:
                         widget.update_idletasks()
                 except Exception:
