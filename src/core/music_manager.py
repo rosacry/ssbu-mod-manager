@@ -1,6 +1,5 @@
 """Music track discovery, stage assignment, playlist management, and PRC save."""
 import json
-import os
 import re
 import shutil
 import threading
@@ -14,7 +13,6 @@ from src.config import CONFIG_DIR
 from src.utils.logger import logger
 
 
-# ── Series / franchise mapping for BGM track-name beautification ────────────
 # Keys are lowercase prefixes found in SSBU internal BGM filenames.
 # Values are the pretty-printed franchise / game name.
 _SERIES_MAP: dict[str, str] = {
@@ -48,8 +46,8 @@ _SERIES_MAP: dict[str, str] = {
     "star_fox":         "Star Fox",
     "fzero":            "F-Zero",
     "f_zero":           "F-Zero",
-    "pokemon":          "Pokémon",
-    "poke":             "Pokémon",
+    "pokemon":          "Pokemon",
+    "poke":             "Pokemon",
     "pikmin":           "Pikmin",
     "animal_crossing":  "Animal Crossing",
     "splatoon":         "Splatoon",
@@ -125,34 +123,51 @@ _SERIES_KEYS_SORTED = sorted(_SERIES_MAP.keys(), key=len, reverse=True)
 _LOWERCASE_WORDS = {"a", "an", "and", "at", "by", "for", "from", "in",
                     "of", "on", "or", "the", "to", "vs", "with"}
 
+NUS3AUDIO_GLOB = "*.nus3audio"
+XMSBT_GLOB = "*.xmsbt"
+MSBT_GLOB = "*.msbt"
+TRACK_ID_PREFIX = "bgm_"
+TRACK_ID_PREFIX_LENGTH = len(TRACK_ID_PREFIX)
+TRACK_SERIES_SEPARATOR = "__"
+TRACK_STAGE_CODE_PATTERN = r"^([A-Z]\d{2})_(.+)$"
+DEFAULT_BGM_INCIDENCE = 50
+MENU_STAGE_ID = "ui_stage_id_menu"
+MENU_BGM_FILENAME = "bgm_z90_menu.nus3audio"
+MUSIC_CONFIG_MOD_DIRNAME = "_MusicConfig"
+MUSIC_CONFIG_FILENAME = "music_config.json"
+ASSIGNMENTS_FILENAME = "music_assignments.json"
+MOD_FOLDER_PREFIXES_TO_SKIP = (".", "_")
+TRACK_SCAN_CANCEL_LOG = "Track discovery cancelled"
+BGM_MESSAGE_MARKERS = ("bgm", "msg_bgm")
+BGM_LABEL_MARKERS = ("bgm_title", "bgm_menu")
+BGM_SUFFIX_SEPARATOR = "_"
+FINGERPRINT_ATTR_NAME = "_last_msbt_fingerprint"
+
 
 def beautify_track_name(track_id: str) -> str:
     """Convert a raw SSBU BGM filename into a human-friendly display name.
 
     Example transforms:
-      bgm_sonic_adventure__mechanical_resonance  →  Mechanical Resonance [Sonic Adventure]
-      bgm_zelda_overworld                        →  Overworld [Zelda]
-      bgm_T09_battle_kirby01                     →  Battle Kirby 01 [Stage T09]
-      bgm_menu_select                            →  Menu Select
+      bgm_sonic_adventure__mechanical_resonance -> Mechanical Resonance [Sonic Adventure]
+      bgm_zelda_overworld -> Overworld [Zelda]
+      bgm_T09_battle_kirby01 -> Battle Kirby 01 [Stage T09]
+      bgm_menu_select -> Menu Select
     """
     name = track_id
 
-    # 1. Strip common prefixes
-    if name.lower().startswith("bgm_"):
-        name = name[4:]
+    if name.lower().startswith(TRACK_ID_PREFIX):
+        name = name[TRACK_ID_PREFIX_LENGTH:]
 
-    # 2. Check for double-underscore separator  (series__song)
     series_label: str | None = None
     song_part: str = name
 
-    if "__" in name:
-        parts = name.split("__", 1)
+    if TRACK_SERIES_SEPARATOR in name:
+        parts = name.split(TRACK_SERIES_SEPARATOR, 1)
         raw_series = parts[0]
         song_part = parts[1]
         series_label = _SERIES_MAP.get(raw_series.lower(),
                                        raw_series.replace("_", " ").strip().title())
     else:
-        # 3. Try to match a known series prefix
         lower = name.lower()
         for key in _SERIES_KEYS_SORTED:
             if lower.startswith(key + "_") and len(name) > len(key) + 1:
@@ -160,19 +175,14 @@ def beautify_track_name(track_id: str) -> str:
                 song_part = name[len(key) + 1:]
                 break
 
-    # 4. Handle stage-code prefix like T01_, T09_, ...
-    stage_match = re.match(r"^([A-Z]\d{2})_(.+)$", song_part, re.IGNORECASE)
+    stage_match = re.match(TRACK_STAGE_CODE_PATTERN, song_part, re.IGNORECASE)
     if stage_match and not series_label:
         series_label = f"Stage {stage_match.group(1).upper()}"
         song_part = stage_match.group(2)
 
-    # 5. Clean up song part
-    #    - Replace remaining underscores with spaces
-    #    - Collapse whitespace
     song_name = song_part.replace("_", " ").strip()
     song_name = re.sub(r"\s+", " ", song_name)
 
-    # 6. Smart title-case (keep small words lowercase unless first/last)
     words = song_name.split()
     titled: list[str] = []
     for i, w in enumerate(words):
@@ -182,12 +192,9 @@ def beautify_track_name(track_id: str) -> str:
             titled.append(w.lower())
     song_name = " ".join(titled) if titled else song_name
 
-    # 7. Separate trailing digits  (e.g. "01" at the end stays as-is)
-
     if not song_name:
-        song_name = track_id  # ultimate fallback
+        song_name = track_id
 
-    # 8. Compose final display string
     if series_label:
         return f"{song_name}  [{series_label}]"
     return song_name
@@ -199,8 +206,35 @@ class MusicManager:
         self.stage_playlists: dict[str, StagePlaylist] = {}
         self.exclude_vanilla = False
 
-    def discover_tracks(self, mods_root: Path, cancel_event: Optional[threading.Event] = None) -> list[MusicTrack]:
-        """Discover all custom music tracks across all mod folders."""
+    @staticmethod
+    def _scan_cancelled(cancel_event: Optional[threading.Event]) -> bool:
+        try:
+            return cancel_event is not None and bool(cancel_event.is_set())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_skipped_mod_folder(mod_folder: Path) -> bool:
+        return mod_folder.name.startswith(MOD_FOLDER_PREFIXES_TO_SKIP)
+
+    def _scan_should_abort(self, cancel_event: Optional[threading.Event]) -> bool:
+        if not self._scan_cancelled(cancel_event):
+            return False
+        logger.info("MusicManager", TRACK_SCAN_CANCEL_LOG)
+        return True
+
+    def discover_tracks(
+        self,
+        mods_root: Path,
+        cancel_event: Optional[threading.Event] = None,
+        parse_binary_msbt: bool = True,
+        generate_msbt_overlays: bool = True,
+    ) -> list[MusicTrack]:
+        """Discover all custom music tracks across all mod folders.
+
+        ``parse_binary_msbt`` and ``generate_msbt_overlays`` are expensive and
+        should only be enabled for explicit full rescans.
+        """
         self.tracks = []
         seen_ids = set()
 
@@ -208,18 +242,15 @@ class MusicManager:
             return self.tracks
 
         for mod_folder in sorted(mods_root.iterdir()):
-            if cancel_event is not None and cancel_event.is_set():
-                logger.info("MusicManager", "Track discovery cancelled")
+            if self._scan_should_abort(cancel_event):
                 return self.tracks
-            if not mod_folder.is_dir() or mod_folder.name.startswith(".") or mod_folder.name.startswith("_"):
+            if not mod_folder.is_dir() or self._is_skipped_mod_folder(mod_folder):
                 continue
 
-            # Scan for nus3audio files
-            for audio_file in mod_folder.rglob("*.nus3audio"):
-                if cancel_event is not None and cancel_event.is_set():
-                    logger.info("MusicManager", "Track discovery cancelled")
+            for audio_file in mod_folder.rglob(NUS3AUDIO_GLOB):
+                if self._scan_should_abort(cancel_event):
                     return self.tracks
-                track_id = audio_file.stem  # Filename without extension
+                track_id = audio_file.stem
                 if track_id in seen_ids:
                     continue
                 seen_ids.add(track_id)
@@ -238,29 +269,40 @@ class MusicManager:
                 )
                 self.tracks.append(track)
 
-            # Try to get track names from XMSBT and MSBT files
-            if cancel_event is not None and cancel_event.is_set():
-                logger.info("MusicManager", "Track discovery cancelled")
+            if self._scan_should_abort(cancel_event):
                 return self.tracks
-            self._load_track_names_from_mod(mod_folder)
+            self._load_track_names_from_mod(
+                mod_folder,
+                cancel_event=cancel_event,
+                parse_binary_msbt=parse_binary_msbt,
+            )
 
-        # Auto-generate MSBT overlays so custom track names show in-game
-        if cancel_event is not None and cancel_event.is_set():
-            logger.info("MusicManager", "Track discovery cancelled")
+        if self._scan_should_abort(cancel_event):
             return self.tracks
-        self._auto_generate_msbt_overlays(mods_root)
 
-        # Beautify display names for tracks that don't have XMSBT/MSBT names
+        if generate_msbt_overlays:
+            if self._scan_should_abort(cancel_event):
+                return self.tracks
+            self._auto_generate_msbt_overlays(mods_root, cancel_event=cancel_event)
+
+            if self._scan_should_abort(cancel_event):
+                return self.tracks
+
         for track in self.tracks:
+            if self._scan_should_abort(cancel_event):
+                return self.tracks
             if not track.display_name:
                 track.display_name = beautify_track_name(track.track_id)
 
-        # Load saved assignments if they exist
+        if self._scan_should_abort(cancel_event):
+            return self.tracks
         self._load_saved_assignments()
 
         return self.tracks
 
-    def _auto_generate_msbt_overlays(self, mods_root: Path) -> None:
+    def _auto_generate_msbt_overlays(
+        self, mods_root: Path, cancel_event: Optional[threading.Event] = None
+    ) -> None:
         """Auto-generate XMSBT overlays from binary MSBT files.
 
         This ensures custom track names (e.g. from Sonic Extended Tracklist)
@@ -277,17 +319,23 @@ class MusicManager:
             # whether we actually need to regenerate overlays.
             msbt_fingerprint = set()
             for mod_folder in sorted(mods_root.iterdir()):
+                if self._scan_should_abort(cancel_event):
+                    return
                 if not mod_folder.is_dir():
                     continue
-                if mod_folder.name.startswith(".") or mod_folder.name.startswith("_"):
+                if self._is_skipped_mod_folder(mod_folder):
                     continue
-                for fpath in mod_folder.rglob("*.msbt"):
+                for fpath in mod_folder.rglob(MSBT_GLOB):
+                    if self._scan_should_abort(cancel_event):
+                        return
                     try:
                         stat = fpath.stat()
                         msbt_fingerprint.add((str(fpath), stat.st_size, stat.st_mtime_ns))
                     except OSError:
                         pass
-                for fpath in mod_folder.rglob("*.xmsbt"):
+                for fpath in mod_folder.rglob(XMSBT_GLOB):
+                    if self._scan_should_abort(cancel_event):
+                        return
                     try:
                         stat = fpath.stat()
                         msbt_fingerprint.add((str(fpath), stat.st_size, stat.st_mtime_ns))
@@ -295,31 +343,42 @@ class MusicManager:
                         pass
 
             fp = frozenset(msbt_fingerprint)
-            if hasattr(self, '_last_msbt_fingerprint') and self._last_msbt_fingerprint == fp:
-                return  # Nothing changed — skip regeneration
-            self._last_msbt_fingerprint = fp
+            if hasattr(self, FINGERPRINT_ATTR_NAME) and getattr(self, FINGERPRINT_ATTR_NAME) == fp:
+                return
+            setattr(self, FINGERPRINT_ATTR_NAME, fp)
+
+            if self._scan_should_abort(cancel_event):
+                return
 
             resolver = ConflictResolver(mods_root)
-            count = resolver.generate_msbt_overlays()
+            count = resolver.generate_msbt_overlays(cancel_event=cancel_event)
             if count > 0:
                 logger.info("MusicManager",
                             f"Auto-generated {count} MSBT overlay(s) for track names")
         except Exception as e:
             logger.warn("MusicManager", f"Failed to auto-generate MSBT overlays: {e}")
 
-    def _load_track_names_from_mod(self, mod_folder: Path) -> None:
+    def _load_track_names_from_mod(
+        self,
+        mod_folder: Path,
+        cancel_event: Optional[threading.Event] = None,
+        parse_binary_msbt: bool = True,
+    ) -> None:
         """Load track display names from XMSBT/MSBT files in a mod."""
-        # Scan XMSBT overlay files
-        for xmsbt_file in mod_folder.rglob("*.xmsbt"):
-            if "bgm" in xmsbt_file.name.lower() or "msg_bgm" in xmsbt_file.name.lower():
+        for xmsbt_file in mod_folder.rglob(XMSBT_GLOB):
+            if self._scan_should_abort(cancel_event):
+                return
+            if any(marker in xmsbt_file.name.lower() for marker in BGM_MESSAGE_MARKERS):
                 entries = parse_xmsbt(xmsbt_file)
                 self._apply_track_names(entries)
 
-        # Also scan binary MSBT files (e.g. Sonic Extended Tracklist uses these)
-        for msbt_file in mod_folder.rglob("*.msbt"):
-            if "bgm" in msbt_file.name.lower() or "msg_bgm" in msbt_file.name.lower():
-                entries = extract_entries_from_msbt(msbt_file)
-                self._apply_track_names(entries)
+        if parse_binary_msbt:
+            for msbt_file in mod_folder.rglob(MSBT_GLOB):
+                if self._scan_should_abort(cancel_event):
+                    return
+                if any(marker in msbt_file.name.lower() for marker in BGM_MESSAGE_MARKERS):
+                    entries = extract_entries_from_msbt(msbt_file)
+                    self._apply_track_names(entries)
 
     def _apply_track_names(self, entries: dict[str, str]) -> None:
         """Apply track names from parsed XMSBT/MSBT entries to discovered tracks.
@@ -327,18 +386,15 @@ class MusicManager:
         Matches MSBT labels (e.g. bgm_title_25AR) to discovered tracks
         (e.g. bgm_25AR.nus3audio) using multiple heuristics.
         """
-        # Build a lookup from MSBT title labels → display text
         title_lookup: dict[str, str] = {}
         for label, text in entries.items():
             if not text or not text.strip():
                 continue
-            # Only process bgm_title_ labels (these contain track display names)
             lower_label = label.lower()
-            if 'bgm_title' in lower_label or 'bgm_menu' in lower_label:
+            if any(marker in lower_label for marker in BGM_LABEL_MARKERS):
                 title_lookup[label] = text.strip()
 
         if not title_lookup:
-            # No title entries found, try using all entries as a fallback
             title_lookup = {k: v.strip() for k, v in entries.items() if v and v.strip()}
 
         for track in self.tracks:
@@ -346,37 +402,31 @@ class MusicManager:
                 continue
 
             track_id_lower = track.track_id.lower()
-            # Strip "bgm_" prefix from track ID for matching
             track_id_bare = track_id_lower
-            if track_id_bare.startswith("bgm_"):
-                track_id_bare = track_id_bare[4:]
+            if track_id_bare.startswith(TRACK_ID_PREFIX):
+                track_id_bare = track_id_bare[TRACK_ID_PREFIX_LENGTH:]
 
             best_match = None
 
             for label, text in title_lookup.items():
-                # Direct: track_id appears in label or vice versa
                 if track.track_id in label or label.endswith(track.track_id):
                     best_match = text
                     break
 
-                # Extract the ID suffix from the label (e.g. "25AR" from "bgm_title_25AR")
-                label_parts = label.rsplit('_', 1)
+                label_parts = label.rsplit(BGM_SUFFIX_SEPARATOR, 1)
                 label_suffix = label_parts[-1].lower() if len(label_parts) >= 2 else None
 
                 if label_suffix:
-                    # Match by suffix: label suffix matches end of track_id
-                    # e.g. label "bgm_title_25AR" → suffix "25ar"
-                    #      track "bgm_sonic__speed_highway_25AR" → ends with "_25ar"
-                    # Require underscore boundary to avoid false positives
-                    # with short numeric suffixes like "01", "02".
-                    if (track_id_lower.endswith('_' + label_suffix)
+                    if (track_id_lower.endswith(BGM_SUFFIX_SEPARATOR + label_suffix)
                             or track_id_bare == label_suffix):
                         best_match = text
                         break
 
-                    # Match by suffix appearing as a component in track_id
-                    # e.g. label suffix "25AR" in track "bgm_25AR"
-                    track_suffix = track.track_id.rsplit('_', 1)[-1].lower() if '_' in track.track_id else ''
+                    track_suffix = (
+                        track.track_id.rsplit(BGM_SUFFIX_SEPARATOR, 1)[-1].lower()
+                        if BGM_SUFFIX_SEPARATOR in track.track_id
+                        else ""
+                    )
                     if label_suffix and track_suffix and label_suffix == track_suffix:
                         best_match = text
                         break
@@ -484,7 +534,7 @@ class MusicManager:
         result["config_saved"] = True
 
         # Handle main menu music separately
-        menu_tracks = self.get_tracks_for_stage("ui_stage_id_menu")
+        menu_tracks = self.get_tracks_for_stage(MENU_STAGE_ID)
         if menu_tracks:
             try:
                 self._apply_menu_music(menu_tracks[0], mods_root)
@@ -522,10 +572,10 @@ class MusicManager:
 
         The semicolon in the path is ARCropolis's stream-load syntax.
         """
-        config_mod = mods_root / "_MusicConfig"
+        config_mod = mods_root / MUSIC_CONFIG_MOD_DIRNAME
         menu_bgm_dir = config_mod / "stream;" / "sound" / "bgm"
         menu_bgm_dir.mkdir(parents=True, exist_ok=True)
-        dest = menu_bgm_dir / "bgm_z90_menu.nus3audio"
+        dest = menu_bgm_dir / MENU_BGM_FILENAME
 
         shutil.copy2(str(track.file_path), str(dest))
         logger.info("MusicManager",
@@ -537,7 +587,7 @@ class MusicManager:
         for mod_folder in sorted(mods_root.iterdir()):
             if not mod_folder.is_dir():
                 continue
-            if mod_folder.name.startswith(".") or mod_folder.name.startswith("_"):
+            if self._is_skipped_mod_folder(mod_folder):
                 continue
             bgm_db = mod_folder / "ui" / "param" / "database" / "ui_bgm_db.prc"
             if bgm_db.exists():
@@ -644,7 +694,7 @@ class MusicManager:
                                     new_entry = current_entries[0].clone()
                                     try:
                                         new_entry['ui_bgm_id'].value = bgm_id
-                                        new_entry['incidence'].value = 50
+                                        new_entry['incidence'].value = DEFAULT_BGM_INCIDENCE
                                     except (KeyError, AttributeError):
                                         pass
                                     new_entries.append(new_entry)
@@ -666,7 +716,7 @@ class MusicManager:
 
     def _create_config_mod(self, mods_root: Path) -> Path:
         """Create a _MusicConfig mod folder with assignment metadata."""
-        config_mod = mods_root / "_MusicConfig"
+        config_mod = mods_root / MUSIC_CONFIG_MOD_DIRNAME
         config_mod.mkdir(exist_ok=True)
 
         config = {
@@ -686,7 +736,7 @@ class MusicManager:
                     for t in playlist.tracks
                 ]
 
-        config_file = config_mod / "music_config.json"
+        config_file = config_mod / MUSIC_CONFIG_FILENAME
         try:
             with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2)
@@ -699,7 +749,7 @@ class MusicManager:
         """Save current assignments to a persistent JSON config."""
         config_dir = CONFIG_DIR
         config_dir.mkdir(parents=True, exist_ok=True)
-        config_file = config_dir / "music_assignments.json"
+        config_file = config_dir / ASSIGNMENTS_FILENAME
 
         data = {
             "exclude_vanilla": self.exclude_vanilla,
@@ -718,7 +768,7 @@ class MusicManager:
 
     def _load_saved_assignments(self) -> None:
         """Load previously saved assignments from persistent config."""
-        config_file = CONFIG_DIR / "music_assignments.json"
+        config_file = CONFIG_DIR / ASSIGNMENTS_FILENAME
         if not config_file.exists():
             return
 
@@ -756,3 +806,4 @@ class MusicManager:
             "stages_with_music": stages_with_music,
             "exclude_vanilla": self.exclude_vanilla,
         }
+

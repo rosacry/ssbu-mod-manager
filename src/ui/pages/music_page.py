@@ -11,7 +11,26 @@ from src.utils.action_history import action_history, Action
 
 
 class MusicPage(BasePage):
-    _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    _AUTO_SCAN_DELAY_MS = 260
+    _SPINNER_FRAME_INTERVAL_MS = 100
+    _FILTER_DEBOUNCE_MS = 120
+    _PLAYBACK_STATUS_CLEAR_MS = 3000
+    _PLAYBACK_ERROR_CLEAR_MS = 5000
+    _PLAYBACK_STOPPED_CLEAR_MS = 2000
+    _PLAYBACK_POLL_MS = 500
+    _SEEK_UPDATE_MS = 500
+    _PLAY_CLICK_DELAY_MS = 50
+    _ZERO_DELAY_MS = 0
+    _MAX_PERCENT = 100.0
+    _MIN_VOLUME = 0.0
+    _MAX_VOLUME = 1.0
+    _VOLUME_EPSILON = 0.01
+    _SECONDS_PER_MINUTE = 60
+    _DEFAULT_VOLUME = 0.7
+    _MENU_STAGE_ID = "ui_stage_id_menu"
+    _MENU_STAGE_PREFIX = "[Menu] "
+    _ZERO_TIME_TEXT = "0:00"
+    _SPINNER_FRAMES = ["|", "/", "-", "\\"]
 
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
@@ -19,6 +38,7 @@ class MusicPage(BasePage):
         self._loaded = False
         self._scan_in_progress = False
         self._pending_rescan = False
+        self._pending_full_rescan = False
         self._all_tracks = []
         self._track_id_map = {}
         self._stage_ids = []
@@ -31,8 +51,8 @@ class MusicPage(BasePage):
         self._scan_generation = 0
         self._auto_scan_after_id = None
         self._scan_cancel_event = None
-        self._auto_scan_delay_ms = 260
-        self._pending_volume_value = 0.7
+        self._auto_scan_delay_ms = self._AUTO_SCAN_DELAY_MS
+        self._pending_volume_value = self._DEFAULT_VOLUME
         self._track_data_revision = 0
         self._last_track_render_signature = None
         self._build_ui()
@@ -118,7 +138,7 @@ class MusicPage(BasePage):
         bulk_frame = ctk.CTkFrame(left, fg_color="transparent")
         bulk_frame.pack(fill="x", padx=10, pady=(0, 5))
 
-        ctk.CTkButton(bulk_frame, text="All → All Stages",
+        ctk.CTkButton(bulk_frame, text="All -> All Stages",
                       command=self._assign_all_to_all,
                       fg_color="#2fa572", hover_color="#106a43",
                       font=ctk.CTkFont(size=11), height=28, corner_radius=6,
@@ -214,7 +234,7 @@ class MusicPage(BasePage):
         player_frame = ctk.CTkFrame(right, fg_color="#1e1e30", corner_radius=6)
         player_frame.pack(fill="x", padx=10, pady=(2, 4))
 
-        # Now playing status — above the controls so it's always visible
+        # Keep now-playing status above controls so it remains visible.
         self.player_status = ctk.CTkLabel(
             player_frame, text="",
             font=ctk.CTkFont(size=10), text_color="#2fa572",
@@ -228,7 +248,7 @@ class MusicPage(BasePage):
         # Single play/stop toggle button
         self._is_playing = False
         self.play_toggle_btn = ctk.CTkButton(
-            player_inner, text="▶  Play", width=80, height=28,
+            player_inner, text="Play", width=80, height=28,
             fg_color="#2fa572", hover_color="#106a43",
             font=ctk.CTkFont(size=11), corner_radius=6,
             command=self._toggle_playback,
@@ -243,11 +263,11 @@ class MusicPage(BasePage):
             player_inner, from_=0, to=100, width=90, height=14,
             command=self._on_volume_change,
         )
-        self.volume_slider.set(70)
+        self.volume_slider.set(int(self._DEFAULT_VOLUME * self._MAX_PERCENT))
         self.volume_slider.pack(side="left", padx=(0, 6))
 
         # Seek timeline
-        self.seek_label = ctk.CTkLabel(player_inner, text="0:00",
+        self.seek_label = ctk.CTkLabel(player_inner, text=self._ZERO_TIME_TEXT,
                                        font=ctk.CTkFont(size=10), text_color="#555555")
         self.seek_label.pack(side="left", padx=(4, 2))
         self._seek_dragging = False
@@ -257,11 +277,11 @@ class MusicPage(BasePage):
             fg_color="#2a2a4a", progress_color="#1f538d",
             button_color="#4488cc", button_hover_color="#5599dd",
         )
-        self.seek_slider.set(0)
+        self.seek_slider.set(self._ZERO_DELAY_MS)
         self.seek_slider.pack(side="left", padx=(0, 2))
         self.seek_slider.bind("<ButtonPress-1>", lambda e: setattr(self, '_seek_dragging', True))
         self.seek_slider.bind("<ButtonRelease-1>", self._on_seek_release)
-        self.seek_duration_label = ctk.CTkLabel(player_inner, text="0:00",
+        self.seek_duration_label = ctk.CTkLabel(player_inner, text=self._ZERO_TIME_TEXT,
                                                  font=ctk.CTkFont(size=10), text_color="#555555")
         self.seek_duration_label.pack(side="left", padx=(2, 6))
 
@@ -321,7 +341,7 @@ class MusicPage(BasePage):
                 return
             if not self._is_music_page_active():
                 return
-            self._scan_tracks()
+            self._scan_tracks(full_scan=False)
 
         self._auto_scan_after_id = self.after(int(self._auto_scan_delay_ms), _run)
 
@@ -339,12 +359,12 @@ class MusicPage(BasePage):
             if not self._is_playing:
                 self._is_playing = True
                 self.play_toggle_btn.configure(
-                    text="■  Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+                    text="Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
         else:
             if self._is_playing:
                 self._is_playing = False
                 self.play_toggle_btn.configure(
-                    text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
+                    text="Play", fg_color="#2fa572", hover_color="#106a43")
                 self.player_status.configure(text="")
 
     def _start_spinner(self, text: str = "Loading"):
@@ -366,18 +386,19 @@ class MusicPage(BasePage):
         frame = self._SPINNER_FRAMES[self._spinner_index % len(self._SPINNER_FRAMES)]
         self.loading_label.configure(text=f"{frame} {self._spinner_text}...")
         self._spinner_index += 1
-        self.after(100, self._animate_spinner)
+        self.after(self._SPINNER_FRAME_INTERVAL_MS, self._animate_spinner)
 
     def _force_scan(self):
         self._cancel_auto_scan()
         if self._scan_in_progress:
             self._pending_rescan = True
+            self._pending_full_rescan = True
             self.loading_label.configure(text="Rescan queued...")
             return
         self._loaded = False
-        self._scan_tracks()
+        self._scan_tracks(full_scan=True)
 
-    def _scan_tracks(self):
+    def _scan_tracks(self, full_scan: bool = False):
         self._cancel_auto_scan()
         if self._scan_in_progress:
             return
@@ -388,6 +409,7 @@ class MusicPage(BasePage):
 
         self._scan_in_progress = True
         self._pending_rescan = False
+        self._pending_full_rescan = False
         self._scan_generation += 1
         current_gen = self._scan_generation
         self._scan_cancel_event = threading.Event()
@@ -399,27 +421,41 @@ class MusicPage(BasePage):
 
         def scan():
             try:
-                tracks = self.app.music_manager.discover_tracks(mods_path, cancel_event=cancel_event)
+                tracks = self.app.music_manager.discover_tracks(
+                    mods_path,
+                    cancel_event=cancel_event,
+                    parse_binary_msbt=full_scan,
+                    generate_msbt_overlays=full_scan,
+                )
                 if cancel_event.is_set():
                     logger.info("Music", "Track scan cancelled")
                     return
                 logger.info("Music", f"Found {len(tracks)} tracks")
                 if not self.app.shutting_down:
                     try:
-                        self.app.after(0, lambda t=tracks, gen=current_gen: self._on_tracks_loaded(t, gen))
+                        self.app.after(
+                            self._ZERO_DELAY_MS,
+                            lambda t=tracks, gen=current_gen: self._on_tracks_loaded(t, gen),
+                        )
                     except Exception:
                         pass
             except Exception as e:
                 logger.error("Music", f"Track scan failed: {e}")
                 if not self.app.shutting_down:
                     try:
-                        self.app.after(0, lambda err=str(e), gen=current_gen: self._on_scan_error(err, gen))
+                        self.app.after(
+                            self._ZERO_DELAY_MS,
+                            lambda err=str(e), gen=current_gen: self._on_scan_error(err, gen),
+                        )
                     except Exception:
                         pass
             finally:
                 if not self.app.shutting_down:
                     try:
-                        self.app.after(0, lambda gen=current_gen: self._on_scan_finished(gen))
+                        self.app.after(
+                            self._ZERO_DELAY_MS,
+                            lambda gen=current_gen: self._on_scan_finished(gen),
+                        )
                     except Exception:
                         pass
 
@@ -436,9 +472,11 @@ class MusicPage(BasePage):
             if self._is_music_page_active():
                 self.track_count_label.configure(text="Scan cancelled")
         if self._pending_rescan:
+            run_full_rescan = bool(self._pending_full_rescan)
             self._pending_rescan = False
+            self._pending_full_rescan = False
             self._loaded = False
-            self._scan_tracks()
+            self._scan_tracks(full_scan=run_full_rescan)
 
     def _on_scan_error(self, error_msg: str, scan_gen: int | None = None):
         """Handle track scan failure on the main thread."""
@@ -500,8 +538,8 @@ class MusicPage(BasePage):
         summary = self.app.music_manager.get_assignment_summary()
         if summary["stages_configured"] > 0:
             self.summary_label.configure(
-                text=f"{summary['stages_configured']} stages · "
-                     f"{summary['total_assignments']} assignments · "
+                text=f"{summary['stages_configured']} stages | "
+                     f"{summary['total_assignments']} assignments | "
                      f"{'Vanilla excluded' if summary['exclude_vanilla'] else 'Vanilla included'}",
                 text_color="#2fa572")
         else:
@@ -519,16 +557,16 @@ class MusicPage(BasePage):
         menu_stage = None
         other_stages = []
         for stage in stages:
-            if stage.stage_id == "ui_stage_id_menu":
+            if stage.stage_id == self._MENU_STAGE_ID:
                 menu_stage = stage
             else:
                 other_stages.append(stage)
 
         def _insert_stage(stage):
-            if comp_only and stage.stage_id not in COMPETITIVE_STAGES and stage.stage_id != "ui_stage_id_menu":
+            if comp_only and stage.stage_id not in COMPETITIVE_STAGES and stage.stage_id != self._MENU_STAGE_ID:
                 return
             count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
-            prefix = "🎵 " if stage.stage_id == "ui_stage_id_menu" else ""
+            prefix = self._MENU_STAGE_PREFIX if stage.stage_id == self._MENU_STAGE_ID else ""
             suffix = f" ({count})" if count > 0 else ""
             self.stage_listbox.insert(tk.END, f"{prefix}{stage.stage_name}{suffix}")
             self._stage_ids.append(stage.stage_id)
@@ -549,7 +587,7 @@ class MusicPage(BasePage):
                 self.after_cancel(self._stage_filter_after_id)
             except Exception:
                 pass
-        self._stage_filter_after_id = self.after(120, self._apply_stage_filter)
+        self._stage_filter_after_id = self.after(self._FILTER_DEBOUNCE_MS, self._apply_stage_filter)
 
     def _apply_stage_filter(self):
         self._stage_filter_after_id = None
@@ -566,18 +604,18 @@ class MusicPage(BasePage):
         menu_stage = None
         other_stages = []
         for stage in stages:
-            if stage.stage_id == "ui_stage_id_menu":
+            if stage.stage_id == self._MENU_STAGE_ID:
                 menu_stage = stage
             else:
                 other_stages.append(stage)
 
         def _insert_if_match(stage):
-            if comp_only and stage.stage_id not in COMPETITIVE_STAGES and stage.stage_id != "ui_stage_id_menu":
+            if comp_only and stage.stage_id not in COMPETITIVE_STAGES and stage.stage_id != self._MENU_STAGE_ID:
                 return
             if search and search not in stage.stage_name.lower():
                 return
             count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
-            prefix = "🎵 " if stage.stage_id == "ui_stage_id_menu" else ""
+            prefix = self._MENU_STAGE_PREFIX if stage.stage_id == self._MENU_STAGE_ID else ""
             suffix = f" ({count})" if count > 0 else ""
             self.stage_listbox.insert(tk.END, f"{prefix}{stage.stage_name}{suffix}")
             self._stage_ids.append(stage.stage_id)
@@ -644,23 +682,23 @@ class MusicPage(BasePage):
             btn_frame.pack(side="right")
 
             if i > 0:
-                ctk.CTkButton(btn_frame, text="▲", width=24, height=22,
+                ctk.CTkButton(btn_frame, text="Up", width=24, height=22,
                               fg_color="#3a3a4a", hover_color="#555555",
                               font=ctk.CTkFont(size=10),
                               command=lambda t=track: self._move_up(t)).pack(side="left", padx=1)
             if i < len(tracks) - 1:
-                ctk.CTkButton(btn_frame, text="▼", width=24, height=22,
+                ctk.CTkButton(btn_frame, text="Dn", width=24, height=22,
                               fg_color="#3a3a4a", hover_color="#555555",
                               font=ctk.CTkFont(size=10),
                               command=lambda t=track: self._move_down(t)).pack(side="left", padx=1)
 
-            ctk.CTkButton(btn_frame, text="✕", width=24, height=22,
+            ctk.CTkButton(btn_frame, text="X", width=24, height=22,
                           fg_color="#b02a2a", hover_color="#8a1f1f",
                           font=ctk.CTkFont(size=10),
                           command=lambda t=track: self._remove_from_stage(t)).pack(side="left", padx=1)
 
         # Re-patch scroll speeds for the newly created playlist widgets
-        self.after(50, self._patch_all_scroll_speeds)
+        self.after(self._PLAY_CLICK_DELAY_MS, self._patch_all_scroll_speeds)
 
     def _render_available_tracks(self):
         """Populate the listbox with available tracks."""
@@ -702,7 +740,7 @@ class MusicPage(BasePage):
                 self.after_cancel(self._track_filter_after_id)
             except Exception:
                 pass
-        self._track_filter_after_id = self.after(120, self._apply_track_filter)
+        self._track_filter_after_id = self.after(self._FILTER_DEBOUNCE_MS, self._apply_track_filter)
 
     def _apply_track_filter(self):
         self._track_filter_after_id = None
@@ -829,7 +867,7 @@ class MusicPage(BasePage):
         auto-play the newly selected track."""
         if self._is_playing:
             # Short delay so the listbox selection updates first
-            self.after(50, self._play_selected)
+            self.after(self._PLAY_CLICK_DELAY_MS, self._play_selected)
 
     def _toggle_playback(self):
         """Toggle between play and stop."""
@@ -843,7 +881,10 @@ class MusicPage(BasePage):
         track = self._get_selected_track()
         if not track:
             self.player_status.configure(text="Select a track first", text_color="#e94560")
-            self.after(3000, lambda: self.player_status.configure(text=""))
+            self.after(
+                self._PLAYBACK_STATUS_CLEAR_MS,
+                lambda: self.player_status.configure(text=""),
+            )
             return
 
         # Stop any current playback first to prevent concurrent threads
@@ -884,7 +925,7 @@ class MusicPage(BasePage):
                 audio_player.stop()
                 return
             if not self.app.shutting_down:
-                self.after(0, lambda: self._on_play_result(result, track))
+                self.after(self._ZERO_DELAY_MS, lambda: self._on_play_result(result, track))
 
         threading.Thread(target=_play_bg, daemon=True).start()
 
@@ -896,16 +937,19 @@ class MusicPage(BasePage):
         if success:
             self._is_playing = True
             self.play_toggle_btn.configure(
-                text="■  Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+                text="Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
             # Start polling for end-of-track to reset button state
             self._poll_playback_end()
             # Start seek bar updates
             dur = audio_player.get_duration()
             self.seek_duration_label.configure(text=self._fmt_time(int(dur)))
-            self.seek_slider.set(0)
+            self.seek_slider.set(self._ZERO_DELAY_MS)
             self._update_seek_bar()
         else:
-            self.after(5000, lambda: self.player_status.configure(text=""))
+            self.after(
+                self._PLAYBACK_ERROR_CLEAR_MS,
+                lambda: self.player_status.configure(text=""),
+            )
 
     def _poll_playback_end(self):
         """Periodically check if playback ended so the button resets."""
@@ -915,10 +959,10 @@ class MusicPage(BasePage):
         if not audio_player.is_playing:
             self._is_playing = False
             self.play_toggle_btn.configure(
-                text="\u25b6  Play", fg_color="#2fa572", hover_color="#106a43")
+                text="Play", fg_color="#2fa572", hover_color="#106a43")
             self.player_status.configure(text="")
             return
-        self._poll_after_id = self.after(500, self._poll_playback_end)
+        self._poll_after_id = self.after(self._PLAYBACK_POLL_MS, self._poll_playback_end)
 
     def _stop_playback(self):
         audio_player.stop()
@@ -933,16 +977,16 @@ class MusicPage(BasePage):
                     pass
                 setattr(self, attr, None)
         self.play_toggle_btn.configure(
-            text="▶  Play", fg_color="#2fa572", hover_color="#106a43")
+            text="Play", fg_color="#2fa572", hover_color="#106a43")
         self.player_status.configure(text="Stopped", text_color="#888888")
-        self.seek_slider.set(0)
-        self.seek_label.configure(text="0:00")
-        self.seek_duration_label.configure(text="0:00")
-        self.after(2000, lambda: self.player_status.configure(text=""))
+        self.seek_slider.set(self._ZERO_DELAY_MS)
+        self.seek_label.configure(text=self._ZERO_TIME_TEXT)
+        self.seek_duration_label.configure(text=self._ZERO_TIME_TEXT)
+        self.after(self._PLAYBACK_STOPPED_CLEAR_MS, lambda: self.player_status.configure(text=""))
 
     def _on_volume_change(self, value):
-        new_volume = max(0.0, min(1.0, float(value) / 100.0))
-        if abs(new_volume - self._pending_volume_value) < 0.01:
+        new_volume = max(self._MIN_VOLUME, min(self._MAX_VOLUME, float(value) / self._MAX_PERCENT))
+        if abs(new_volume - self._pending_volume_value) < self._VOLUME_EPSILON:
             return
         self._pending_volume_value = new_volume
         audio_player.set_volume(self._pending_volume_value)
@@ -951,7 +995,7 @@ class MusicPage(BasePage):
         """Called continuously as the seek slider is dragged."""
         dur = audio_player.get_duration()
         if dur > 0:
-            secs = int(value / 100.0 * dur)
+            secs = int(value / self._MAX_PERCENT * dur)
             self.seek_label.configure(text=self._fmt_time(secs))
 
     def _on_seek_release(self, event):
@@ -959,7 +1003,7 @@ class MusicPage(BasePage):
         self._seek_dragging = False
         dur = audio_player.get_duration()
         if dur > 0 and self._is_playing:
-            pos = self.seek_slider.get() / 100.0 * dur
+            pos = self.seek_slider.get() / self._MAX_PERCENT * dur
             audio_player.seek(pos)
 
     def _update_seek_bar(self):
@@ -970,15 +1014,15 @@ class MusicPage(BasePage):
         dur = audio_player.get_duration()
         pos = audio_player.get_position()
         if dur > 0:
-            pct = min(100.0, pos / dur * 100.0)
+            pct = min(self._MAX_PERCENT, pos / dur * self._MAX_PERCENT)
             self.seek_slider.set(pct)
             self.seek_label.configure(text=self._fmt_time(int(pos)))
             self.seek_duration_label.configure(text=self._fmt_time(int(dur)))
-        self._seek_after_id = self.after(500, self._update_seek_bar)
+        self._seek_after_id = self.after(self._SEEK_UPDATE_MS, self._update_seek_bar)
 
     @staticmethod
     def _fmt_time(seconds: int) -> str:
-        m, s = divmod(max(0, seconds), 60)
+        m, s = divmod(max(0, seconds), MusicPage._SECONDS_PER_MINUTE)
         return f"{m}:{s:02d}"
 
     def save_changes(self):
@@ -1011,3 +1055,4 @@ class MusicPage(BasePage):
         except Exception as e:
             logger.error("Music", f"Save failed: {e}")
             messagebox.showerror("Error", f"Failed to save: {e}")
+

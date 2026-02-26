@@ -1,3 +1,4 @@
-"""SSBU Mod Manager package."""
+"""SSBU Mod Manager package metadata."""
 
-__version__ = "3.1.52"
+APP_NAME = "SSBU Mod Manager"
+__version__ = "1.0.0"

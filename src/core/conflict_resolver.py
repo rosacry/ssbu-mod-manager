@@ -2,6 +2,7 @@
 import json
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import Optional
 from src.models.conflict import FileConflict, ResolutionStrategy
@@ -14,12 +15,33 @@ from src.utils.logger import logger
 
 # Regex to match locale-specific MSBT filenames like msg_bgm+us_en.msbt
 _LOCALE_MSBT_RE = re.compile(r'^(.+)\+[a-z]{2}_[a-z]{2}(\.msbt)$', re.IGNORECASE)
+MSBT_GLOB = "*.msbt"
+XMSBT_GLOB = "*.xmsbt"
+XMSBT_MERGED_GLOB = "*.xmsbt.merged"
+XMSBT_MANAGED_GLOB = "*.xmsbt.managed"
+MANAGED_SUFFIX = ".managed"
+MERGED_SUFFIX = ".merged"
+MOD_FOLDER_PREFIXES_TO_SKIP = (".", "_")
+MERGED_OUTPUT_DIRNAME = "_MergedResources"
+ORIGINALS_DIRNAME = ".originals"
+MERGED_CONFIG_FILENAME = "config.json"
 
 
 class ConflictResolver:
     def __init__(self, mods_root: Path):
         self.mods_root = mods_root
-        self.merged_output_dir = mods_root / "_MergedResources"
+        self.merged_output_dir = mods_root / MERGED_OUTPUT_DIRNAME
+
+    @staticmethod
+    def _scan_cancelled(cancel_event: Optional[threading.Event]) -> bool:
+        try:
+            return cancel_event is not None and bool(cancel_event.is_set())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_skipped_mod_folder(folder: Path) -> bool:
+        return folder.name.startswith(MOD_FOLDER_PREFIXES_TO_SKIP)
 
     def auto_merge_xmsbt(self, conflict: FileConflict, create_backup: bool = True) -> Optional[Path]:
         """Merge XMSBT files from multiple mods into _MergedResources.
@@ -155,7 +177,7 @@ class ConflictResolver:
         if not self.mods_root.exists():
             return count
 
-        originals_dir = self.merged_output_dir / ".originals"
+        originals_dir = self.merged_output_dir / ORIGINALS_DIRNAME
 
         # Restore originals from _MergedResources/.originals/<mod_name>/<path>
         if originals_dir.exists():
@@ -185,8 +207,8 @@ class ConflictResolver:
             shutil.rmtree(str(originals_dir), ignore_errors=True)
 
         # Also handle legacy .xmsbt.merged files from older versions
-        for merged_file in self.mods_root.rglob("*.xmsbt.merged"):
-            original_path = merged_file.parent / merged_file.name.replace(".merged", "")
+        for merged_file in self.mods_root.rglob(XMSBT_MERGED_GLOB):
+            original_path = merged_file.parent / merged_file.name.replace(MERGED_SUFFIX, "")
             try:
                 if not original_path.exists():
                     merged_file.rename(original_path)
@@ -198,8 +220,8 @@ class ConflictResolver:
                 logger.warn("ConflictResolver", f"Could not restore {merged_file.name}: {e}")
 
         # Restore .xmsbt.managed files (disabled by previous versions)
-        for managed_file in self.mods_root.rglob("*.xmsbt.managed"):
-            original_path = managed_file.parent / managed_file.name.replace(".managed", "")
+        for managed_file in self.mods_root.rglob(XMSBT_MANAGED_GLOB):
+            original_path = managed_file.parent / managed_file.name.replace(MANAGED_SUFFIX, "")
             try:
                 if not original_path.exists():
                     managed_file.rename(original_path)
@@ -215,7 +237,7 @@ class ConflictResolver:
 
         # Clean up merged XMSBT files from _MergedResources
         if self.merged_output_dir.exists():
-            for xmsbt_file in self.merged_output_dir.rglob("*.xmsbt"):
+            for xmsbt_file in self.merged_output_dir.rglob(XMSBT_GLOB):
                 try:
                     xmsbt_file.unlink()
                     count += 1
@@ -265,10 +287,10 @@ class ConflictResolver:
         for folder in self.mods_root.iterdir():
             if not folder.is_dir():
                 continue
-            if folder.name.startswith(".") or folder.name.startswith("_"):
+            if self._is_skipped_mod_folder(folder):
                 continue
 
-            for msbt_file in folder.rglob("*.msbt"):
+            for msbt_file in folder.rglob(MSBT_GLOB):
                 m = _LOCALE_MSBT_RE.match(msbt_file.name)
                 if not m:
                     continue
@@ -313,10 +335,10 @@ class ConflictResolver:
         for folder in self.mods_root.iterdir():
             if not folder.is_dir():
                 continue
-            if folder.name.startswith(".") or folder.name.startswith("_"):
+            if self._is_skipped_mod_folder(folder):
                 continue
 
-            for msbt_file in folder.rglob("*.msbt"):
+            for msbt_file in folder.rglob(MSBT_GLOB):
                 m = _LOCALE_MSBT_RE.match(msbt_file.name)
                 if not m:
                     continue
@@ -331,7 +353,7 @@ class ConflictResolver:
     # ------------------------------------------------------------------
     # Binary MSBT → XMSBT overlay generation (emulator-compatible)
     # ------------------------------------------------------------------
-    def generate_msbt_overlays(self) -> int:
+    def generate_msbt_overlays(self, cancel_event: Optional[threading.Event] = None) -> int:
         """Scan mods for binary .msbt files and generate XMSBT overlays.
 
         Emulators (Eden, Ryujinx, Yuzu, etc.) use LayeredFS for mod
@@ -355,6 +377,8 @@ class ConflictResolver:
         """
         if not self.mods_root.exists():
             return 0
+        if self._scan_cancelled(cancel_event):
+            return 0
 
         # NOTE: Locale-specific MSBT renaming (e.g. msg_bgm+us_en.msbt →
         # msg_bgm.msbt) is no longer done automatically here. It is now
@@ -363,8 +387,10 @@ class ConflictResolver:
 
         # Restore any .xmsbt.managed files left by a previous version
         # of this tool.  These renames caused ARCropolis Error 2-0069.
-        for managed in self.mods_root.rglob("*.xmsbt.managed"):
-            original = managed.parent / managed.name.replace(".managed", "")
+        for managed in self.mods_root.rglob(XMSBT_MANAGED_GLOB):
+            if self._scan_cancelled(cancel_event):
+                return 0
+            original = managed.parent / managed.name.replace(MANAGED_SUFFIX, "")
             try:
                 if not original.exists():
                     managed.rename(original)
@@ -380,9 +406,9 @@ class ConflictResolver:
         for folder in self.mods_root.iterdir():
             if not folder.is_dir():
                 continue
-            if folder.name.startswith(".") or folder.name.startswith("_"):
+            if self._is_skipped_mod_folder(folder):
                 continue
-            for xmsbt in folder.rglob("*.xmsbt"):
+            for xmsbt in folder.rglob(XMSBT_GLOB):
                 # If a matching .msbt exists in the same directory,
                 # this XMSBT was likely injected by our tool.  Remove it
                 # so only the _MergedResources overlay is active.
@@ -409,24 +435,32 @@ class ConflictResolver:
         xmsbt_providers: dict[str, list[tuple[str, Path]]] = {}
 
         for folder in self.mods_root.iterdir():
+            if self._scan_cancelled(cancel_event):
+                return 0
             if not folder.is_dir():
                 continue
-            if folder.name.startswith(".") or folder.name.startswith("_"):
+            if self._is_skipped_mod_folder(folder):
                 continue
             mod_name = folder.name
-            for fpath in folder.rglob("*.msbt"):
+            for fpath in folder.rglob(MSBT_GLOB):
+                if self._scan_cancelled(cancel_event):
+                    return 0
                 rel = str(fpath.relative_to(folder)).replace("\\", "/")
                 if rel not in msbt_providers:
                     msbt_providers[rel] = []
                 msbt_providers[rel].append((mod_name, fpath))
-            for fpath in folder.rglob("*.xmsbt"):
+            for fpath in folder.rglob(XMSBT_GLOB):
+                if self._scan_cancelled(cancel_event):
+                    return 0
                 rel = str(fpath.relative_to(folder)).replace("\\", "/")
                 if rel not in xmsbt_providers:
                     xmsbt_providers[rel] = []
                 xmsbt_providers[rel].append((mod_name, fpath))
 
         # Always clean up stale binary MSBT copies from older versions
-        self._cleanup_stale_msbt_copies(msbt_providers)
+        self._cleanup_stale_msbt_copies(msbt_providers, cancel_event=cancel_event)
+        if self._scan_cancelled(cancel_event):
+            return 0
 
         if not msbt_providers and not xmsbt_providers:
             return 0
@@ -449,6 +483,8 @@ class ConflictResolver:
             all_stems[stem]["xmsbt"] = providers
 
         for stem, sources in all_stems.items():
+            if self._scan_cancelled(cancel_event):
+                return generated
             msbt_list = sources["msbt"]
             xmsbt_list = sources["xmsbt"]
 
@@ -475,6 +511,8 @@ class ConflictResolver:
             all_custom_entries: dict[str, str] = {}
             if len(msbt_list) >= 2:
                 for mod_name, fpath in msbt_list:
+                    if self._scan_cancelled(cancel_event):
+                        return generated
                     entries = extract_entries_from_msbt(fpath)
                     if not entries:
                         continue
@@ -493,6 +531,8 @@ class ConflictResolver:
             xmsbt_only_entries: dict[str, str] = {}
             xmsbt_mod_names: list[str] = []
             for mod_name, fpath in xmsbt_list:
+                if self._scan_cancelled(cancel_event):
+                    return generated
                 try:
                     xmsbt_entries = parse_xmsbt(fpath)
                     if xmsbt_entries:
@@ -552,6 +592,9 @@ class ConflictResolver:
                 except Exception:
                     pass
 
+            if self._scan_cancelled(cancel_event):
+                return generated
+
             # Write the merged XMSBT overlay into _MergedResources
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -569,12 +612,16 @@ class ConflictResolver:
                 logger.warn("ConflictResolver",
                             f"Failed to write XMSBT overlay {xmsbt_rel}: {e}")
 
-        if generated > 0:
+        if generated > 0 and not self._scan_cancelled(cancel_event):
             self._ensure_merged_config()
 
         return generated
 
-    def _cleanup_stale_msbt_copies(self, msbt_providers: dict) -> None:
+    def _cleanup_stale_msbt_copies(
+        self,
+        msbt_providers: dict,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
         """Remove binary MSBT files from _MergedResources.
 
         Old versions of this tool copied binary MSBTs into
@@ -587,7 +634,9 @@ class ConflictResolver:
             return
 
         removed = 0
-        for msbt_file in list(self.merged_output_dir.rglob("*.msbt")):
+        for msbt_file in list(self.merged_output_dir.rglob(MSBT_GLOB)):
+            if self._scan_cancelled(cancel_event):
+                return
             try:
                 msbt_file.unlink()
                 removed += 1
@@ -614,13 +663,13 @@ class ConflictResolver:
         part of the mod and applies the overlays at load time.
         """
         self.merged_output_dir.mkdir(parents=True, exist_ok=True)
-        config_path = self.merged_output_dir / "config.json"
+        config_path = self.merged_output_dir / MERGED_CONFIG_FILENAME
 
         # Collect every directory (relative to merged root) that
         # contains an XMSBT file we generated.
         dir_infos: list[dict] = []
         seen_dirs: set[str] = set()
-        for xmsbt_file in self.merged_output_dir.rglob("*.xmsbt"):
+        for xmsbt_file in self.merged_output_dir.rglob(XMSBT_GLOB):
             rel_dir = str(
                 xmsbt_file.parent.relative_to(self.merged_output_dir)
             ).replace("\\", "/")

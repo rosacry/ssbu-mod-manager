@@ -18,6 +18,93 @@ from typing import Optional
 _ffmpeg_path: Optional[str] = None
 _ffmpeg_checked = False
 
+RIFF_MAGIC = b"RIFF"
+WAV_HEADER_SIZE = 44
+WAV_MIN_HEADER_SIZE = WAV_HEADER_SIZE
+WAV_SAMPLE_RATE_HZ = "48000"
+WAV_SAMPLE_FORMAT = "s16"
+FFMPEG_TIMEOUT_SECONDS = 30
+LOG_STDERR_PREVIEW_CHARS = 200
+PCM_ANALYSIS_MIN_BYTES = 4000
+PCM_WINDOW_BYTES_VALIDATE = 96000
+PCM_WINDOW_BYTES_SCORE = 120000
+PCM_WINDOW_BYTES_NOISE = 160000
+INT16_SAMPLE_WIDTH_BYTES = 2
+INT16_ARRAY_TYPECODE = "h"
+MIN_SAMPLES_VALIDATE = 100
+MIN_SAMPLES_SCORE = 200
+ANALYSIS_SAMPLE_COUNT_VALIDATE = 2000
+ANALYSIS_SAMPLE_COUNT_SCORE = 12000
+ANALYSIS_MAX_STEREO_SAMPLES = 6000
+NON_ZERO_MIN_SAMPLES = 10
+CLIPPING_ABS_THRESHOLD = 32000
+CLIPPING_MAX_RATIO_VALIDATE = 0.8
+INT16_ABS_MAX = 32768.0
+SCORE_INVALID = -1.0
+SCORE_INVALID_CHANNELS = 0
+CHANNEL_COUNT_OFFSET = 22
+CHANNEL_COUNT_FALLBACK = 2
+STEREO_CHANNEL_COUNT = 2
+SCORE_NON_ZERO_CAP = 1.2
+SCORE_NON_ZERO_SCALE = 1.5
+SCORE_RMS_CAP = 2.0
+SCORE_RMS_SCALE = 7.0
+SCORE_PEAK_CAP = 1.2
+SCORE_PEAK_SCALE = 1.8
+SCORE_CLIP_CAP = 1.0
+SCORE_CLIP_SCALE = 6.0
+SCORE_CLIP_PENALTY_THRESHOLD = 0.2
+SCORE_CLIP_PENALTY = 1.5
+SCORE_ZCR_HIGH_THRESHOLD = 0.42
+SCORE_ZCR_LOW_THRESHOLD = 0.001
+SCORE_ZCR_PENALTY = 1.0
+SCORE_STEREO_BONUS = 0.25
+STEREO_CORR_MIN_SAMPLES = 8
+STEREO_CORR_EPSILON = 1e-9
+BITS_PER_BYTE = 8.0
+KILOBITS_DIVISOR = 1000.0
+IMPOSSIBLE_BITRATE_THRESHOLD = 1600.0
+VERY_HIGH_BITRATE_THRESHOLD = 1200.0
+HIGH_BITRATE_THRESHOLD = 900.0
+MEDIUM_HIGH_BITRATE_THRESHOLD = 700.0
+MODERATELY_HIGH_BITRATE_THRESHOLD = 512.0
+LOW_BITRATE_THRESHOLD_MIN = 8.0
+LOW_BITRATE_THRESHOLD_LOW = 16.0
+LOW_BITRATE_THRESHOLD_MID = 24.0
+EXPECTED_BITRATE_MIN = 32.0
+EXPECTED_BITRATE_MAX = 320.0
+BITRATE_BONUS = 0.25
+BITRATE_PENALTY_IMPOSSIBLE = 3.0
+BITRATE_PENALTY_VERY_HIGH = 2.4
+BITRATE_PENALTY_HIGH = 1.8
+BITRATE_PENALTY_MEDIUM_HIGH = 1.1
+BITRATE_PENALTY_MODERATE_HIGH = 0.6
+BITRATE_PENALTY_TOO_LOW = 2.0
+BITRATE_PENALTY_LOW = 1.2
+BITRATE_PENALTY_MID = 0.6
+MIN_DURATION_BYTES_PER_SECOND_CAP = 96000.0
+DURATION_PENALTY_SEVERE_RATIO = 0.35
+DURATION_PENALTY_MILD_RATIO = 0.6
+DURATION_PENALTY_SEVERE = 2.0
+DURATION_PENALTY_MILD = 1.0
+CANDIDATE_MISSING_SCORE = -999.0
+CANDIDATE_MONO_FORCED_PENALTY = 0.75
+NOISE_OVERRIDE_TRIGGER_ZCR = 0.28
+NOISE_OVERRIDE_TRIGGER_CORR = 0.62
+NOISE_OVERRIDE_DURATION_TOLERANCE_S = 0.4
+NOISE_OVERRIDE_BITRATE_TOLERANCE_MIN = 6.0
+NOISE_OVERRIDE_BITRATE_TOLERANCE_RATIO = 0.08
+NOISE_OVERRIDE_ZCR_TARGET = 0.12
+NOISE_OVERRIDE_ZCR_MARGIN = 0.14
+NOISE_OVERRIDE_MIN_CORR_BASE = 0.65
+NOISE_OVERRIDE_CORR_MARGIN = 0.15
+NOISE_OVERRIDE_RAW_MARGIN = 0.8
+WINDOWS_FFMPEG_CANDIDATES = (
+    r"%LOCALAPPDATA%\Programs\ffmpeg\bin\ffmpeg.exe",
+    r"%ProgramFiles%\ffmpeg\bin\ffmpeg.exe",
+    r"%ProgramFiles(x86)%\ffmpeg\bin\ffmpeg.exe",
+)
+
 
 def _find_ffmpeg() -> Optional[str]:
     """Find ffmpeg executable. Returns path or None."""
@@ -29,12 +116,8 @@ def _find_ffmpeg() -> Optional[str]:
     if path:
         _ffmpeg_path = path
         return path
-    # Check common install locations on Windows
-    for candidate in [
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\ffmpeg\bin\ffmpeg.exe"),
-        os.path.expandvars(r"%ProgramFiles%\ffmpeg\bin\ffmpeg.exe"),
-        os.path.expandvars(r"%ProgramFiles(x86)%\ffmpeg\bin\ffmpeg.exe"),
-    ]:
+    for candidate_pattern in WINDOWS_FFMPEG_CANDIDATES:
+        candidate = os.path.expandvars(candidate_pattern)
         if os.path.isfile(candidate):
             _ffmpeg_path = candidate
             return candidate
@@ -58,17 +141,37 @@ def _convert_ogg_opus_to_wav(ogg_path: Path) -> Optional[Path]:
     wav_path = cache_dir / (ogg_path.stem + ".wav")
     try:
         result = subprocess.run(
-            [ffmpeg, "-y", "-i", str(ogg_path), "-ar", "48000",
-             "-sample_fmt", "s16", str(wav_path)],
-            capture_output=True, timeout=30,
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                str(ogg_path),
+                "-ar",
+                WAV_SAMPLE_RATE_HZ,
+                "-sample_fmt",
+                WAV_SAMPLE_FORMAT,
+                str(wav_path),
+            ],
+            capture_output=True,
+            timeout=FFMPEG_TIMEOUT_SECONDS,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        if result.returncode == 0 and wav_path.exists() and wav_path.stat().st_size > 44:
+        if (
+            result.returncode == 0
+            and wav_path.exists()
+            and wav_path.stat().st_size > WAV_MIN_HEADER_SIZE
+        ):
             return wav_path
-        # Log ffmpeg failure details
         try:
             from src.utils.logger import logger
-            stderr = result.stderr.decode('utf-8', errors='replace')[:200] if result.stderr else ''
+
+            stderr = (
+                result.stderr.decode("utf-8", errors="replace")[
+                    :LOG_STDERR_PREVIEW_CHARS
+                ]
+                if result.stderr
+                else ""
+            )
             logger.warn("NUS3AUDIO", f"ffmpeg conversion failed (rc={result.returncode}): {stderr}")
         except Exception:
             pass
@@ -97,32 +200,28 @@ def _validate_wav_quality(wav_path: Path) -> bool:
     """
     try:
         with open(wav_path, 'rb') as f:
-            header = f.read(44)
-            if len(header) < 44 or header[:4] != b'RIFF':
+            header = f.read(WAV_HEADER_SIZE)
+            if len(header) < WAV_MIN_HEADER_SIZE or header[:4] != RIFF_MAGIC:
                 return False
-            # Read ~0.5s of 16-bit stereo 48kHz data = 96000 bytes
-            pcm = f.read(96000)
-        if len(pcm) < 4000:
+            pcm = f.read(PCM_WINDOW_BYTES_VALIDATE)
+        if len(pcm) < PCM_ANALYSIS_MIN_BYTES:
             return False
 
-        # Parse as 16-bit signed samples
         import array
-        samples = array.array('h')
-        # Truncate to even length
-        samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
-        if len(samples) < 100:
+
+        samples = array.array(INT16_ARRAY_TYPECODE)
+        samples.frombytes(pcm[:len(pcm) - len(pcm) % INT16_SAMPLE_WIDTH_BYTES])
+        if len(samples) < MIN_SAMPLES_VALIDATE:
             return False
 
-        # Check 1: not all zeros
-        non_zero = sum(1 for s in samples[:2000] if s != 0)
-        if non_zero < 10:
-            return False  # Silence
+        sample_window = samples[:ANALYSIS_SAMPLE_COUNT_VALIDATE]
+        non_zero = sum(1 for s in sample_window if s != 0)
+        if non_zero < NON_ZERO_MIN_SAMPLES:
+            return False
 
-        # Check 2: not nearly all clipping (would indicate noise/garbage)
-        clipping = sum(1 for s in samples[:2000]
-                       if abs(s) > 32000)
-        if clipping > len(samples[:2000]) * 0.8:
-            return False  # Extreme values - likely noise
+        clipping = sum(1 for s in sample_window if abs(s) > CLIPPING_ABS_THRESHOLD)
+        if clipping > len(sample_window) * CLIPPING_MAX_RATIO_VALIDATE:
+            return False
 
         return True
     except Exception:
@@ -137,27 +236,28 @@ def _score_wav_quality(wav_path: Path) -> tuple[float, int]:
     """
     try:
         with open(wav_path, 'rb') as f:
-            header = f.read(44)
-            if len(header) < 44 or header[:4] != b'RIFF':
-                return -1.0, 0
-            channels = int(struct.unpack_from('<H', header, 22)[0])
-            pcm = f.read(120000)
-        if len(pcm) < 4000:
-            return -1.0, channels
+            header = f.read(WAV_HEADER_SIZE)
+            if len(header) < WAV_MIN_HEADER_SIZE or header[:4] != RIFF_MAGIC:
+                return SCORE_INVALID, SCORE_INVALID_CHANNELS
+            channels = int(struct.unpack_from('<H', header, CHANNEL_COUNT_OFFSET)[0])
+            pcm = f.read(PCM_WINDOW_BYTES_SCORE)
+        if len(pcm) < PCM_ANALYSIS_MIN_BYTES:
+            return SCORE_INVALID, channels
 
         import array
-        samples = array.array('h')
-        samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
-        if len(samples) < 200:
-            return -1.0, channels
 
-        view = samples[:min(len(samples), 12000)]
+        samples = array.array(INT16_ARRAY_TYPECODE)
+        samples.frombytes(pcm[:len(pcm) - len(pcm) % INT16_SAMPLE_WIDTH_BYTES])
+        if len(samples) < MIN_SAMPLES_SCORE:
+            return SCORE_INVALID, channels
+
+        view = samples[:min(len(samples), ANALYSIS_SAMPLE_COUNT_SCORE)]
         n = len(view)
-        if n < 200:
-            return -1.0, channels
+        if n < MIN_SAMPLES_SCORE:
+            return SCORE_INVALID, channels
 
         non_zero = sum(1 for s in view if s != 0)
-        clipping = sum(1 for s in view if abs(s) >= 32000)
+        clipping = sum(1 for s in view if abs(s) >= CLIPPING_ABS_THRESHOLD)
         peak = max(abs(s) for s in view)
         rms = (sum(s * s for s in view) / n) ** 0.5
         zero_crossings = 0
@@ -169,26 +269,26 @@ def _score_wav_quality(wav_path: Path) -> tuple[float, int]:
 
         non_zero_ratio = non_zero / n
         clipping_ratio = clipping / n
-        peak_norm = peak / 32768.0
-        rms_norm = rms / 32768.0
+        peak_norm = peak / INT16_ABS_MAX
+        rms_norm = rms / INT16_ABS_MAX
         zcr = zero_crossings / max(1, n - 1)
 
         score = 0.0
-        score += min(1.2, non_zero_ratio * 1.5)
-        score += min(2.0, rms_norm * 7.0)
-        score += min(1.2, peak_norm * 1.8)
-        score += max(0.0, 1.0 - clipping_ratio * 6.0)
-        if clipping_ratio > 0.2:
-            score -= 1.5
-        if zcr > 0.42:
-            score -= 1.0
-        if zcr < 0.001:
-            score -= 1.0
-        if channels == 2:
-            score += 0.25
+        score += min(SCORE_NON_ZERO_CAP, non_zero_ratio * SCORE_NON_ZERO_SCALE)
+        score += min(SCORE_RMS_CAP, rms_norm * SCORE_RMS_SCALE)
+        score += min(SCORE_PEAK_CAP, peak_norm * SCORE_PEAK_SCALE)
+        score += max(SCORE_INVALID_CHANNELS, SCORE_CLIP_CAP - clipping_ratio * SCORE_CLIP_SCALE)
+        if clipping_ratio > SCORE_CLIP_PENALTY_THRESHOLD:
+            score -= SCORE_CLIP_PENALTY
+        if zcr > SCORE_ZCR_HIGH_THRESHOLD:
+            score -= SCORE_ZCR_PENALTY
+        if zcr < SCORE_ZCR_LOW_THRESHOLD:
+            score -= SCORE_ZCR_PENALTY
+        if channels == STEREO_CHANNEL_COUNT:
+            score += SCORE_STEREO_BONUS
         return score, channels
     except Exception:
-        return -1.0, 0
+        return SCORE_INVALID, SCORE_INVALID_CHANNELS
 
 
 def _wav_duration_seconds(wav_path: Path) -> float:
@@ -208,23 +308,28 @@ def _wav_noise_signature(wav_path: Path) -> tuple[float, float]:
     """Return quick noise-signature metrics as (zcr, stereo_corr)."""
     try:
         with open(wav_path, 'rb') as f:
-            header = f.read(44)
-            if len(header) < 44 or header[:4] != b'RIFF':
+            header = f.read(WAV_HEADER_SIZE)
+            if len(header) < WAV_MIN_HEADER_SIZE or header[:4] != RIFF_MAGIC:
                 return 0.0, 1.0
-            channels = int(struct.unpack_from('<H', header, 22)[0]) if len(header) >= 24 else 2
-            pcm = f.read(160000)
-        if len(pcm) < 4000:
+            channels = (
+                int(struct.unpack_from("<H", header, CHANNEL_COUNT_OFFSET)[0])
+                if len(header) >= CHANNEL_COUNT_OFFSET + INT16_SAMPLE_WIDTH_BYTES
+                else CHANNEL_COUNT_FALLBACK
+            )
+            pcm = f.read(PCM_WINDOW_BYTES_NOISE)
+        if len(pcm) < PCM_ANALYSIS_MIN_BYTES:
             return 0.0, 1.0
 
         import array
-        samples = array.array('h')
-        samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
-        if len(samples) < 200:
+
+        samples = array.array(INT16_ARRAY_TYPECODE)
+        samples.frombytes(pcm[:len(pcm) - len(pcm) % INT16_SAMPLE_WIDTH_BYTES])
+        if len(samples) < MIN_SAMPLES_SCORE:
             return 0.0, 1.0
 
-        view = samples[:min(len(samples), 12000)]
+        view = samples[:min(len(samples), ANALYSIS_SAMPLE_COUNT_SCORE)]
         n = len(view)
-        if n < 200:
+        if n < MIN_SAMPLES_SCORE:
             return 0.0, 1.0
 
         zero_crossings = 0
@@ -235,13 +340,13 @@ def _wav_noise_signature(wav_path: Path) -> tuple[float, float]:
                 zero_crossings += 1
         zcr = zero_crossings / max(1, n - 1)
 
-        if channels != 2:
+        if channels != STEREO_CHANNEL_COUNT:
             return zcr, 0.0
 
         left = view[0::2]
         right = view[1::2]
-        m = min(len(left), len(right), 6000)
-        if m < 8:
+        m = min(len(left), len(right), ANALYSIS_MAX_STEREO_SAMPLES)
+        if m < STEREO_CORR_MIN_SAMPLES:
             return zcr, 1.0
         left = left[:m]
         right = right[:m]
@@ -250,7 +355,7 @@ def _wav_noise_signature(wav_path: Path) -> tuple[float, float]:
         var_l = sum((x - mean_l) ** 2 for x in left) / m
         var_r = sum((x - mean_r) ** 2 for x in right) / m
         cov = sum((left[i] - mean_l) * (right[i] - mean_r) for i in range(m)) / m
-        corr = cov / ((var_l * var_r) ** 0.5 + 1e-9)
+        corr = cov / ((var_l * var_r) ** 0.5 + STEREO_CORR_EPSILON)
         return zcr, corr
     except Exception:
         return 0.0, 1.0
@@ -266,40 +371,36 @@ def _score_opus_candidate(base_score: float, duration_s: float,
     Returns (adjusted_score, implied_bitrate_kbps).
     """
     if duration_s <= 0.0 or encoded_size_bytes <= 0:
-        return base_score - 3.0, 0.0
+        return base_score - BITRATE_PENALTY_IMPOSSIBLE, 0.0
 
-    bitrate_kbps = (encoded_size_bytes * 8.0) / (duration_s * 1000.0)
+    bitrate_kbps = (encoded_size_bytes * BITS_PER_BYTE) / (duration_s * KILOBITS_DIVISOR)
     score = base_score
 
-    # Strongly penalize impossible/highly unlikely Opus bitrates.
-    if bitrate_kbps > 1600.0:
-        score -= 3.0
-    elif bitrate_kbps > 1200.0:
-        score -= 2.4
-    elif bitrate_kbps > 900.0:
-        score -= 1.8
-    elif bitrate_kbps > 700.0:
-        score -= 1.1
-    elif bitrate_kbps > 512.0:
-        score -= 0.6
+    if bitrate_kbps > IMPOSSIBLE_BITRATE_THRESHOLD:
+        score -= BITRATE_PENALTY_IMPOSSIBLE
+    elif bitrate_kbps > VERY_HIGH_BITRATE_THRESHOLD:
+        score -= BITRATE_PENALTY_VERY_HIGH
+    elif bitrate_kbps > HIGH_BITRATE_THRESHOLD:
+        score -= BITRATE_PENALTY_HIGH
+    elif bitrate_kbps > MEDIUM_HIGH_BITRATE_THRESHOLD:
+        score -= BITRATE_PENALTY_MEDIUM_HIGH
+    elif bitrate_kbps > MODERATELY_HIGH_BITRATE_THRESHOLD:
+        score -= BITRATE_PENALTY_MODERATE_HIGH
 
-    # Also penalize implausibly low bitrates (typically bad frame parsing).
-    if bitrate_kbps < 8.0:
-        score -= 2.0
-    elif bitrate_kbps < 16.0:
-        score -= 1.2
-    elif bitrate_kbps < 24.0:
-        score -= 0.6
-    elif 32.0 <= bitrate_kbps <= 320.0:
-        score += 0.25
+    if bitrate_kbps < LOW_BITRATE_THRESHOLD_MIN:
+        score -= BITRATE_PENALTY_TOO_LOW
+    elif bitrate_kbps < LOW_BITRATE_THRESHOLD_LOW:
+        score -= BITRATE_PENALTY_LOW
+    elif bitrate_kbps < LOW_BITRATE_THRESHOLD_MID:
+        score -= BITRATE_PENALTY_MID
+    elif EXPECTED_BITRATE_MIN <= bitrate_kbps <= EXPECTED_BITRATE_MAX:
+        score += BITRATE_BONUS
 
-    # Additional short-duration guard using a conservative high bitrate cap.
-    # (If decoded duration is far below this bound, frame extraction is likely wrong.)
-    min_expected_duration = encoded_size_bytes / 96000.0  # ~768 kbps cap
-    if duration_s < min_expected_duration * 0.35:
-        score -= 2.0
-    elif duration_s < min_expected_duration * 0.6:
-        score -= 1.0
+    min_expected_duration = encoded_size_bytes / MIN_DURATION_BYTES_PER_SECOND_CAP
+    if duration_s < min_expected_duration * DURATION_PENALTY_SEVERE_RATIO:
+        score -= DURATION_PENALTY_SEVERE
+    elif duration_s < min_expected_duration * DURATION_PENALTY_MILD_RATIO:
+        score -= DURATION_PENALTY_MILD
 
     return score, bitrate_kbps
 
@@ -314,12 +415,11 @@ def _select_best_candidate_index(candidates: list[dict]) -> int:
     )
 
     def _adjusted_score(c: dict) -> float:
-        score = float(c.get("score", -999.0))
+        score = float(c.get("score", CANDIDATE_MISSING_SCORE))
         forced_channels = c.get("forced_channels")
         out_channels = int(c.get("out_channels", 0) or 0)
         if stereo_available and forced_channels == 1 and out_channels == 1:
-            # Prevent forced-mono fallback from winning when stereo decodes exist.
-            score -= 0.75
+            score -= CANDIDATE_MONO_FORCED_PENALTY
         return score
 
     best_idx = 0
@@ -329,7 +429,7 @@ def _select_best_candidate_index(candidates: list[dict]) -> int:
         corr_rank = float(c.get("corr", 0.0)) if out_channels >= 2 else -1.0
         rank = (
             _adjusted_score(c),
-            float(c.get("raw", -999.0)),
+            float(c.get("raw", CANDIDATE_MISSING_SCORE)),
             float(c.get("duration", 0.0)),
             -float(c.get("zcr", 1.0)),
             corr_rank,
@@ -356,7 +456,10 @@ def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
     # Trigger override checks whenever the selected decode has clearly
     # elevated high-frequency/noise signature, even if correlation is
     # not extremely low.
-    if not (best["zcr"] >= 0.28 and best["corr"] <= 0.62):
+    if not (
+        best["zcr"] >= NOISE_OVERRIDE_TRIGGER_ZCR
+        and best["corr"] <= NOISE_OVERRIDE_TRIGGER_CORR
+    ):
         return best_idx
 
     best_out_channels = int(best.get("out_channels", 0) or 0)
@@ -375,18 +478,21 @@ def _pick_low_noise_override(candidates: list[dict], best_idx: int) -> int:
         c_out_channels = int(c.get("out_channels", 0) or 0)
         if c_out_channels != best_out_channels:
             continue
-        if abs(c["duration"] - best_dur) > 0.4:
+        if abs(c["duration"] - best_dur) > NOISE_OVERRIDE_DURATION_TOLERANCE_S:
             continue
-        if abs(c["bitrate"] - best_br) > max(6.0, best_br * 0.08):
+        if abs(c["bitrate"] - best_br) > max(
+            NOISE_OVERRIDE_BITRATE_TOLERANCE_MIN,
+            best_br * NOISE_OVERRIDE_BITRATE_TOLERANCE_RATIO,
+        ):
             continue
-        if c["zcr"] > min(0.12, best["zcr"] - 0.14):
+        if c["zcr"] > min(NOISE_OVERRIDE_ZCR_TARGET, best["zcr"] - NOISE_OVERRIDE_ZCR_MARGIN):
             continue
         # Require clearly better stereo coherence, but avoid demanding
         # near-perfect correlation for tracks that are naturally wide.
-        min_corr = max(0.65, best["corr"] + 0.15)
+        min_corr = max(NOISE_OVERRIDE_MIN_CORR_BASE, best["corr"] + NOISE_OVERRIDE_CORR_MARGIN)
         if c["corr"] < min_corr:
             continue
-        if c["raw"] < (best_raw - 0.8):
+        if c["raw"] < (best_raw - NOISE_OVERRIDE_RAW_MARGIN):
             continue
         rank = (
             c["score"],

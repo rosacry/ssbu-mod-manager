@@ -6,6 +6,16 @@ from src.utils.action_history import action_history
 
 
 class MainWindow(ctk.CTkFrame):
+    ACTION_MESSAGE_DURATION_MS = 3000
+    ZERO_DELAY_MS = 0
+    NAVIGATION_START_DELAY_MS = 0
+    NAVIGATION_OVERLAY_SHOW_DELAY_MS = 46
+    NAVIGATION_OVERLAY_HIDE_DELAY_MS = 36
+    NAVIGATION_OVERLAY_MIN_FIRST_VISIT_MS = 62
+    NAVIGATION_OVERLAY_MIN_RETURN_VISIT_MS = 26
+    PAGE_SCROLL_PATCH_DELAY_MS = 150
+    RENDER_SETTLE_DELAY_MS = 18
+
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
         self.app = app
@@ -152,11 +162,11 @@ class MainWindow(ctk.CTkFrame):
             desc = action_history.undo()
         except Exception as e:
             self.action_label.configure(text=f"Undo failed: {e}", text_color="#e94560")
-            self._safe_after(3000, lambda: self.action_label.configure(text=""))
+            self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
             return
         if desc:
             self.action_label.configure(text=f"Undone: {desc}", text_color="#e94560")
-            self._safe_after(3000, lambda: self.action_label.configure(text=""))
+            self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
             # Refresh current page
             if self.current_page and self.current_page in self.pages:
                 page = self.pages[self.current_page]
@@ -169,11 +179,11 @@ class MainWindow(ctk.CTkFrame):
             desc = action_history.redo()
         except Exception as e:
             self.action_label.configure(text=f"Redo failed: {e}", text_color="#e94560")
-            self._safe_after(3000, lambda: self.action_label.configure(text=""))
+            self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
             return
         if desc:
             self.action_label.configure(text=f"Redone: {desc}", text_color="#2fa572")
-            self._safe_after(3000, lambda: self.action_label.configure(text=""))
+            self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
             if self.current_page and self.current_page in self.pages:
                 page = self.pages[self.current_page]
                 if hasattr(page, '_loaded'):
@@ -215,11 +225,11 @@ class MainWindow(ctk.CTkFrame):
                 page._loaded = False
             page.on_show()
         self.action_label.configure(text="Changes discarded", text_color="#e94560")
-        self._safe_after(3000, lambda: self.action_label.configure(text=""))
+        self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
 
     def update_save_discard(self):
         """Update save/discard button states based on unsaved changes."""
-        self._safe_after(0, self._update_save_discard_impl)
+        self._safe_after(self.ZERO_DELAY_MS, self._update_save_discard_impl)
 
     def _update_save_discard_impl(self):
         try:
@@ -242,7 +252,7 @@ class MainWindow(ctk.CTkFrame):
 
     def _update_undo_redo(self):
         """Update undo/redo button states (thread-safe)."""
-        self._safe_after(0, self._update_undo_redo_impl)
+        self._safe_after(self.ZERO_DELAY_MS, self._update_undo_redo_impl)
 
     def _update_undo_redo_impl(self):
         """Actually update undo/redo button states on the main thread."""
@@ -315,7 +325,14 @@ class MainWindow(ctk.CTkFrame):
         self._show_navigation_overlay()
         self._nav_token += 1
         token = self._nav_token
-        self.after(0, lambda pid=page_id, t=token: self._complete_navigation(pid, t, overlay_delay_ms=46))
+        self.after(
+            self.NAVIGATION_START_DELAY_MS,
+            lambda pid=page_id, t=token: self._complete_navigation(
+                pid,
+                t,
+                overlay_delay_ms=self.NAVIGATION_OVERLAY_SHOW_DELAY_MS,
+            ),
+        )
 
     def navigate_immediate(self, page_id: str):
         """Navigate synchronously without delayed overlay transitions."""
@@ -331,15 +348,34 @@ class MainWindow(ctk.CTkFrame):
                 self._nav_overlay_after_id = None
         except Exception:
             pass
-        self._complete_navigation(page_id, token, overlay_delay_ms=0)
+        self._complete_navigation(page_id, token, overlay_delay_ms=self.ZERO_DELAY_MS)
 
-    def _complete_navigation(self, page_id: str, token: int, overlay_delay_ms: int = 36):
+    def _complete_navigation(
+        self,
+        page_id: str,
+        token: int,
+        overlay_delay_ms: int | None = None,
+    ):
         if token != self._nav_token:
             return
+        if overlay_delay_ms is None:
+            overlay_delay_ms = self.NAVIGATION_OVERLAY_HIDE_DELAY_MS
         prev_page = self.pages.get(self.current_page) if self.current_page else None
         page = self.pages[page_id]
         first_visit = page_id not in self._shown_pages and page_id not in self._primed_pages
-        settle_overlay_delay = max(int(overlay_delay_ms), 62 if first_visit else 26)
+        minimum_delay = (
+            self.NAVIGATION_OVERLAY_MIN_FIRST_VISIT_MS
+            if first_visit
+            else self.NAVIGATION_OVERLAY_MIN_RETURN_VISIT_MS
+        )
+        settle_overlay_delay = max(int(overlay_delay_ms), minimum_delay)
+        # Hide outgoing page workload first (cancels in-flight background work
+        # like Music scans before the incoming page begins heavy setup).
+        if prev_page is not None:
+            try:
+                prev_page.on_hide()
+            except Exception:
+                pass
         self._map_page(page)
         try:
             page.lower()
@@ -350,12 +386,6 @@ class MainWindow(ctk.CTkFrame):
         except Exception:
             pass
         self._settle_page_layout(page, passes=2 if first_visit else 0)
-
-        if prev_page is not None:
-            try:
-                prev_page.on_hide()
-            except Exception:
-                pass
 
         self.current_page = page_id
         self._shown_pages.add(page_id)
@@ -371,7 +401,7 @@ class MainWindow(ctk.CTkFrame):
                 pass
         page.focus_set()
         if hasattr(page, '_patch_all_scroll_speeds'):
-            page.after(150, page._patch_all_scroll_speeds)
+            page.after(self.PAGE_SCROLL_PATCH_DELAY_MS, page._patch_all_scroll_speeds)
         self._schedule_render_settle(page_id)
         self.sidebar.set_active(page_id)
         self._hide_navigation_overlay(token, delay_ms=settle_overlay_delay)
@@ -390,7 +420,10 @@ class MainWindow(ctk.CTkFrame):
         except Exception:
             pass
 
-    def _hide_navigation_overlay(self, token: int, delay_ms: int = 36):
+    def _hide_navigation_overlay(self, token: int, delay_ms: int | None = None):
+        if delay_ms is None:
+            delay_ms = self.NAVIGATION_OVERLAY_HIDE_DELAY_MS
+
         def _clear():
             self._nav_overlay_after_id = None
             if token != self._nav_token:
@@ -434,7 +467,7 @@ class MainWindow(ctk.CTkFrame):
             except Exception:
                 pass
 
-        self._render_settle_after_id = self.after(18, _settle)
+        self._render_settle_after_id = self.after(self.RENDER_SETTLE_DELAY_MS, _settle)
 
     def update_status(self, text: str):
         self.status_bar.set_status(text)

@@ -1,68 +1,128 @@
-"""Build script for SSBU Mod Manager - creates standalone .exe"""
-import PyInstaller.__main__
+"""Build and package SSBU Mod Manager for release."""
+
+from __future__ import annotations
+
 import os
+import zipfile
+from pathlib import Path
 
-# Ensure we're in the right directory
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+import PyInstaller.__main__
 
-# Get absolute path to icon
-icon_path = os.path.abspath('assets/icon.ico')
+from src import __version__
 
-args = [
-    'main.py',
-    '--name=SSBUModManager',
-    # onedir launches significantly faster than onefile because it avoids
-    # extracting the full bundle on every startup.
-    '--onedir',
-    '--windowed',
-    '--add-data=ParamLabels.csv;.',
-    '--hidden-import=pyprc',
-    # PylibMS installs as both LMS (uppercase) and lms (lowercase).
-    # The Lua data file (System.lua) must be bundled explicitly because
-    # --collect-all doesn't always pick up non-Python files.
-    '--hidden-import=LMS',
-    '--hidden-import=LMS.Common',
-    '--hidden-import=LMS.Message',
-    '--hidden-import=LMS.Message.MSBT',
-    '--hidden-import=LMS.Stream',
-    '--hidden-import=LMS.Stream.Reader',
-    '--hidden-import=LMS.Stream.Writer',
-    '--hidden-import=LMS.Project',
-    '--collect-all=LMS',
-    '--hidden-import=lupa',
-    '--collect-all=lupa',
-    '--hidden-import=customtkinter',
-    '--collect-all=customtkinter',
-    # App pages are imported lazily via importlib in src/app.py.
-    # Explicitly bundle the package/submodules for frozen builds.
-    '--hidden-import=src.ui.pages',
-    '--hidden-import=src.ui.pages.dashboard_page',
-    '--hidden-import=src.ui.pages.mods_page',
-    '--hidden-import=src.ui.pages.plugins_page',
-    '--hidden-import=src.ui.pages.css_page',
-    '--hidden-import=src.ui.pages.music_page',
-    '--hidden-import=src.ui.pages.conflicts_page',
-    '--hidden-import=src.ui.pages.share_page',
-    '--hidden-import=src.ui.pages.migration_page',
-    '--hidden-import=src.ui.pages.online_compat_page',
-    '--hidden-import=src.ui.pages.settings_page',
-    '--hidden-import=src.ui.pages.developer_page',
-    '--collect-submodules=src.ui.pages',
-    '--hidden-import=PIL',
-    '--hidden-import=PIL._tkinter_finder',
-    '--hidden-import=pygame',
-    '--add-data=assets;assets',
-    '--noconfirm',
-    '--clean',
+ENTRYPOINT = "main.py"
+EXECUTABLE_NAME = "SSBUModManager"
+OUTPUT_DIR_NAME = EXECUTABLE_NAME
+ICON_RELATIVE_PATH = Path("assets") / "icon.ico"
+ASSETS_RELATIVE_PATH = Path("assets")
+PARAM_LABELS_RELATIVE_PATH = Path("ParamLabels.csv")
+WINDOWS_RELEASE_SUFFIX = "windows"
+ZIP_COMPRESSION = zipfile.ZIP_DEFLATED
+ZIP_COMPRESSION_LEVEL = 9
+PYINSTALLER_COMMON_FLAGS = [
+    "--onedir",
+    "--windowed",
+    "--noconfirm",
+    "--clean",
 ]
+HIDDEN_IMPORTS = [
+    "pyprc",
+    "LMS",
+    "LMS.Common",
+    "LMS.Message",
+    "LMS.Message.MSBT",
+    "LMS.Stream",
+    "LMS.Stream.Reader",
+    "LMS.Stream.Writer",
+    "LMS.Project",
+    "lupa",
+    "customtkinter",
+    "src.ui.pages",
+    "src.ui.pages.dashboard_page",
+    "src.ui.pages.mods_page",
+    "src.ui.pages.plugins_page",
+    "src.ui.pages.css_page",
+    "src.ui.pages.music_page",
+    "src.ui.pages.conflicts_page",
+    "src.ui.pages.share_page",
+    "src.ui.pages.migration_page",
+    "src.ui.pages.online_compat_page",
+    "src.ui.pages.settings_page",
+    "src.ui.pages.developer_page",
+    "PIL",
+    "PIL._tkinter_finder",
+    "pygame",
+]
+COLLECT_ALL_PACKAGES = [
+    "LMS",
+    "lupa",
+    "customtkinter",
+]
+COLLECT_SUBMODULE_PACKAGES = [
+    "src.ui.pages",
+]
+PROJECT_ROOT = Path(__file__).resolve().parent
+DIST_DIR = PROJECT_ROOT / "dist"
+ONEDIR_OUTPUT_PATH = DIST_DIR / OUTPUT_DIR_NAME
+RELEASE_ZIP_FILENAME = (
+    f"{EXECUTABLE_NAME}-{__version__}-{WINDOWS_RELEASE_SUFFIX}.zip"
+)
+RELEASE_ZIP_PATH = DIST_DIR / RELEASE_ZIP_FILENAME
 
-# Add icon - use absolute path
-if os.path.exists(icon_path):
-    args.append(f'--icon={icon_path}')
-    print(f"Using icon: {icon_path}")
-else:
-    print("WARNING: Icon file not found at assets/icon.ico")
 
-print("Building SSBU Mod Manager...")
-PyInstaller.__main__.run(args)
-print("\nBuild complete! Check the 'dist' folder for SSBUModManager.exe")
+def _build_pyinstaller_args(icon_path: Path) -> list[str]:
+    args: list[str] = [
+        ENTRYPOINT,
+        f"--name={EXECUTABLE_NAME}",
+        f"--add-data={PARAM_LABELS_RELATIVE_PATH};.",
+        f"--add-data={ASSETS_RELATIVE_PATH};assets",
+    ]
+    args.extend(PYINSTALLER_COMMON_FLAGS)
+    args.extend(f"--hidden-import={name}" for name in HIDDEN_IMPORTS)
+    args.extend(f"--collect-all={name}" for name in COLLECT_ALL_PACKAGES)
+    args.extend(
+        f"--collect-submodules={name}" for name in COLLECT_SUBMODULE_PACKAGES
+    )
+    if icon_path.exists():
+        args.append(f"--icon={icon_path}")
+        print(f"Using icon: {icon_path}")
+    else:
+        print(f"WARNING: icon not found: {icon_path}")
+    return args
+
+
+def _zip_onedir_output() -> Path:
+    if not ONEDIR_OUTPUT_PATH.exists():
+        raise FileNotFoundError(f"Build output not found: {ONEDIR_OUTPUT_PATH}")
+
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    if RELEASE_ZIP_PATH.exists():
+        RELEASE_ZIP_PATH.unlink()
+
+    with zipfile.ZipFile(
+        RELEASE_ZIP_PATH,
+        mode="w",
+        compression=ZIP_COMPRESSION,
+        compresslevel=ZIP_COMPRESSION_LEVEL,
+    ) as archive:
+        for path in ONEDIR_OUTPUT_PATH.rglob("*"):
+            if path.is_file():
+                archive_name = path.relative_to(DIST_DIR)
+                archive.write(path, arcname=str(archive_name))
+
+    return RELEASE_ZIP_PATH
+
+
+def main() -> None:
+    os.chdir(PROJECT_ROOT)
+    icon_path = PROJECT_ROOT / ICON_RELATIVE_PATH
+    build_args = _build_pyinstaller_args(icon_path)
+    print(f"Building {EXECUTABLE_NAME} {__version__}...")
+    PyInstaller.__main__.run(build_args)
+    zip_path = _zip_onedir_output()
+    print(f"Build complete: {ONEDIR_OUTPUT_PATH / (EXECUTABLE_NAME + '.exe')}")
+    print(f"Release artifact: {zip_path}")
+
+
+if __name__ == "__main__":
+    main()

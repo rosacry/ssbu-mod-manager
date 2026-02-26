@@ -1,6 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
+Current release version: **1.0.0**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -39,7 +40,7 @@ python main.py
 
 ## Build
 
-Default build output is **onedir** for much faster app launch than onefile.
+Release packaging uses a single downloadable artifact: a **zip containing the executable**.
 
 ```powershell
 python build.py
@@ -48,6 +49,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
+- `dist/SSBUModManager-1.0.0-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
