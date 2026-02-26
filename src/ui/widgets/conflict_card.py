@@ -1,6 +1,6 @@
 """Conflict card widget for the conflicts page."""
 import customtkinter as ctk
-from src.models.conflict import FileConflict, ConflictSeverity
+from src.models.conflict import FileConflict, ConflictSeverity, ResolutionStrategy
 
 
 SEVERITY_COLORS = {
@@ -73,8 +73,14 @@ class ConflictCard(ctk.CTkFrame):
 
         # Status info
         if conflict.is_mergeable:
+            if conflict.resolved and conflict.resolution == ResolutionStrategy.MERGE:
+                merge_text = "Auto-mergeable (already merged)"
+            elif conflict.resolved:
+                merge_text = "Merge-capable (already resolved)"
+            else:
+                merge_text = "Auto-mergeable (non-overlapping entries can be combined)"
             merge_info = ctk.CTkLabel(
-                self, text="Auto-mergeable (non-overlapping entries can be combined)",
+                self, text=merge_text,
                 font=ctk.CTkFont(size=11),
                 text_color="#2fa572", anchor="w",
             )

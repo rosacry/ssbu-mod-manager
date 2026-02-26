@@ -94,6 +94,12 @@ class ConflictsPage(BasePage):
         self.header_btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         self.scan_btn = ctk.CTkButton(self.header_btn_frame, text="Rescan", width=110,
                                       command=self._force_scan, corner_radius=8, height=34)
+        self.fix_text_btn_header = ctk.CTkButton(
+            self.header_btn_frame, text="Fix Text Conflicts",
+            fg_color="#2fa572", hover_color="#106a43",
+            command=self._fix_text_conflicts, width=185,
+            corner_radius=8, height=34,
+        )
         self.restore_btn_header = ctk.CTkButton(
             self.header_btn_frame, text="Restore Originals",
             fg_color="#b08a2a", hover_color="#8a6b1f",
@@ -130,9 +136,9 @@ class ConflictsPage(BasePage):
         self.auto_btn_frame = ctk.CTkFrame(self, fg_color="transparent")
 
         self.auto_resolve_btn = ctk.CTkButton(
-            self.auto_btn_frame, text="Auto-Resolve All Mergeable",
+            self.auto_btn_frame, text="Fix Text Conflicts",
             fg_color="#2fa572", hover_color="#106a43",
-            command=self._auto_resolve_all, width=240,
+            command=self._fix_text_conflicts, width=210,
             corner_radius=8, height=34,
         )
 
@@ -378,6 +384,8 @@ class ConflictsPage(BasePage):
         try:
             if self.scan_btn.winfo_manager():
                 self.scan_btn.pack_forget()
+            if self.fix_text_btn_header.winfo_manager():
+                self.fix_text_btn_header.pack_forget()
             if self.restore_btn_header.winfo_manager():
                 self.restore_btn_header.pack_forget()
             if self.header_btn_frame.winfo_manager():
@@ -387,6 +395,7 @@ class ConflictsPage(BasePage):
                 self.header_btn_frame.pack(side="right")
                 # Pack restore first so rescan appears to its left.
                 self.restore_btn_header.pack(side="right")
+                self.fix_text_btn_header.pack(side="right", padx=(0, 8))
                 self.scan_btn.pack(side="right", padx=(0, 8))
         except Exception:
             pass
@@ -723,6 +732,11 @@ class ConflictsPage(BasePage):
             return
 
         total = len(self._conflicts)
+        mergeable_total = (
+            sum(1 for c in self._conflicts if bool(getattr(c, "is_mergeable", False)))
+            if self._conflicts
+            else 0
+        )
         mergeable = (
             sum(
                 1
@@ -732,6 +746,7 @@ class ConflictsPage(BasePage):
             if self._conflicts
             else 0
         )
+        mergeable_resolved = max(0, mergeable_total - mergeable)
         resolved = (
             sum(1 for c in self._conflicts if bool(getattr(c, "resolved", False)))
             if self._conflicts
@@ -757,7 +772,9 @@ class ConflictsPage(BasePage):
         if total:
             summary_parts.append(f"{total} conflicts across {len(mods)} mods")
             summary_parts.append(type_info)
-            summary_parts.append(f"{mergeable} auto-resolvable")
+            summary_parts.append(f"{mergeable} pending auto-fix")
+            if mergeable_resolved > 0:
+                summary_parts.append(f"{mergeable_resolved} already merged")
             summary_parts.append(f"{resolved} resolved")
         if locale_count:
             summary_parts.append(f"{locale_count} locale MSBT file(s) to fix")
@@ -766,7 +783,7 @@ class ConflictsPage(BasePage):
             text=summary_text,
             text_color="#e94560" if (mergeable > 0 or locale_count > 0) else "#2fa572")
 
-        if mergeable > 0:
+        if mergeable > 0 or locale_count > 0:
             self.auto_resolve_btn.pack(side="left")
 
         if locale_count > 0:
@@ -1322,26 +1339,128 @@ class ConflictsPage(BasePage):
         self._render()
 
     def _auto_resolve_all(self):
+        # Backwards-compat: keep old method name routed to unified fixer.
+        self._fix_text_conflicts()
+
+    def _fix_text_conflicts(self):
         try:
+            if self._scanning:
+                return
+            if not self._scanned:
+                should_scan = messagebox.askyesno(
+                    "Scan Required",
+                    "No conflict scan results are loaded yet.\n\nRun a scan now?",
+                )
+                if should_scan:
+                    self._scan()
+                return
+
             settings = self.app.config_manager.settings
             resolver = self.app.conflict_resolver
             unresolved = [c for c in self._conflicts if c.is_mergeable and not c.resolved]
+            locale_targets = list(self._locale_msbts or [])
+
+            if not unresolved and not locale_targets:
+                messagebox.showinfo(
+                    "No Fixes Needed",
+                    "No unresolved text conflicts or locale-specific MSBT files were found.",
+                )
+                return
+
+            summary_bits = []
+            if unresolved:
+                summary_bits.append(f"{len(unresolved)} unresolved XMSBT conflict(s)")
+            if locale_targets:
+                summary_bits.append(f"{len(locale_targets)} locale-specific MSBT file(s)")
+            confirm = messagebox.askyesno(
+                "Fix Text Conflicts",
+                "This will resolve text conflicts by merging XMSBT files, "
+                "fix locale-specific MSBT filenames, and regenerate MSBT overlays.\n\n"
+                f"Targets: {', '.join(summary_bits)}.\n\nContinue?",
+            )
+            if not confirm:
+                return
+
+            self._scanning = True
+            self.summary_label.configure(text="Fixing text conflicts...", text_color="#999999")
+            self._set_auto_actions_visible(False)
+            self._set_rescan_visible(True)
+            self.scan_btn.configure(state="disabled")
+            self.fix_text_btn_header.configure(state="disabled")
+            self.restore_btn_header.configure(state="disabled")
+
             create_backup = settings.backup_before_merge
-            resolved = resolver.resolve_all_auto(unresolved, create_backup=create_backup)
-            # Only count conflicts that were actually resolved by resolve_all_auto
-            # (auto_merge_xmsbt sets conflict.resolved = True on success)
-            actually_resolved = sum(1 for c in unresolved if c.resolved)
-            failed = len(unresolved) - actually_resolved
-            msg = f"Resolved {actually_resolved} conflict(s) into _MergedResources."
-            msg += f"\nOriginal files moved to _MergedResources/.originals/ to prevent double-loading."
-            if failed > 0:
-                msg += f"\n\n{failed} conflict(s) could not be auto-merged."
-            logger.info("Conflicts", f"Auto-resolved {actually_resolved}/{len(unresolved)} conflicts")
-            messagebox.showinfo("Resolved", msg)
-            self._render()
+
+            def _run_fix():
+                try:
+                    actually_resolved = 0
+                    failed = 0
+                    locale_renamed = 0
+
+                    if unresolved:
+                        resolver.resolve_all_auto(unresolved, create_backup=create_backup)
+                        actually_resolved = sum(1 for c in unresolved if c.resolved)
+                        failed = len(unresolved) - actually_resolved
+
+                    if locale_targets:
+                        locale_renamed = resolver.rename_locale_msbt_files()
+
+                    msbt_overlays = resolver.generate_msbt_overlays()
+                    self.after(
+                        0,
+                        lambda: self._on_fix_text_done(
+                            actually_resolved, failed, locale_renamed, msbt_overlays
+                        ),
+                    )
+                except Exception as e:
+                    self.after(0, lambda err=str(e): self._on_fix_text_error(err))
+
+            threading.Thread(target=_run_fix, daemon=True).start()
         except Exception as e:
-            logger.error("Conflicts", f"Auto-resolve failed: {e}")
-            messagebox.showerror("Error", f"Auto-resolve failed: {e}")
+            logger.error("Conflicts", f"Fix text conflicts failed: {e}")
+            messagebox.showerror("Error", f"Fix text conflicts failed: {e}")
+
+    def _on_fix_text_done(self, merged_count: int, failed_count: int,
+                          locale_renamed: int, msbt_overlay_count: int):
+        self._scanning = False
+        try:
+            self.scan_btn.configure(state="normal")
+            self.fix_text_btn_header.configure(state="normal")
+            self.restore_btn_header.configure(state="normal")
+        except Exception:
+            pass
+
+        parts = []
+        if merged_count > 0:
+            parts.append(f"Merged {merged_count} conflict(s) into _MergedResources.")
+        if locale_renamed > 0:
+            parts.append(f"Renamed {locale_renamed} locale-specific MSBT file(s).")
+        if msbt_overlay_count > 0:
+            parts.append(f"Generated {msbt_overlay_count} MSBT overlay file(s).")
+        if failed_count > 0:
+            parts.append(f"{failed_count} conflict(s) could not be auto-merged.")
+        if not parts:
+            parts.append("No changes were necessary.")
+
+        logger.info(
+            "Conflicts",
+            f"Fix Text Conflicts finished: merged={merged_count}, failed={failed_count}, "
+            f"locale={locale_renamed}, overlays={msbt_overlay_count}",
+        )
+        messagebox.showinfo("Fix Text Conflicts", "\n".join(parts))
+        self._scanned = False
+        self._scan()
+
+    def _on_fix_text_error(self, error_msg: str):
+        self._scanning = False
+        try:
+            self.scan_btn.configure(state="normal")
+            self.fix_text_btn_header.configure(state="normal")
+            self.restore_btn_header.configure(state="normal")
+        except Exception:
+            pass
+        logger.error("Conflicts", f"Fix Text Conflicts failed: {error_msg}")
+        messagebox.showerror("Error", f"Failed to fix text conflicts: {error_msg}")
 
     def _restore_originals(self):
         """Restore all previously merged XMSBT files to their original state."""

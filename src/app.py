@@ -123,6 +123,9 @@ class ModManagerApp(ctk.CTk):
         self._scroll_refresh_widgets = set()
         self._scroll_refresh_full_counter = 0
         self._scroll_refresh_drag_counter = 0
+        self._last_wheel_scroll_widget = None
+        self._last_wheel_scroll_page_id = None
+        self._last_wheel_scroll_monotonic = 0.0
         self._drag_refresh_after_id = None
         self._drag_redraw_counter = 0
         self._drag_motion_pending = False
@@ -999,6 +1002,88 @@ class ModManagerApp(ctk.CTk):
                 break
         return None
 
+    def _remember_wheel_scroll_target(self, widget, page_id):
+        try:
+            if widget is None:
+                return
+            if not bool(widget.winfo_exists()):
+                return
+            self._last_wheel_scroll_widget = widget
+            self._last_wheel_scroll_page_id = page_id
+            self._last_wheel_scroll_monotonic = time.monotonic()
+        except Exception:
+            pass
+
+    def _get_recent_wheel_scroll_target(self, page_id, max_age_sec: float = 1.1):
+        widget = self._last_wheel_scroll_widget
+        if widget is None:
+            return None
+        try:
+            age = time.monotonic() - float(self._last_wheel_scroll_monotonic or 0.0)
+            if age > float(max_age_sec):
+                return None
+            remembered_page = self._last_wheel_scroll_page_id
+            if remembered_page and page_id and remembered_page != page_id:
+                return None
+            if not bool(widget.winfo_exists()) or not bool(widget.winfo_ismapped()):
+                return None
+            return widget
+        except Exception:
+            return None
+
+    def _resolve_active_page_scroll_target(self, page_id):
+        """Fallback: pick the most likely vertical scroll target on the active page."""
+        import tkinter as tk
+
+        try:
+            page = self.main_window.pages.get(page_id) if page_id else None
+        except Exception:
+            page = None
+        if page is None:
+            return None
+        try:
+            if not bool(page.winfo_exists()):
+                return None
+        except Exception:
+            return None
+
+        candidates = []
+
+        def _walk(widget):
+            try:
+                if isinstance(widget, ctk.CTkScrollableFrame):
+                    canvas = getattr(widget, "_parent_canvas", None)
+                    if canvas is not None and bool(canvas.winfo_exists()) and bool(canvas.winfo_ismapped()):
+                        score = int(canvas.winfo_height()) + 6000
+                        if self._widget_can_scroll_vertically(canvas):
+                            score += 10000
+                        candidates.append((score, canvas))
+                elif isinstance(widget, tk.Canvas):
+                    if bool(widget.winfo_exists()) and bool(widget.winfo_ismapped()):
+                        score = int(widget.winfo_height())
+                        if self._widget_can_scroll_vertically(widget):
+                            score += 10000
+                        candidates.append((score, widget))
+                elif isinstance(widget, (tk.Text, tk.Listbox)):
+                    if bool(widget.winfo_exists()) and bool(widget.winfo_ismapped()):
+                        score = int(widget.winfo_height()) + 3000
+                        if self._widget_can_scroll_vertically(widget):
+                            score += 10000
+                        candidates.append((score, widget))
+            except Exception:
+                pass
+            try:
+                for child in widget.winfo_children():
+                    _walk(child)
+            except Exception:
+                pass
+
+        _walk(page)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+
     def _on_scrollbar_drag_start(self):
         self._scrollbar_drag_active = True
         self._drag_redraw_counter = 0
@@ -1437,6 +1522,11 @@ class ModManagerApp(ctk.CTk):
         """Inner implementation of fast scroll (may raise)."""
         import tkinter as tk
         self._note_user_activity()
+        page_id = None
+        try:
+            page_id = self.main_window.current_page
+        except Exception:
+            pass
         # Use event.widget as the primary source (reliable under scaling),
         # then optionally refine via winfo_containing when available.
         widget = getattr(event, "widget", None)
@@ -1487,20 +1577,29 @@ class ModManagerApp(ctk.CTk):
                 break
 
         if scrollable is None:
+            # Keep scrolling consistent even when Tk reports a non-scrollable
+            # child as event source mid-wheel burst.
+            scrollable = self._get_recent_wheel_scroll_target(page_id)
+        if scrollable is None:
+            scrollable = self._resolve_active_page_scroll_target(page_id)
+        if scrollable is None:
             return
 
         try:
             if event.delta == 0:
                 return "break"
+            # Guard against stale left-button state if release happened while
+            # pointer was outside app bounds.
+            if self._pointer_left_down and not self._scrollbar_drag_active:
+                try:
+                    if (int(getattr(event, "state", 0)) & 0x0100) == 0:
+                        self._pointer_left_down = False
+                except Exception:
+                    pass
             if self._pointer_left_down:
                 return "break"
             direction = -1 if event.delta > 0 else 1
             ticks = max(1, min(4, int(round(abs(event.delta) / 120))))
-            page_id = None
-            try:
-                page_id = self.main_window.current_page
-            except Exception:
-                pass
             # Conflicts page is pinned to top after scan while the list
             # stabilizes. Hold wheel input briefly, then release guard on the
             # first explicit user wheel action.
@@ -1543,6 +1642,7 @@ class ModManagerApp(ctk.CTk):
                     scrollable.yview_scroll(int(delta), "units")
             else:
                 scrollable.yview_scroll(int(delta), "units")
+            self._remember_wheel_scroll_target(scrollable, page_id)
             self._schedule_scroll_refresh(scrollable)
         except tk.TclError:
             pass
