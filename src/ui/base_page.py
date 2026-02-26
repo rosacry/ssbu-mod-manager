@@ -77,6 +77,9 @@ class BasePage(ctk.CTkFrame):
     """Base class for all pages in the application."""
 
     def __init__(self, parent, app, **kwargs):
+        # Full-page containers must be square-cornered. Rounded transparent
+        # corners can render as visible corner dots on some systems.
+        kwargs.setdefault("corner_radius", 0)
         super().__init__(parent, fg_color="transparent", **kwargs)
         self.app = app
         # Schedule patching of standalone scrollable widgets after build.

@@ -90,6 +90,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
 - Fast scrollbar thumb dragging now refreshes the active scroll target on a steady frame cadence to reduce text smearing/tearing.
+- Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
 - App status-bar mod/plugin counts now refresh off the UI thread to reduce startup hitching and early frame drops.
