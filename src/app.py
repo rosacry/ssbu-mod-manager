@@ -729,6 +729,15 @@ class ModManagerApp(ctk.CTk):
 
     def _on_scrollbar_drag_start(self):
         self._scrollbar_drag_active = True
+        try:
+            if getattr(self.main_window, "current_page", None) == "conflicts":
+                conflicts_page = self.main_window.pages.get("conflicts")
+                if conflicts_page is not None and bool(
+                    getattr(conflicts_page, "_top_anchor_guard_active", False)
+                ):
+                    conflicts_page.release_top_anchor_guard("scrollbar-drag")
+        except Exception:
+            pass
         self._suppress_scroll_refresh_until = max(
             self._suppress_scroll_refresh_until, time.monotonic() + 0.02
         )
@@ -1130,16 +1139,23 @@ class ModManagerApp(ctk.CTk):
                 page_id = self.main_window.current_page
             except Exception:
                 pass
-            # Conflicts page is intentionally pinned to top for a short
-            # post-render guard window. Ignore wheel deltas during that guard
-            # so delayed wheel events cannot introduce a false initial offset.
+            # Conflicts page is pinned to top after scan while the list
+            # stabilizes. Hold wheel input briefly, then release guard on the
+            # first explicit user wheel action.
             if page_id == "conflicts":
                 try:
                     conflicts_page = self.main_window.pages.get("conflicts")
                     if conflicts_page is not None and bool(
                         getattr(conflicts_page, "_top_anchor_guard_active", False)
                     ):
-                        return "break"
+                        can_release = True
+                        try:
+                            can_release = bool(conflicts_page._can_release_top_anchor_guard())
+                        except Exception:
+                            can_release = True
+                        if not can_release:
+                            return "break"
+                        conflicts_page.release_top_anchor_guard("wheel")
                 except Exception:
                     pass
             longform = in_longform_page or page_id in ("online_compat", "migration")

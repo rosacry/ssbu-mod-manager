@@ -56,7 +56,8 @@ CONFLICT_EXPLANATIONS = {
 
 class ConflictsPage(BasePage):
     _TOP_ANCHOR_GUARD_INTERVAL_MS = 140
-    _TOP_ANCHOR_GUARD_MAX_SECONDS = 2.2
+    _TOP_ANCHOR_GUARD_MAX_SECONDS = 45.0
+    _TOP_ANCHOR_MIN_HOLD_SECONDS = 0.45
 
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
@@ -73,6 +74,7 @@ class ConflictsPage(BasePage):
         self._top_anchor_after_id = None
         self._top_anchor_guard_until = 0.0
         self._top_anchor_guard_active = False
+        self._top_anchor_guard_armed_at = 0.0
         self.conflict_list = None
         self._build_ui()
 
@@ -157,13 +159,22 @@ class ConflictsPage(BasePage):
     def _recreate_conflict_list(self):
         """Hard-reset the scroll host to avoid stale canvas/scrollregion state."""
         try:
-            if self.conflict_list is not None and bool(self.conflict_list.winfo_exists()):
-                self.conflict_list.destroy()
+            stale_hosts = [
+                w for w in self._results_stack.winfo_children()
+                if isinstance(w, ctk.CTkScrollableFrame)
+            ]
+            for host in stale_hosts:
+                try:
+                    if bool(host.winfo_exists()):
+                        host.destroy()
+                except Exception:
+                    pass
         except Exception:
             pass
         self._create_conflict_list()
         self._show_conflict_list()
         self._reset_conflict_canvas_view()
+        logger.debug("Conflicts", "Recreated scroll host")
 
     def on_show(self):
         if self._scanning:
@@ -317,6 +328,7 @@ class ConflictsPage(BasePage):
     def _cancel_top_anchor_guard(self):
         self._top_anchor_guard_active = False
         self._top_anchor_guard_until = 0.0
+        self._top_anchor_guard_armed_at = 0.0
         if self._top_anchor_after_id:
             try:
                 self.after_cancel(self._top_anchor_after_id)
@@ -325,9 +337,10 @@ class ConflictsPage(BasePage):
             self._top_anchor_after_id = None
 
     def _arm_top_anchor_guard(self, source: str = "render"):
-        """Keep results pinned to top for a short post-render stabilization window."""
+        """Keep results pinned to top during post-render stabilization."""
         self._cancel_top_anchor_guard()
         self._top_anchor_guard_active = True
+        self._top_anchor_guard_armed_at = time.monotonic()
         self._top_anchor_guard_until = time.monotonic() + self._TOP_ANCHOR_GUARD_MAX_SECONDS
         try:
             self._top_anchor_after_id = self.after(0, self._run_top_anchor_guard)
@@ -335,12 +348,30 @@ class ConflictsPage(BasePage):
             self._top_anchor_after_id = None
         logger.debug("Conflicts", f"Top-anchor guard armed ({source})")
 
+    def _can_release_top_anchor_guard(self) -> bool:
+        if not self._top_anchor_guard_active:
+            return False
+        try:
+            age = time.monotonic() - float(self._top_anchor_guard_armed_at)
+            return age >= self._TOP_ANCHOR_MIN_HOLD_SECONDS
+        except Exception:
+            return True
+
+    def release_top_anchor_guard(self, reason: str = "external") -> bool:
+        """Release top-anchor guard after minimum hold window has passed."""
+        if not self._can_release_top_anchor_guard():
+            return False
+        self._cancel_top_anchor_guard()
+        logger.debug("Conflicts", f"Top-anchor guard released ({reason})")
+        return True
+
     def _run_top_anchor_guard(self):
         self._top_anchor_after_id = None
         if not self._top_anchor_guard_active:
             return
         try:
             if time.monotonic() >= float(self._top_anchor_guard_until):
+                self._debug_layout_snapshot("guard-expire")
                 logger.debug("Conflicts", "Top-anchor guard expired")
                 self._cancel_top_anchor_guard()
                 return
@@ -829,6 +860,7 @@ class ConflictsPage(BasePage):
 
         self.conflict_list.update_idletasks()
         self._prune_empty_conflict_blocks()
+        self._debug_layout_snapshot("render-complete")
         logger.debug(
             "Conflicts",
             f"Render complete: sections={rendered_section_blocks}, rows={rendered_conflict_rows}, "
@@ -1014,6 +1046,41 @@ class ConflictsPage(BasePage):
                 "Conflicts",
                 f"Compacted leading gap (first_y={first_y}, window_y={window_y:.1f}, "
                 f"view_top={view_top:.1f}, gap={leading_gap:.1f}, target_px={target_px:.1f})",
+            )
+        except Exception:
+            pass
+
+    def _debug_layout_snapshot(self, label: str, limit: int = 8):
+        """Emit compact geometry diagnostics for top-level conflict list children."""
+        try:
+            if not getattr(logger, "enabled", False):
+                return
+            self.conflict_list.update_idletasks()
+            children = [w for w in self.conflict_list.winfo_children() if bool(w.winfo_exists())]
+            details = []
+            for idx, widget in enumerate(children[:limit]):
+                try:
+                    y = int(widget.winfo_y())
+                except Exception:
+                    y = -1
+                try:
+                    h = int(widget.winfo_height())
+                except Exception:
+                    h = -1
+                try:
+                    kids = len(widget.winfo_children())
+                except Exception:
+                    kids = -1
+                try:
+                    meaningful = 1 if self._widget_has_meaningful_text(widget) else 0
+                except Exception:
+                    meaningful = 0
+                details.append(
+                    f"{idx}:{widget.__class__.__name__} y={y} h={h} kids={kids} txt={meaningful}"
+                )
+            logger.debug(
+                "Conflicts",
+                f"Layout snapshot {label}: count={len(children)} :: " + " | ".join(details),
             )
         except Exception:
             pass

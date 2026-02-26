@@ -84,6 +84,8 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Conflicts results viewport now runs a short multi-pass settle to prevent intermittent mid-list gaps after scan completion.
 - Conflicts scan/render now rebuilds the scroll host each pass to eliminate stale scrollregion state that could cause intermittent large top gaps.
 - Conflicts post-scan top-anchor guard is now a short fixed stabilization window to block delayed wheel drift without relying on intent heuristics.
+- Conflicts post-scan top-anchor guard now holds until first explicit scroll/scrollbar interaction (after a short minimum hold) to prevent delayed drift without trapping intentional scrolling.
+- Conflicts rendering now logs compact child-geometry snapshots in developer mode to diagnose rare invisible-gap states.
 - Startup uses immediate first-page navigation (without delayed transition overlay) during hidden init to reduce first-frame skeleton/flash states.
 - Conflicts scan completion now always schedules a render (independent of current-page transition state) to prevent intermittent "summary updated but rows missing" races.
 - Fast scrollbar thumb dragging now forces lightweight redraw settles to reduce text smearing/tearing.
