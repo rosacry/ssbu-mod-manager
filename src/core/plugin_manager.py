@@ -1,4 +1,5 @@
 """Skyline plugin management."""
+import threading
 from pathlib import Path
 from typing import Iterator, Optional
 from src.models.plugin import Plugin, PluginStatus, KnownPluginInfo
@@ -21,6 +22,7 @@ class PluginManager:
         self.plugins_path = plugins_path
         self._plugins: list[Plugin] = []
         self._cached = False
+        self._lock = threading.RLock()
 
     @staticmethod
     def base_filename(filename: str) -> str:
@@ -75,63 +77,92 @@ class PluginManager:
         Disabled plugins are read from `disabled_plugins_path`.
         Legacy `.nro.disabled` files in `plugins_path` are treated as disabled.
         """
-        if self._cached and not force_refresh:
-            return self._plugins
+        with self._lock:
+            if self._cached and not force_refresh:
+                return list(self._plugins)
 
-        self._plugins = []
-        if self.plugins_path == Path("."):
+            plugins: list[Plugin] = []
+            if self.plugins_path == Path("."):
+                self._plugins = []
+                self._cached = True
+                return []
+
+            enabled_plugins: dict[str, tuple[str, Path]] = {}
+            disabled_plugins: dict[str, tuple[str, Path]] = {}
+
+            if self.plugins_path.exists() and self.plugins_path.is_dir():
+                for fpath in self._iter_files(self.plugins_path):
+                    fname = fpath.name
+                    if not self._is_enabled_plugin_filename(fname):
+                        continue
+                    key = fname.lower()
+                    enabled_plugins[key] = (fname, fpath)
+
+            disabled_root = self.disabled_plugins_path
+            if disabled_root.exists() and disabled_root.is_dir():
+                for fpath in self._iter_files(disabled_root):
+                    fname = fpath.name
+                    if not (
+                        self._is_enabled_plugin_filename(fname)
+                        or self._is_legacy_disabled_filename(fname)
+                    ):
+                        continue
+                    base_name = self.base_filename(fname)
+                    key = base_name.lower()
+                    if key in enabled_plugins or key in disabled_plugins:
+                        continue
+                    disabled_plugins[key] = (base_name, fpath)
+
+            # Backward compatibility: plugins disabled via `.nro.disabled`
+            # inside the live plugins directory.
+            if self.plugins_path.exists() and self.plugins_path.is_dir():
+                for fpath in self._iter_files(self.plugins_path):
+                    fname = fpath.name
+                    if not self._is_legacy_disabled_filename(fname):
+                        continue
+                    base_name = self.base_filename(fname)
+                    key = base_name.lower()
+                    if key in enabled_plugins or key in disabled_plugins:
+                        continue
+                    disabled_plugins[key] = (base_name, fpath)
+
+            for key in sorted(enabled_plugins):
+                filename, path = enabled_plugins[key]
+                known = KNOWN_PLUGINS.get(filename)
+                try:
+                    file_size = path.stat().st_size
+                except OSError:
+                    file_size = 0
+                plugins.append(
+                    Plugin(
+                        filename=filename,
+                        path=path,
+                        status=PluginStatus.ENABLED,
+                        file_size=file_size,
+                        known_info=known,
+                    )
+                )
+
+            for key in sorted(disabled_plugins):
+                filename, path = disabled_plugins[key]
+                known = KNOWN_PLUGINS.get(filename)
+                try:
+                    file_size = path.stat().st_size
+                except OSError:
+                    file_size = 0
+                plugins.append(
+                    Plugin(
+                        filename=filename,
+                        path=path,
+                        status=PluginStatus.DISABLED,
+                        file_size=file_size,
+                        known_info=known,
+                    )
+                )
+
+            self._plugins = plugins
             self._cached = True
-            return self._plugins
-
-        enabled_plugins: dict[str, tuple[str, Path]] = {}
-        disabled_plugins: dict[str, tuple[str, Path]] = {}
-
-        if self.plugins_path.exists() and self.plugins_path.is_dir():
-            for fpath in self._iter_files(self.plugins_path):
-                fname = fpath.name
-                if not self._is_enabled_plugin_filename(fname):
-                    continue
-                key = fname.lower()
-                enabled_plugins[key] = (fname, fpath)
-
-        disabled_root = self.disabled_plugins_path
-        if disabled_root.exists() and disabled_root.is_dir():
-            for fpath in self._iter_files(disabled_root):
-                fname = fpath.name
-                if not (
-                    self._is_enabled_plugin_filename(fname)
-                    or self._is_legacy_disabled_filename(fname)
-                ):
-                    continue
-                base_name = self.base_filename(fname)
-                key = base_name.lower()
-                if key in enabled_plugins or key in disabled_plugins:
-                    continue
-                disabled_plugins[key] = (base_name, fpath)
-
-        # Backward compatibility: plugins disabled via `.nro.disabled`
-        # inside the live plugins directory.
-        if self.plugins_path.exists() and self.plugins_path.is_dir():
-            for fpath in self._iter_files(self.plugins_path):
-                fname = fpath.name
-                if not self._is_legacy_disabled_filename(fname):
-                    continue
-                base_name = self.base_filename(fname)
-                key = base_name.lower()
-                if key in enabled_plugins or key in disabled_plugins:
-                    continue
-                disabled_plugins[key] = (base_name, fpath)
-
-        for key in sorted(enabled_plugins):
-            filename, path = enabled_plugins[key]
-            self._append_plugin(filename, path, PluginStatus.ENABLED)
-
-        for key in sorted(disabled_plugins):
-            filename, path = disabled_plugins[key]
-            self._append_plugin(filename, path, PluginStatus.DISABLED)
-
-        self._cached = True
-        return self._plugins
+            return list(self._plugins)
 
     def migrate_legacy_disabled_plugins(self) -> int:
         """Move legacy `.nro.disabled` files into `disabled_plugins`."""
@@ -164,7 +195,8 @@ class PluginManager:
 
     def invalidate_cache(self):
         """Force next list_plugins() to re-scan."""
-        self._cached = False
+        with self._lock:
+            self._cached = False
 
     def refresh(self) -> list[Plugin]:
         """Force refresh the plugin list."""
@@ -172,70 +204,74 @@ class PluginManager:
 
     def enable_plugin(self, plugin: Plugin) -> None:
         """Enable a plugin by moving it back into the plugins folder."""
-        if plugin.status == PluginStatus.ENABLED:
-            return
+        with self._lock:
+            if plugin.status == PluginStatus.ENABLED:
+                return
 
-        new_name = self.base_filename(plugin.filename)
-        self.plugins_path.mkdir(parents=True, exist_ok=True)
-        new_path = self.plugins_path / new_name
-        if new_path.exists():
-            raise FileExistsError(f"Cannot enable: '{new_name}' already exists")
+            new_name = self.base_filename(plugin.filename)
+            self.plugins_path.mkdir(parents=True, exist_ok=True)
+            new_path = self.plugins_path / new_name
+            if new_path.exists():
+                raise FileExistsError(f"Cannot enable: '{new_name}' already exists")
 
-        plugin.path.rename(new_path)
-        plugin.filename = new_name
-        plugin.path = new_path
-        plugin.status = PluginStatus.ENABLED
-        self.invalidate_cache()
+            plugin.path.rename(new_path)
+            plugin.filename = new_name
+            plugin.path = new_path
+            plugin.status = PluginStatus.ENABLED
+            self.invalidate_cache()
 
     def disable_plugin(self, plugin: Plugin) -> None:
         """Disable a plugin by moving it to `disabled_plugins`."""
-        if plugin.status == PluginStatus.DISABLED:
-            return
+        with self._lock:
+            if plugin.status == PluginStatus.DISABLED:
+                return
 
-        new_name = self.base_filename(plugin.filename)
-        disabled_root = self.disabled_plugins_path
-        disabled_root.mkdir(parents=True, exist_ok=True)
-        new_path = disabled_root / new_name
-        if new_path.exists():
-            raise FileExistsError(f"Cannot disable: '{new_name}' already exists in disabled_plugins")
+            new_name = self.base_filename(plugin.filename)
+            disabled_root = self.disabled_plugins_path
+            disabled_root.mkdir(parents=True, exist_ok=True)
+            new_path = disabled_root / new_name
+            if new_path.exists():
+                raise FileExistsError(f"Cannot disable: '{new_name}' already exists in disabled_plugins")
 
-        plugin.path.rename(new_path)
-        plugin.filename = new_name
-        plugin.path = new_path
-        plugin.status = PluginStatus.DISABLED
-        self.invalidate_cache()
+            plugin.path.rename(new_path)
+            plugin.filename = new_name
+            plugin.path = new_path
+            plugin.status = PluginStatus.DISABLED
+            self.invalidate_cache()
 
     def enable_all(self) -> int:
         """Enable all disabled plugins. Returns count enabled."""
-        count = 0
-        # Snapshot list to avoid iteration-during-mutation
-        plugins_snapshot = list(self.list_plugins())
-        for plugin in plugins_snapshot:
-            if plugin.status == PluginStatus.DISABLED:
-                try:
-                    self.enable_plugin(plugin)
-                    count += 1
-                except (FileExistsError, OSError):
-                    pass
-        self.invalidate_cache()
-        return count
+        with self._lock:
+            count = 0
+            # Snapshot list to avoid iteration-during-mutation
+            plugins_snapshot = list(self.list_plugins())
+            for plugin in plugins_snapshot:
+                if plugin.status == PluginStatus.DISABLED:
+                    try:
+                        self.enable_plugin(plugin)
+                        count += 1
+                    except (FileExistsError, OSError):
+                        pass
+            self.invalidate_cache()
+            return count
 
     def disable_all(self, skip_required: bool = True) -> int:
         """Disable all enabled plugins. Skips required plugins by default. Returns count disabled."""
-        count = 0
-        # Snapshot list to avoid iteration-during-mutation
-        plugins_snapshot = list(self.list_plugins())
-        for plugin in plugins_snapshot:
-            if plugin.status == PluginStatus.ENABLED:
-                if skip_required and plugin.known_info and plugin.known_info.required:
-                    continue
-                try:
-                    self.disable_plugin(plugin)
-                    count += 1
-                except (FileExistsError, OSError):
-                    pass
-        self.invalidate_cache()
-        return count
+        with self._lock:
+            count = 0
+            # Snapshot list to avoid iteration-during-mutation
+            plugins_snapshot = list(self.list_plugins())
+            for plugin in plugins_snapshot:
+                if plugin.status == PluginStatus.ENABLED:
+                    if skip_required and plugin.known_info and plugin.known_info.required:
+                        continue
+                    try:
+                        self.disable_plugin(plugin)
+                        count += 1
+                    except (FileExistsError, OSError):
+                        pass
+            self.invalidate_cache()
+            return count
 
     def get_plugin_info(self, filename: str) -> Optional[KnownPluginInfo]:
         """Get known info for a plugin by filename."""

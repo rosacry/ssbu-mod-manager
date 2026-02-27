@@ -1,6 +1,7 @@
 """Mod listing, enable/disable, metadata extraction."""
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import Optional
 from src.models.mod import Mod, ModStatus, ModMetadata
@@ -46,83 +47,87 @@ class ModManager:
         self.scanner = FileScanner()
         self._mods: list[Mod] = []
         self._cached = False
+        self._lock = threading.RLock()
 
     def list_mods(self, force_refresh: bool = False) -> list[Mod]:
         """List all mods with lightweight category detection."""
-        if self._cached and not force_refresh:
-            return self._mods
+        with self._lock:
+            if self._cached and not force_refresh:
+                return list(self._mods)
 
-        self._mods = []
-        if not self.mods_path.exists() or self.mods_path == Path("."):
+            mods: list[Mod] = []
+            if not self.mods_path.exists() or self.mods_path == Path("."):
+                self._mods = []
+                self._cached = True
+                return []
+
+            for folder in sorted(self.mods_path.iterdir()):
+                if not folder.is_dir():
+                    continue
+                if folder.name.startswith("_"):
+                    continue
+
+                if folder.name.startswith("."):
+                    # Skip the .disabled container directory itself
+                    if folder.name == ".disabled":
+                        continue
+                    # Skip well-known non-mod dot-directories
+                    if folder.name in (".git", ".vscode", ".idea", ".DS_Store", ".svn", ".hg"):
+                        continue
+                    # Dot-prefixed folders are still loaded by the emulator,
+                    # so they are effectively ENABLED despite the naming.
+                    status = ModStatus.ENABLED
+                else:
+                    status = ModStatus.ENABLED
+
+                mod = Mod(
+                    name=folder.name,
+                    path=folder,
+                    status=status,
+                )
+
+                # Lightweight category detection
+                mod.metadata.categories = self._quick_categorize(folder)
+                self._apply_online_risk(mod)
+
+                mods.append(mod)
+
+            # Also scan disabled_mods directory (sibling of mods folder)
+            disabled_dir = self.mods_path.parent / "disabled_mods"
+            if disabled_dir.exists() and disabled_dir.is_dir():
+                for folder in sorted(disabled_dir.iterdir()):
+                    if not folder.is_dir():
+                        continue
+
+                    mod = Mod(
+                        name=folder.name,
+                        path=folder,
+                        status=ModStatus.DISABLED,
+                    )
+                    mod.metadata.categories = self._quick_categorize(folder)
+                    self._apply_online_risk(mod)
+                    mods.append(mod)
+
+            # Also scan legacy .disabled directory inside mods for backward
+            # compat (move them out on next disable/enable cycle)
+            legacy_disabled = self.mods_path / ".disabled"
+            if legacy_disabled.exists() and legacy_disabled.is_dir():
+                for folder in sorted(legacy_disabled.iterdir()):
+                    if not folder.is_dir():
+                        continue
+
+                    mod = Mod(
+                        name=folder.name,
+                        path=folder,
+                        status=ModStatus.DISABLED,
+                    )
+                    mod.metadata.categories = self._quick_categorize(folder)
+                    self._apply_online_risk(mod)
+                    mods.append(mod)
+
+            self._mods = mods
             self._cached = True
-            return self._mods
-
-        for folder in sorted(self.mods_path.iterdir()):
-            if not folder.is_dir():
-                continue
-            if folder.name.startswith("_"):
-                continue
-
-            if folder.name.startswith("."):
-                # Skip the .disabled container directory itself
-                if folder.name == ".disabled":
-                    continue
-                # Skip well-known non-mod dot-directories
-                if folder.name in (".git", ".vscode", ".idea", ".DS_Store", ".svn", ".hg"):
-                    continue
-                # Dot-prefixed folders are still loaded by the emulator,
-                # so they are effectively ENABLED despite the naming.
-                status = ModStatus.ENABLED
-            else:
-                status = ModStatus.ENABLED
-
-            mod = Mod(
-                name=folder.name,
-                path=folder,
-                status=status,
-            )
-
-            # Lightweight category detection
-            mod.metadata.categories = self._quick_categorize(folder)
-            self._apply_online_risk(mod)
-
-            self._mods.append(mod)
-
-        # Also scan disabled_mods directory (sibling of mods folder)
-        disabled_dir = self.mods_path.parent / "disabled_mods"
-        if disabled_dir.exists() and disabled_dir.is_dir():
-            for folder in sorted(disabled_dir.iterdir()):
-                if not folder.is_dir():
-                    continue
-
-                mod = Mod(
-                    name=folder.name,
-                    path=folder,
-                    status=ModStatus.DISABLED,
-                )
-                mod.metadata.categories = self._quick_categorize(folder)
-                self._apply_online_risk(mod)
-                self._mods.append(mod)
-
-        # Also scan legacy .disabled directory inside mods for backward
-        # compat (move them out on next disable/enable cycle)
-        legacy_disabled = self.mods_path / ".disabled"
-        if legacy_disabled.exists() and legacy_disabled.is_dir():
-            for folder in sorted(legacy_disabled.iterdir()):
-                if not folder.is_dir():
-                    continue
-
-                mod = Mod(
-                    name=folder.name,
-                    path=folder,
-                    status=ModStatus.DISABLED,
-                )
-                mod.metadata.categories = self._quick_categorize(folder)
-                self._apply_online_risk(mod)
-                self._mods.append(mod)
-
-        self._cached = True
-        return self._mods
+            return list(self._mods)
 
     @staticmethod
     def _apply_online_risk(mod: Mod) -> None:
@@ -221,7 +226,8 @@ class ModManager:
         return sorted(categories)[0]
 
     def invalidate_cache(self):
-        self._cached = False
+        with self._lock:
+            self._cached = False
 
     def refresh(self) -> list[Mod]:
         return self.list_mods(force_refresh=True)
@@ -255,39 +261,41 @@ class ModManager:
         return mod
 
     def enable_mod(self, mod: Mod) -> None:
-        if mod.status == ModStatus.ENABLED:
-            return
+        with self._lock:
+            if mod.status == ModStatus.ENABLED:
+                return
 
-        # Always use "move" strategy — renaming doesn't prevent
-        # ARCropolis / the emulator from loading the folder.
-        new_path = self.mods_path / mod.original_name
-        if new_path.exists():
-            raise FileExistsError(f"Cannot enable: '{mod.original_name}' already exists in mods folder")
-        mod.path.rename(new_path)
-        mod.path = new_path
-        mod.name = mod.original_name
-        mod.status = ModStatus.ENABLED
+            # Always use "move" strategy - renaming does not prevent
+            # ARCropolis / the emulator from loading the folder.
+            new_path = self.mods_path / mod.original_name
+            if new_path.exists():
+                raise FileExistsError(f"Cannot enable: '{mod.original_name}' already exists in mods folder")
+            mod.path.rename(new_path)
+            mod.path = new_path
+            mod.name = mod.original_name
+            mod.status = ModStatus.ENABLED
 
-        self.invalidate_cache()
+            self.invalidate_cache()
 
     def disable_mod(self, mod: Mod) -> None:
-        if mod.status == ModStatus.DISABLED:
-            return
+        with self._lock:
+            if mod.status == ModStatus.DISABLED:
+                return
 
-        # Move to a sibling directory OUTSIDE the mods folder so the
-        # emulator / ARCropolis cannot see it at all.  Using a
-        # sub-folder of mods (like ".disabled") does NOT work because
-        # ARCropolis scans all directories regardless of name.
-        disabled_dir = self.mods_path.parent / "disabled_mods"
-        disabled_dir.mkdir(exist_ok=True)
-        new_path = disabled_dir / mod.name
-        if new_path.exists():
-            raise FileExistsError(f"Cannot disable: '{mod.name}' already exists in disabled folder")
-        mod.path.rename(new_path)
-        mod.path = new_path
-        mod.status = ModStatus.DISABLED
+            # Move to a sibling directory OUTSIDE the mods folder so the
+            # emulator / ARCropolis cannot see it at all. Using a
+            # sub-folder of mods (like ".disabled") does NOT work because
+            # ARCropolis scans all directories regardless of name.
+            disabled_dir = self.mods_path.parent / "disabled_mods"
+            disabled_dir.mkdir(exist_ok=True)
+            new_path = disabled_dir / mod.name
+            if new_path.exists():
+                raise FileExistsError(f"Cannot disable: '{mod.name}' already exists in disabled folder")
+            mod.path.rename(new_path)
+            mod.path = new_path
+            mod.status = ModStatus.DISABLED
 
-        self.invalidate_cache()
+            self.invalidate_cache()
 
     def toggle_mod(self, mod: Mod) -> None:
         if mod.status == ModStatus.ENABLED:
@@ -297,33 +305,35 @@ class ModManager:
 
     def enable_all(self) -> int:
         """Enable all disabled mods. Returns count of mods enabled."""
-        count = 0
-        # Snapshot list to avoid iteration-during-mutation
-        mods_snapshot = list(self.list_mods())
-        for mod in mods_snapshot:
-            if mod.status == ModStatus.DISABLED:
-                try:
-                    self.enable_mod(mod)
-                    count += 1
-                except (FileExistsError, OSError):
-                    pass
-        self.invalidate_cache()
-        return count
+        with self._lock:
+            count = 0
+            # Snapshot list to avoid iteration-during-mutation
+            mods_snapshot = list(self.list_mods())
+            for mod in mods_snapshot:
+                if mod.status == ModStatus.DISABLED:
+                    try:
+                        self.enable_mod(mod)
+                        count += 1
+                    except (FileExistsError, OSError):
+                        pass
+            self.invalidate_cache()
+            return count
 
     def disable_all(self) -> int:
         """Disable all enabled mods. Returns count of mods disabled."""
-        count = 0
-        # Snapshot list to avoid iteration-during-mutation
-        mods_snapshot = list(self.list_mods())
-        for mod in mods_snapshot:
-            if mod.status == ModStatus.ENABLED:
-                try:
-                    self.disable_mod(mod)
-                    count += 1
-                except (FileExistsError, OSError):
-                    pass
-        self.invalidate_cache()
-        return count
+        with self._lock:
+            count = 0
+            # Snapshot list to avoid iteration-during-mutation
+            mods_snapshot = list(self.list_mods())
+            for mod in mods_snapshot:
+                if mod.status == ModStatus.ENABLED:
+                    try:
+                        self.disable_mod(mod)
+                        count += 1
+                    except (FileExistsError, OSError):
+                        pass
+            self.invalidate_cache()
+            return count
 
     def detect_mod_type(self, mod: Mod) -> list[str]:
         if not mod.metadata.categories:
