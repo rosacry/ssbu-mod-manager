@@ -472,10 +472,10 @@ class DashboardPage(BasePage):
         full_desc = "\n\n".join(desc_parts)
 
         actions = []
-        if mergeable:
-            actions.append("merge conflicting text files into _MergedResources")
         if locale_msbts:
             actions.append("rename locale-specific MSBT files to locale-independent names")
+        if mergeable and not locale_msbts:
+            actions.append("report unresolved XMSBT conflicts (auto-merge output disabled)")
         action_text = " and ".join(actions)
 
         confirm = messagebox.askyesno(
@@ -494,28 +494,17 @@ class DashboardPage(BasePage):
         def do_resolve():
             try:
                 actually_resolved = 0
-                failed = 0
+                failed = len(mergeable)
                 locale_renamed = 0
-
-                if mergeable:
-                    resolver.resolve_all_auto(mergeable, create_backup=settings.backup_before_merge)
-                    actually_resolved = sum(1 for c in mergeable if c.resolved)
-                    failed = len(mergeable) - actually_resolved
-                    logger.info("Dashboard", f"Resolved {actually_resolved}/{len(mergeable)} conflicts")
 
                 if locale_msbts:
                     locale_renamed = resolver.rename_locale_msbt_files()
                     logger.info("Dashboard", f"Renamed {locale_renamed} locale MSBT file(s)")
 
-                msbt_overlays = resolver.generate_msbt_overlays()
-                if msbt_overlays > 0:
-                    logger.info("Dashboard",
-                                f"Generated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s)")
-
                 if not self.app.shutting_down:
                     try:
                         self.after(0, lambda: self._on_resolve_done(
-                            actually_resolved, failed, msbt_overlays, len(mergeable),
+                            actually_resolved, failed, 0, len(mergeable),
                             locale_renamed))
                     except Exception:
                         self._loading = False
@@ -548,19 +537,21 @@ class DashboardPage(BasePage):
         else:
             self.info_frame.configure(fg_color="#2a1820")
             self.xmsbt_info.configure(
-                text=f"{failed} conflict(s) could not be auto-merged (overlapping labels).",
+                text=f"{failed} conflict(s) remain (XMSBT auto-merge output disabled).",
                 text_color="#e94560")
 
         msg_parts = []
-        if actually_resolved > 0:
-            msg_parts.append(f"Merged {actually_resolved} text file(s) into _MergedResources.")
         if locale_renamed > 0:
             msg_parts.append(f"Renamed {locale_renamed} locale-specific MSBT file(s).")
-        if msbt_overlays > 0:
-            msg_parts.append(f"Generated {msbt_overlays} XMSBT overlay(s) from binary MSBT file(s).")
         if failed > 0:
-            msg_parts.append(f"\n{failed} conflict(s) could not be auto-merged.")
-        msg_parts.append("\nText should now display correctly in-game.")
+            msg_parts.append(
+                f"\n{failed} conflict(s) remain unresolved "
+                "(XMSBT auto-merge output disabled)."
+            )
+        if failed == 0:
+            msg_parts.append("\nText should now display correctly in-game.")
+        else:
+            msg_parts.append("\nResolve remaining conflicts manually if text issues persist.")
         msg = "\n".join(msg_parts)
         messagebox.showinfo("Fixed", msg)
 

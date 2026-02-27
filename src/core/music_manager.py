@@ -303,14 +303,11 @@ class MusicManager:
     def _auto_generate_msbt_overlays(
         self, mods_root: Path, cancel_event: Optional[threading.Event] = None
     ) -> None:
-        """Auto-generate XMSBT overlays from binary MSBT files.
+        """Run legacy MSBT overlay maintenance hook.
 
-        This ensures custom track names (e.g. from Sonic Extended Tracklist)
-        are visible in-game even on emulators that require XMSBT overlays.
-
-        To avoid expensive I/O on every ``discover_tracks()`` call, we
-        only regenerate when the set of binary MSBT files has changed
-        since the last generation (tracked via a simple hash).
+        Overlay generation is currently disabled in ``ConflictResolver``.
+        This hook now acts as a lightweight compatibility path that can
+        still clean old generated artifacts when scans occur.
         """
         try:
             from src.core.conflict_resolver import ConflictResolver

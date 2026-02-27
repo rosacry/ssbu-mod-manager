@@ -1332,14 +1332,12 @@ class ConflictsPage(BasePage):
                 logger.info("Conflicts", f"Merged: {conflict.relative_path}")
                 messagebox.showinfo("Merged",
                     f"Merged {conflict.relative_path}\n"
-                    f"Output: {path}\n\n"
-                    f"Original files have been moved to _MergedResources/.originals/\n"
-                    f"to prevent double-loading by ARCropolis.")
+                    f"Output: {path}")
                 self._render()
             else:
                 messagebox.showwarning("Warning",
-                    "Could not auto-merge — no entries found in the files.\n"
-                    "Use 'Keep' to choose which version to use.")
+                    "XMSBT auto-merge output is disabled.\n"
+                    "Use locale-MSBT fixes or manual mod edits.")
         except Exception as e:
             logger.error("Conflicts", f"Merge failed: {e}")
             messagebox.showerror("Error", f"Merge failed: {e}")
@@ -1349,11 +1347,17 @@ class ConflictsPage(BasePage):
             settings = self.app.config_manager.settings
             resolver = self.app.conflict_resolver
             create_backup = settings.backup_before_merge
-            resolver.apply_resolution(conflict, ResolutionStrategy.MANUAL, winner_mod=mod_name,
-                                      create_backup=create_backup)
-            conflict.resolved = True
-            logger.info("Conflicts", f"Kept {mod_name} for {conflict.relative_path}")
-            self._render()
+            out = resolver.apply_resolution(conflict, ResolutionStrategy.MANUAL, winner_mod=mod_name,
+                                            create_backup=create_backup)
+            if out:
+                conflict.resolved = True
+                logger.info("Conflicts", f"Kept {mod_name} for {conflict.relative_path}")
+                self._render()
+            else:
+                messagebox.showwarning(
+                    "Unavailable",
+                    "Manual keep output is disabled because _MergedResources generation is disabled."
+                )
         except Exception as e:
             logger.error("Conflicts", f"Resolution failed: {e}")
             messagebox.showerror("Error", f"Resolution failed: {e}")
@@ -1400,8 +1404,8 @@ class ConflictsPage(BasePage):
                 summary_bits.append(f"{len(locale_targets)} locale-specific MSBT file(s)")
             confirm = messagebox.askyesno(
                 "Fix Text Conflicts",
-                "This will resolve text conflicts by merging XMSBT files, "
-                "fix locale-specific MSBT filenames, and regenerate MSBT overlays.\n\n"
+                "This will fix locale-specific MSBT filenames.\n\n"
+                "Note: XMSBT auto-merge output is disabled.\n\n"
                 f"Targets: {', '.join(summary_bits)}.\n\nContinue?",
             )
             if not confirm:
@@ -1420,22 +1424,15 @@ class ConflictsPage(BasePage):
             def _run_fix():
                 try:
                     actually_resolved = 0
-                    failed = 0
+                    failed = len(unresolved)
                     locale_renamed = 0
-
-                    if unresolved:
-                        resolver.resolve_all_auto(unresolved, create_backup=create_backup)
-                        actually_resolved = sum(1 for c in unresolved if c.resolved)
-                        failed = len(unresolved) - actually_resolved
 
                     if locale_targets:
                         locale_renamed = resolver.rename_locale_msbt_files()
-
-                    msbt_overlays = resolver.generate_msbt_overlays()
                     self.after(
                         0,
                         lambda: self._on_fix_text_done(
-                            actually_resolved, failed, locale_renamed, msbt_overlays
+                            actually_resolved, failed, locale_renamed
                         ),
                     )
                 except Exception as e:
@@ -1446,8 +1443,7 @@ class ConflictsPage(BasePage):
             logger.error("Conflicts", f"Fix text conflicts failed: {e}")
             messagebox.showerror("Error", f"Fix text conflicts failed: {e}")
 
-    def _on_fix_text_done(self, merged_count: int, failed_count: int,
-                          locale_renamed: int, msbt_overlay_count: int):
+    def _on_fix_text_done(self, merged_count: int, failed_count: int, locale_renamed: int):
         self._scanning = False
         try:
             self.scan_btn.configure(state="normal")
@@ -1457,21 +1453,20 @@ class ConflictsPage(BasePage):
             pass
 
         parts = []
-        if merged_count > 0:
-            parts.append(f"Merged {merged_count} conflict(s) into _MergedResources.")
         if locale_renamed > 0:
             parts.append(f"Renamed {locale_renamed} locale-specific MSBT file(s).")
-        if msbt_overlay_count > 0:
-            parts.append(f"Generated {msbt_overlay_count} MSBT overlay file(s).")
         if failed_count > 0:
-            parts.append(f"{failed_count} conflict(s) could not be auto-merged.")
+            parts.append(
+                f"{failed_count} conflict(s) were not auto-merged "
+                "(XMSBT auto-merge output is disabled)."
+            )
         if not parts:
             parts.append("No changes were necessary.")
 
         logger.info(
             "Conflicts",
-            f"Fix Text Conflicts finished: merged={merged_count}, failed={failed_count}, "
-            f"locale={locale_renamed}, overlays={msbt_overlay_count}",
+            f"Fix Text Conflicts finished: merged={merged_count}, "
+            f"failed={failed_count}, locale={locale_renamed}",
         )
         messagebox.showinfo("Fix Text Conflicts", "\n".join(parts))
         self._scanned = False
@@ -1489,14 +1484,13 @@ class ConflictsPage(BasePage):
         messagebox.showerror("Error", f"Failed to fix text conflicts: {error_msg}")
 
     def _restore_originals(self):
-        """Restore all previously merged XMSBT files to their original state."""
+        """Restore legacy merge artifacts and remove old generated output."""
         confirm = messagebox.askyesno(
             "Restore Originals",
             "This will:\n"
-            "  - Move original XMSBT files back to their mod folders\n"
-            "  - Remove merged files from _MergedResources\n\n"
-            "This undoes previous conflict merges so you can re-merge\n"
-            "or let individual mods handle text independently.\n\nContinue?"
+            "  - Move original XMSBT files back to their mod folders (if present)\n"
+            "  - Remove legacy generated _MergedResources content\n\n"
+            "This only applies to data created by older versions.\n\nContinue?"
         )
         if not confirm:
             return

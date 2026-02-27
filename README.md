@@ -15,7 +15,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
 - Music page with stage playlists, preview playback, and assignment export.
-- Conflict detection/resolution (XMSBT merge flow + locale MSBT fixes).
+- Conflict detection and locale MSBT rename safety tools.
 - Emulator migration tools (copy, direct export/import, upgrade flow).
 - Online Compatibility checker and shareable profile support.
 - Online Compatibility checker with optional strict audio/environment policy modes.
@@ -98,7 +98,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Fast scrollbar thumb dragging now uses a paced redraw loop with periodic full repaints to prevent missing/half-rendered text while dragging rapidly.
 - Global wheel scrolling now excludes decorative canvases, uses sticky same-page fallback targets, and uses pointer-aware page fallback routing to prevent intermittent "scroll stops until cursor moves" behavior across pages.
 - Global wheel scrolling now also keeps a per-page cached target and retries a fresh active-page target if a stale/non-scrollable widget is selected mid-scroll.
-- Conflicts page now includes a direct header-level `Fix Text Conflicts` action (merge XMSBT + locale MSBT rename + overlay regeneration), not only Dashboard quick actions.
+- Conflicts page includes a direct header-level `Fix Text Conflicts` action for locale MSBT rename safety checks.
 - Conflicts summary now distinguishes pending auto-fix vs already merged counts to reduce ambiguity about what is still actionable.
 - Conflicts merge status text now clearly shows `Already merged`/`Already resolved` for fixed items and keeps pending items separate.
 - Conflicts stabilization guard now yields immediately to explicit user wheel/scrollbar input to prevent scroll trapping after scans.

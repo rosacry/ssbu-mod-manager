@@ -1,5 +1,4 @@
-"""Resolve conflicts between mods - especially XMSBT merging."""
-import json
+"""Resolve conflicts between mods - especially text-file safety fixes."""
 import re
 import shutil
 import threading
@@ -25,11 +24,14 @@ MOD_FOLDER_PREFIXES_TO_SKIP = (".", "_")
 MERGED_OUTPUT_DIRNAME = "_MergedResources"
 ORIGINALS_DIRNAME = ".originals"
 MERGED_CONFIG_FILENAME = "config.json"
+# User policy: do not generate gameplay-facing merged overlay folders.
+ENABLE_MERGED_RESOURCES_OUTPUT = False
 
 
 class ConflictResolver:
     def __init__(self, mods_root: Path):
         self.mods_root = mods_root
+        # Kept for legacy cleanup/migration only.
         self.merged_output_dir = mods_root / MERGED_OUTPUT_DIRNAME
 
     @staticmethod
@@ -43,16 +45,44 @@ class ConflictResolver:
     def _is_skipped_mod_folder(folder: Path) -> bool:
         return folder.name.startswith(MOD_FOLDER_PREFIXES_TO_SKIP)
 
-    def auto_merge_xmsbt(self, conflict: FileConflict, create_backup: bool = True) -> Optional[Path]:
-        """Merge XMSBT files from multiple mods into _MergedResources.
+    def cleanup_legacy_merged_resources(self) -> int:
+        """Remove legacy _MergedResources folder if present.
 
-        Uses a union strategy: all labels from all files are included.
-        For overlapping labels (same label, different text), the last mod's value wins.
-
-        The originals are left in place so ARCropolis can still process
-        them individually.  The merged version in _MergedResources acts
-        as an additional overlay that guarantees every label is present.
+        Returns the number of files that were present before cleanup.
         """
+        if not self.merged_output_dir.exists():
+            return 0
+
+        files_found = 0
+        try:
+            files_found = sum(1 for p in self.merged_output_dir.rglob("*") if p.is_file())
+        except OSError:
+            files_found = 0
+
+        try:
+            shutil.rmtree(self.merged_output_dir, ignore_errors=True)
+        except OSError:
+            pass
+
+        if files_found:
+            logger.info(
+                "ConflictResolver",
+                f"Removed legacy _MergedResources ({files_found} file(s)).",
+            )
+        return files_found
+
+    def auto_merge_xmsbt(self, conflict: FileConflict, create_backup: bool = True) -> Optional[Path]:
+        """Legacy API retained for compatibility.
+
+        Merged overlay output is disabled by policy, so this method no-ops.
+        """
+        if not ENABLE_MERGED_RESOURCES_OUTPUT:
+            logger.info(
+                "ConflictResolver",
+                "auto_merge_xmsbt skipped: _MergedResources generation is disabled.",
+            )
+            return None
+
         if not conflict.is_mergeable:
             return None
 
@@ -104,6 +134,13 @@ class ConflictResolver:
             conflict.resolved = True
             return None
         elif strategy in (ResolutionStrategy.KEEP_FIRST, ResolutionStrategy.KEEP_LAST):
+            if not ENABLE_MERGED_RESOURCES_OUTPUT:
+                logger.info(
+                    "ConflictResolver",
+                    "KEEP_FIRST/KEEP_LAST skipped: _MergedResources generation is disabled.",
+                )
+                return None
+
             # Backup before resolution
             if create_backup:
                 self.backup_originals(conflict)
@@ -118,6 +155,13 @@ class ConflictResolver:
             conflict.resolved = True
             return output_path
         elif strategy == ResolutionStrategy.MANUAL and winner_mod:
+            if not ENABLE_MERGED_RESOURCES_OUTPUT:
+                logger.info(
+                    "ConflictResolver",
+                    "MANUAL resolution skipped: _MergedResources generation is disabled.",
+                )
+                return None
+
             if winner_mod not in conflict.mods_involved:
                 return None
 
@@ -158,6 +202,9 @@ class ConflictResolver:
 
     def resolve_all_auto(self, conflicts: list[FileConflict], create_backup: bool = True) -> list[Path]:
         """Auto-resolve all auto-resolvable conflicts. Creates backups before each merge."""
+        if not ENABLE_MERGED_RESOURCES_OUTPUT:
+            return []
+
         resolved_paths = []
         for conflict in conflicts:
             if conflict.is_mergeable and not conflict.resolved:
@@ -167,12 +214,7 @@ class ConflictResolver:
         return resolved_paths
 
     def restore_originals(self) -> int:
-        """Restore original XMSBT files from _MergedResources/.originals/ back
-        to their mod folders, undoing previous merges.
-
-        Also removes the merged XMSBT files from _MergedResources.
-        Returns count of files restored.
-        """
+        """Restore original files from legacy merge outputs and remove legacy folder."""
         count = 0
         if not self.mods_root.exists():
             return count
@@ -246,7 +288,9 @@ class ConflictResolver:
             # Remove empty directories
             self._cleanup_empty_dirs(self.merged_output_dir)
 
-        logger.info("ConflictResolver", f"Restored {count} original files")
+        # Ensure legacy merged output folder is fully removed.
+        count += self.cleanup_legacy_merged_resources()
+        logger.info("ConflictResolver", f"Restored/cleaned {count} file(s)")
         return count
 
     def _cleanup_empty_dirs(self, root: Path) -> None:
@@ -354,26 +398,20 @@ class ConflictResolver:
     # Binary MSBT → XMSBT overlay generation (emulator-compatible)
     # ------------------------------------------------------------------
     def generate_msbt_overlays(self, cancel_event: Optional[threading.Event] = None) -> int:
-        """Scan mods for binary .msbt files and generate XMSBT overlays.
+        """Legacy API retained for compatibility.
 
-        Emulators (Eden, Ryujinx, Yuzu, etc.) use LayeredFS for mod
-        loading.  Binary .msbt files need to be at exactly the right
-        path for the emulator's LayeredFS to pick them up.  When many
-        mods are active, binary file loading can be unreliable.
+        Overlay generation is disabled by policy. This method only cleans up
+        old `_MergedResources` artifacts and returns 0.
+        """
+        if not self.mods_root.exists():
+            return 0
+        if self._scan_cancelled(cancel_event):
+            return 0
 
-        Instead of copying binary MSBTs (which causes ARCropolis
-        Error 2-0069 for single-provider files), this method
-        **extracts** custom text entries from binary MSBTs and writes
-        them as XMSBT (XML overlay) files into ``_MergedResources``.
-        ARCropolis processes XMSBTs to overlay/inject labels into the
-        game's built-in MSBT files, which is more reliable than binary
-        replacement.
+        self.cleanup_legacy_merged_resources()
+        return 0
 
-        If ``_MergedResources`` already contains XMSBT files from
-        ``auto_merge_xmsbt()`` (XMSBT conflict resolution), the
-        entries are merged (union) so both sources are preserved.
-
-        Returns the number of XMSBT overlay files generated / updated.
+        # Disabled implementation kept below for historical reference.
         """
         if not self.mods_root.exists():
             return 0
@@ -616,6 +654,7 @@ class ConflictResolver:
             self._ensure_merged_config()
 
         return generated
+        """
 
     def _cleanup_stale_msbt_copies(
         self,
@@ -655,37 +694,5 @@ class ConflictResolver:
 
 
     def _ensure_merged_config(self) -> None:
-        """Create / update config.json in _MergedResources for ARCropolis.
-
-        ARCropolis needs ``new-dir-infos`` entries so it scans the
-        folder for XMSBT overlays.  We register every directory that
-        contains a generated XMSBT so ARCropolis recognises them as
-        part of the mod and applies the overlays at load time.
-        """
-        self.merged_output_dir.mkdir(parents=True, exist_ok=True)
-        config_path = self.merged_output_dir / MERGED_CONFIG_FILENAME
-
-        # Collect every directory (relative to merged root) that
-        # contains an XMSBT file we generated.
-        dir_infos: list[dict] = []
-        seen_dirs: set[str] = set()
-        for xmsbt_file in self.merged_output_dir.rglob(XMSBT_GLOB):
-            rel_dir = str(
-                xmsbt_file.parent.relative_to(self.merged_output_dir)
-            ).replace("\\", "/")
-            if rel_dir == ".":
-                continue
-            if rel_dir not in seen_dirs:
-                seen_dirs.add(rel_dir)
-                dir_infos.append({"path": rel_dir})
-
-        config = {
-            "new-dir-infos": dir_infos,
-            "new-dir-infos-base": "",
-            "description": "Auto-generated merged resources from SSBU Mod Manager",
-        }
-        try:
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2)
-        except OSError:
-            pass
+        """No-op: merged overlay output is disabled."""
+        return

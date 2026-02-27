@@ -1,7 +1,6 @@
 from pathlib import Path
 import threading
 
-import src.core.conflict_resolver as conflict_resolver_module
 from src.core.conflict_resolver import ConflictResolver
 
 
@@ -25,36 +24,15 @@ def test_generate_msbt_overlays_respects_pre_cancelled_event(tmp_path: Path):
     assert not (mods_root / "_MergedResources").exists()
 
 
-def test_generate_msbt_overlays_can_cancel_mid_scan(tmp_path: Path, monkeypatch):
+def test_generate_msbt_overlays_cleans_legacy_merged_resources(tmp_path: Path):
     mods_root = tmp_path / "mods"
-    for idx in range(8):
-        _write_dummy_msbt(
-            mods_root / f"Mod{idx:02d}" / "ui" / "message" / "msg_title.msbt"
-        )
-
-    cancel_event = threading.Event()
-    calls: list[Path] = []
-
-    def fake_extract_entries(path: Path) -> dict[str, str]:
-        calls.append(path)
-        if len(calls) == 1:
-            cancel_event.set()
-        return {"bgm_title_TEST": "Test Track"}
-
-    monkeypatch.setattr(
-        conflict_resolver_module,
-        "extract_entries_from_msbt",
-        fake_extract_entries,
-    )
-    monkeypatch.setattr(
-        conflict_resolver_module,
-        "filter_custom_entries",
-        lambda entries, inclusive=False: dict(entries),
-    )
+    merged_root = mods_root / "_MergedResources"
+    merged_file = merged_root / "ui" / "message" / "msg_name.xmsbt"
+    merged_file.parent.mkdir(parents=True, exist_ok=True)
+    merged_file.write_text("<xmsbt />", encoding="utf-8")
 
     resolver = ConflictResolver(mods_root)
-    generated = resolver.generate_msbt_overlays(cancel_event=cancel_event)
+    generated = resolver.generate_msbt_overlays()
 
     assert generated == 0
-    assert len(calls) == 1
-    assert not (mods_root / "_MergedResources").exists()
+    assert not merged_root.exists()

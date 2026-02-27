@@ -280,6 +280,14 @@ class ModManagerApp(ctk.CTk):
             except Exception as e:
                 logger.warn("App", f"Failed to restore moved files: {e}")
 
+        # Clean up legacy merged-resources output from older versions.
+        try:
+            removed = self.conflict_resolver.cleanup_legacy_merged_resources()
+            if removed:
+                logger.info("App", f"Removed legacy _MergedResources ({removed} file(s))")
+        except Exception as e:
+            logger.warn("App", f"Failed to clean legacy _MergedResources: {e}")
+
         # Migrate mods from legacy .disabled subfolder to the new
         # disabled_mods sibling directory (ARCropolis loads all folders
         # inside mods regardless of name, so .disabled didn't work).
