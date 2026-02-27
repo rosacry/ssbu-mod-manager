@@ -12,7 +12,7 @@ _MOD_CONTENT_DIRS = {
     "assist", "item", "param", "stream",
 }
 _MOD_SKIP_DIRS = {
-    "_mergedresources", "_musicconfig", ".disabled", "disabled_mods",
+    "_mergedresources", "_musicconfig", ".disabled", "disabled_mods", "disabled_plugins",
 }
 _GENERIC_FOLDER_NAMES = {
     "romfs", "exefs", "mods", "ultimate", "atmosphere",
@@ -79,6 +79,7 @@ def import_plugin_package(source_dir: Path, sdmc_path: Path, plugins_path: Path)
         raise ValueError("SDMC path is not configured.")
 
     plugins_path.mkdir(parents=True, exist_ok=True)
+    disabled_plugins_path = plugins_path.parent / "disabled_plugins"
     contents_root = sdmc_path / "atmosphere" / "contents"
     contents_root.mkdir(parents=True, exist_ok=True)
     title_root = contents_root / SSBU_TITLE_ID
@@ -110,6 +111,7 @@ def import_plugin_package(source_dir: Path, sdmc_path: Path, plugins_path: Path)
             dst,
             summary,
             plugins_root=plugins_path,
+            disabled_plugins_root=disabled_plugins_path,
             plugin_targets=copied_plugin_targets,
         )
         if copied:
@@ -160,7 +162,9 @@ def import_plugin_package(source_dir: Path, sdmc_path: Path, plugins_path: Path)
         if not _is_plugin_binary(file_path.name):
             continue
 
-        target = plugins_path / file_path.name
+        normalized_name, is_disabled = _normalize_plugin_binary_name(file_path.name)
+        target_root = disabled_plugins_path if is_disabled else plugins_path
+        target = target_root / normalized_name
         target_key = _norm_path(target)
         if target_key in copied_plugin_targets or _same_path(file_path, target):
             continue
@@ -234,6 +238,7 @@ def _copy_tree_contents(
     dst_root: Path,
     summary: ImportSummary,
     plugins_root: Path | None = None,
+    disabled_plugins_root: Path | None = None,
     plugin_targets: set[str] | None = None,
 ) -> int:
     copied = 0
@@ -245,6 +250,18 @@ def _copy_tree_contents(
             continue
         rel = file_path.relative_to(src_root)
         out_path = dst_root / rel
+
+        if (
+            plugins_root is not None
+            and disabled_plugins_root is not None
+            and _is_plugin_binary(out_path.name)
+            and _is_descendant(out_path, plugins_root)
+        ):
+            normalized_name, is_disabled = _normalize_plugin_binary_name(out_path.name)
+            if is_disabled:
+                plugin_rel = out_path.relative_to(plugins_root).with_name(normalized_name)
+                out_path = disabled_plugins_root / plugin_rel
+
         if _same_path(file_path, out_path):
             continue
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,7 +275,13 @@ def _copy_tree_contents(
             plugins_root is not None
             and plugin_targets is not None
             and _is_plugin_binary(out_path.name)
-            and _is_descendant(out_path, plugins_root)
+            and (
+                _is_descendant(out_path, plugins_root)
+                or (
+                    disabled_plugins_root is not None
+                    and _is_descendant(out_path, disabled_plugins_root)
+                )
+            )
         ):
             key = _norm_path(out_path)
             if key not in plugin_targets:
@@ -382,6 +405,14 @@ def _looks_like_title_id(name: str) -> bool:
 def _is_plugin_binary(name: str) -> bool:
     lowered = name.lower()
     return lowered.endswith(".nro") or lowered.endswith(".nro.disabled")
+
+
+def _normalize_plugin_binary_name(name: str) -> tuple[str, bool]:
+    """Return `(normalized_name, is_disabled_plugin)` for plugin binaries."""
+    lowered = name.lower()
+    if lowered.endswith(".nro.disabled"):
+        return name[:-len(".disabled")], True
+    return name, False
 
 
 def _iter_visible_dirs(path: Path):

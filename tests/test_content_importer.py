@@ -55,3 +55,18 @@ def test_import_plugin_package_handles_loose_romfs_exefs_and_nro(tmp_path: Path)
     assert (plugins_path / "libloose.nro").exists()
     assert (sdmc / "atmosphere" / "contents" / SSBU_TITLE_ID / "romfs" / "ui" / "msg" / "file.msbt").exists()
     assert (sdmc / "atmosphere" / "contents" / SSBU_TITLE_ID / "exefs" / "subsdk9").exists()
+
+
+def test_import_plugin_package_routes_disabled_plugins_to_disabled_folder(tmp_path: Path):
+    source = tmp_path / "plugin_pkg"
+    source.mkdir(parents=True)
+    (source / "liblegacy.nro.disabled").write_bytes(b"legacy-disabled")
+
+    sdmc = tmp_path / "sdmc"
+    sdmc.mkdir(parents=True)
+    plugins_path = sdmc / "atmosphere" / "contents" / SSBU_TITLE_ID / "romfs" / "skyline" / "plugins"
+    summary = import_plugin_package(source, sdmc, plugins_path)
+
+    assert summary.plugin_files >= 1
+    assert not (plugins_path / "liblegacy.nro.disabled").exists()
+    assert (plugins_path.parent / "disabled_plugins" / "liblegacy.nro").exists()

@@ -16,6 +16,13 @@ from src.models.plugin import Plugin
 class ShareCodeManager:
     EMBED_SIZE_LIMIT = 256 * 1024  # 256KB
 
+    @staticmethod
+    def _base_plugin_filename(filename: str) -> str:
+        suffix = ".disabled"
+        if filename.lower().endswith(suffix):
+            return filename[:-len(suffix)]
+        return filename
+
     def export_profile(self, mods: list[Mod], plugins: list[Plugin],
                        profile_name: str, description: str = "",
                        embed_plugins: bool = False,
@@ -43,7 +50,7 @@ class ShareCodeManager:
                 embedded = self._embed_file(plugin.path)
 
             entry = ProfilePluginEntry(
-                filename=plugin.filename.replace(".disabled", ""),
+                filename=self._base_plugin_filename(plugin.filename),
                 enabled=plugin.status.value == "enabled",
                 file_size=plugin.file_size,
                 file_hash=self._hash_file(plugin.path),
@@ -136,7 +143,9 @@ class ShareCodeManager:
                         current_plugins: list[Plugin]) -> dict:
         """Compare a profile against current setup."""
         current_mod_names = {m.original_name for m in current_mods}
-        current_plugin_names = {p.filename.replace(".disabled", "") for p in current_plugins}
+        current_plugin_names = {
+            self._base_plugin_filename(p.filename) for p in current_plugins
+        }
 
         mod_comparison = {
             "matching": [],
@@ -162,7 +171,7 @@ class ShareCodeManager:
         }
 
         for pp in profile.plugins:
-            clean_name = pp.filename.replace(".disabled", "")
+            clean_name = self._base_plugin_filename(pp.filename)
             if clean_name in current_plugin_names:
                 plugin_comparison["matching"].append(pp.filename)
             else:

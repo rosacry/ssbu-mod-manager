@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from pathlib import Path
 
 from src.core.online_validation import (
@@ -115,7 +116,7 @@ def test_matrix_coverage_summary_tracks_pending_and_verified() -> None:
         pair_a="Eden",
         pair_b="Ryujinx",
         result="FAIL",
-        run_date="2026-02-26",
+        run_date=(date.today() + timedelta(days=1)).isoformat(),
     )
     cov2 = matrix_coverage_summary(data)
     assert cov2["verified_pairs"] == 1

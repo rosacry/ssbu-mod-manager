@@ -742,29 +742,19 @@ class ModsPage(BasePage):
         try:
             was_enabled = mod.status == ModStatus.ENABLED
             mod_name = mod.original_name
-            mod_path = str(mod.path)
 
-            def _find_mod_by_name(name):
-                """Look up the current mod object by original name."""
-                for m in self.app.mod_manager.list_mods():
-                    if m.original_name == name:
-                        return m
-                return None
+            def _set_enabled(target: Mod, enabled: bool) -> None:
+                """Toggle a specific rendered mod instance in-place."""
+                if enabled:
+                    self.app.mod_manager.enable_mod(target)
+                else:
+                    self.app.mod_manager.disable_mod(target)
 
             def do_action():
-                current = _find_mod_by_name(mod_name) or mod
-                if was_enabled:
-                    self.app.mod_manager.disable_mod(current)
-                else:
-                    self.app.mod_manager.enable_mod(current)
+                _set_enabled(mod, not was_enabled)
 
             def undo_action():
-                self.app.mod_manager.invalidate_cache()
-                current = _find_mod_by_name(mod_name) or mod
-                if was_enabled:
-                    self.app.mod_manager.enable_mod(current)
-                else:
-                    self.app.mod_manager.disable_mod(current)
+                _set_enabled(mod, was_enabled)
 
             action = Action(
                 description=f"{'Disable' if was_enabled else 'Enable'} {mod_name}",
@@ -774,12 +764,11 @@ class ModsPage(BasePage):
 
             logger.info("Mods", f"Toggled: {mod_name} -> {'disabled' if was_enabled else 'enabled'}")
             # Re-render cards preserving scroll position.
-            # Do NOT re-scan list_mods() — the mod object was updated
+            # Do NOT re-scan list_mods() - the mod object was updated
             # in-place by enable_mod/disable_mod, so _all_mods already
-            # reflects the new state.  Re-scanning would reorder the
+            # reflects the new state. Re-scanning would reorder the
             # list (disabled mods get appended at the end).
             scroll_pos = self._canvas.yview()[0]
-            self.app.mod_manager.invalidate_cache()
             self._render_mods()
             self.after(20, lambda: self._canvas.yview_moveto(scroll_pos))
         except Exception as e:

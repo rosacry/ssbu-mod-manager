@@ -288,32 +288,7 @@ class ModManagerApp(ctk.CTk):
         except Exception as e:
             logger.warn("App", f"Failed to clean legacy _MergedResources: {e}")
 
-        # Migrate mods from legacy .disabled subfolder to the new
-        # disabled_mods sibling directory (ARCropolis loads all folders
-        # inside mods regardless of name, so .disabled didn't work).
-        mods_p = settings.mods_path or Path(".")
-        legacy_disabled = mods_p / ".disabled"
-        if legacy_disabled.exists() and legacy_disabled.is_dir():
-            new_disabled = mods_p.parent / "disabled_mods"
-            new_disabled.mkdir(exist_ok=True)
-            migrated = 0
-            for item in list(legacy_disabled.iterdir()):
-                if item.is_dir():
-                    dest = new_disabled / item.name
-                    if not dest.exists():
-                        try:
-                            item.rename(dest)
-                            migrated += 1
-                        except OSError:
-                            pass
-            if migrated:
-                logger.info("App", f"Migrated {migrated} mod(s) from .disabled to disabled_mods")
-            # Remove legacy dir if empty
-            try:
-                if not any(legacy_disabled.iterdir()):
-                    legacy_disabled.rmdir()
-            except OSError:
-                pass
+        self._migrate_legacy_disabled_entries()
 
         logger.info("App", "All managers initialized")
         _dbg("managers initialized")
@@ -2593,6 +2568,49 @@ class ModManagerApp(ctk.CTk):
             logger.info("App", "Share manager initialized lazily")
         return self._share_manager
 
+    def _migrate_legacy_disabled_entries(self):
+        """Normalize older disabled storage layouts for mods/plugins."""
+        settings = self.config_manager.settings
+
+        # Migrate mods from legacy `.disabled` subfolder to sibling
+        # `disabled_mods` (ARCropolis still scans folders under mods/).
+        mods_p = settings.mods_path or Path(".")
+        legacy_disabled = mods_p / ".disabled"
+        if legacy_disabled.exists() and legacy_disabled.is_dir():
+            new_disabled = mods_p.parent / "disabled_mods"
+            new_disabled.mkdir(exist_ok=True)
+            migrated = 0
+            for item in list(legacy_disabled.iterdir()):
+                if not item.is_dir():
+                    continue
+                dest = new_disabled / item.name
+                if dest.exists():
+                    continue
+                try:
+                    item.rename(dest)
+                    migrated += 1
+                except OSError:
+                    pass
+            if migrated:
+                logger.info("App", f"Migrated {migrated} mod(s) from .disabled to disabled_mods")
+            try:
+                if not any(legacy_disabled.iterdir()):
+                    legacy_disabled.rmdir()
+            except OSError:
+                pass
+
+        # Migrate plugins from legacy `.nro.disabled` naming to
+        # sibling `disabled_plugins` storage.
+        try:
+            migrated_plugins = self.plugin_manager.migrate_legacy_disabled_plugins()
+            if migrated_plugins:
+                logger.info(
+                    "App",
+                    f"Migrated {migrated_plugins} plugin(s) from .nro.disabled to disabled_plugins",
+                )
+        except Exception as e:
+            logger.warn("App", f"Failed plugin disabled migration: {e}")
+
     def _update_managers(self):
         """Update manager paths after settings change."""
         settings = self.config_manager.settings
@@ -2602,6 +2620,7 @@ class ModManagerApp(ctk.CTk):
         )
         self.plugin_manager = PluginManager(settings.plugins_path or Path("."))
         self.conflict_resolver = ConflictResolver(settings.mods_path or Path("."))
+        self._migrate_legacy_disabled_entries()
         self._update_status()
         logger.info("App", "Managers updated with new paths")
 

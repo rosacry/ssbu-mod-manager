@@ -8,7 +8,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
 ## Key Features
 
 - Mod management with search, status filter, category grouping, and bulk enable/disable.
-- Plugin management with required-plugin safety checks, optional plugin-name display, custom right-click plugin name/description overrides, and description visibility toggle.
+- Plugin management with required-plugin safety checks, optional plugin-name display, custom right-click plugin name/description overrides, description visibility toggle, and folder-based disable storage (`disabled_plugins`).
 - Right-click mod renaming with app-only alias support or optional on-disk folder rename.
 - One-click folder import on Mods/Plugins pages with automatic path mapping:
   - Mods: unwraps common extra wrapper folders before install.
@@ -72,6 +72,8 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Zoom now coalesces post-apply key-repeat bursts and evicts hidden pages (when there are no unsaved changes) before scaling to keep `Ctrl +/-` responsive in long sessions.
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
+- Mod enable/disable toggles now update in-place immediately (including re-enable) without requiring manual Refresh.
+- Plugin disable now moves binaries into a sibling `disabled_plugins` folder, and legacy `.nro.disabled` files are auto-migrated.
 - Page navigation now uses a very short settle mask during tab switches to hide first-frame partial rendering on heavier pages.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.

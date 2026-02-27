@@ -38,7 +38,9 @@ class PluginRow(ctk.CTkFrame):
         ).pack(anchor="w")
 
         # Filename (if different)
-        clean_name = plugin.filename.replace(".disabled", "")
+        clean_name = plugin.filename
+        if clean_name.lower().endswith(".disabled"):
+            clean_name = clean_name[:-len(".disabled")]
         if clean_name != plugin.display_name:
             ctk.CTkLabel(
                 info, text=clean_name,

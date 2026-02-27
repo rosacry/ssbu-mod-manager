@@ -396,7 +396,11 @@ class PluginsPage(BasePage):
 
     @staticmethod
     def _base_plugin_filename(plugin) -> str:
-        return plugin.filename.replace(".disabled", "")
+        filename = plugin.filename
+        suffix = ".disabled"
+        if filename.lower().endswith(suffix):
+            return filename[:-len(suffix)]
+        return filename
 
     def _plugin_display_name(self, plugin) -> str:
         settings = self.app.config_manager.settings
