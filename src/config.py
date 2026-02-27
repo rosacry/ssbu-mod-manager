@@ -40,6 +40,8 @@ class ConfigManager:
                     auto_detect_eden=data.get("auto_detect_eden", True),
                     backup_before_merge=data.get("backup_before_merge", True),
                     emulator=data.get("emulator", ""),
+                    emulator_version=str(data.get("emulator_version", "") or ""),
+                    game_version=str(data.get("game_version", "") or ""),
                     debug_mode=data.get("debug_mode", False),
                     ui_scale=max(0.6, min(2.0, float(data.get("ui_scale", 1.2)))),
                     use_plugin_friendly_names=bool(data.get("use_plugin_friendly_names", True)),
@@ -59,6 +61,10 @@ class ConfigManager:
                         for k, v in raw_mod_overrides.items()
                         if str(v).strip()
                     },
+                    online_strict_audio_sync=bool(data.get("online_strict_audio_sync", False)),
+                    online_strict_environment_match=bool(
+                        data.get("online_strict_environment_match", False)
+                    ),
                 )
             except (json.JSONDecodeError, KeyError, TypeError, OSError,
                     ValueError, UnicodeDecodeError):
@@ -89,6 +95,8 @@ class ConfigManager:
             "auto_detect_eden": self.settings.auto_detect_eden,
             "backup_before_merge": self.settings.backup_before_merge,
             "emulator": self.settings.emulator,
+            "emulator_version": str(self.settings.emulator_version or ""),
+            "game_version": str(self.settings.game_version or ""),
             "debug_mode": self.settings.debug_mode,
             "ui_scale": self.settings.ui_scale,
             "use_plugin_friendly_names": self.settings.use_plugin_friendly_names,
@@ -96,6 +104,10 @@ class ConfigManager:
             "plugin_description_overrides": dict(self.settings.plugin_description_overrides or {}),
             "show_plugin_descriptions": bool(self.settings.show_plugin_descriptions),
             "mod_name_overrides": dict(self.settings.mod_name_overrides or {}),
+            "online_strict_audio_sync": bool(self.settings.online_strict_audio_sync),
+            "online_strict_environment_match": bool(
+                self.settings.online_strict_environment_match
+            ),
         }
 
         try:

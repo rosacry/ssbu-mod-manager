@@ -18,6 +18,8 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
 - Conflict detection/resolution (XMSBT merge flow + locale MSBT fixes).
 - Emulator migration tools (copy, direct export/import, upgrade flow).
 - Online Compatibility checker and shareable profile support.
+- Online Compatibility checker with optional strict audio/environment policy modes.
+- Empirical online validation logging CLI (`scripts/online_validation_tool.py`) for emulator-pair and RTT test records.
 - Global undo/redo + save/discard toolbar state.
 
 ## Requirements
@@ -131,6 +133,27 @@ build.py                 # PyInstaller build script
 - If no mods/plugins are found, re-check SDMC path in **Settings**.
 - If audio preview fails on specific tracks, ensure `ffmpeg` is installed and in `PATH`.
 - For startup diagnostics, set `SSBUMM_HEARTBEAT=1` before launch to enable short heartbeat logging in `crash.log`.
+
+## Empirical Validation CLI
+
+Use the built-in logger to record real online test outcomes and regenerate markdown reports:
+
+```powershell
+python scripts/online_validation_tool.py seed-defaults
+python scripts/online_validation_tool.py next
+python scripts/online_validation_tool.py add-matrix --pair-a Eden --pair-b Ryujinx --result FAIL --notes "join failed"
+python scripts/online_validation_tool.py add-rtt --mode Public --runs 5 --avg-rtt-ms 42.5 --notes "stable"
+python scripts/online_validation_tool.py render
+python scripts/online_validation_tool.py status
+```
+
+Generated artifacts:
+- `docs/online_validation_data.json`
+- `docs/emulator_pair_matrix_results.md`
+- `docs/public_unlisted_rtt_results.md`
+- `docs/online_evidence_lock.md`
+
+The generated matrix/RTT markdown files now include aggregate coverage summaries to show which evidence is still pending.
 
 ## License
 

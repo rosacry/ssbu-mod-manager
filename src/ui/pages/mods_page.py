@@ -31,6 +31,13 @@ _HEADER_HEIGHT = 40
 _MOD_ROW_HEIGHT = 44
 _ROW_PAD = 2
 
+MOD_RISK_BADGES = {
+    "desync_vulnerable": ("DESYNC", "#e94560"),
+    "conditionally_shared": ("CONDITIONAL", "#d4a017"),
+    "unknown_needs_review": ("REVIEW", "#b08a2a"),
+    "safe_client_only": ("SAFE", "#2fa572"),
+}
+
 
 class ModsPage(BasePage):
     def __init__(self, parent, app, **kwargs):
@@ -240,6 +247,10 @@ class ModsPage(BasePage):
         filtered = self._get_filtered_mods()
         enabled_count = sum(1 for m in filtered if m.status == ModStatus.ENABLED)
         disabled_count = len(filtered) - enabled_count
+        desync_count = sum(
+            1 for m in filtered
+            if (m.metadata.online_risk or "") == "desync_vulnerable"
+        )
 
         # Build count text with category breakdown
         cat_counts = defaultdict(int)
@@ -252,6 +263,8 @@ class ModsPage(BasePage):
             parts.append(f"{enabled_count} enabled")
         if disabled_count:
             parts.append(f"{disabled_count} disabled")
+        if desync_count:
+            parts.append(f"{desync_count} desync-vulnerable")
         count_text = " \u00b7 ".join(parts)
 
         if cat_counts:
@@ -375,23 +388,41 @@ class ModsPage(BasePage):
         # Name + categories label
         name = self._mod_display_name(mod)
         cats = mod.metadata.categories[:3]
+        risk_key = mod.metadata.online_risk or "unknown_needs_review"
+        badge_text, badge_color = MOD_RISK_BADGES.get(
+            risk_key,
+            ("REVIEW", "#b08a2a"),
+        )
 
         name_color = "#d0d0e8" if is_enabled else "#454560"
         cat_color = "#6a6a88" if is_enabled else "#3a3a50"
 
+        text_frame = tk.Frame(row, bg="#1c1c34")
+        text_frame.pack(side="left", fill="x", expand=True)
+
         # Use a tk.Label for speed (much faster than CTkLabel)
         name_label = tk.Label(
-            row, text=name, font=("Segoe UI", 12),
+            text_frame, text=name, font=("Segoe UI", 12),
             fg=name_color, bg="#1c1c34", anchor="w",
         )
         name_label.pack(side="left", padx=(2, 0))
 
         if cats:
             cat_label = tk.Label(
-                row, text=" \u00b7 ".join(cats),
+                text_frame, text=" \u00b7 ".join(cats),
                 font=("Segoe UI", 10), fg=cat_color, bg="#1c1c34", anchor="w",
             )
             cat_label.pack(side="left", padx=(8, 0))
+
+        # Online risk badge.
+        tk.Label(
+            row,
+            text=badge_text,
+            font=("Segoe UI", 9, "bold"),
+            fg=badge_color if is_enabled else "#4f4f63",
+            bg="#1c1c34",
+            anchor="e",
+        ).pack(side="right", padx=(0, 10))
 
         self._bind_context_menu_recursive(row, mod)
 
@@ -442,6 +473,11 @@ class ModsPage(BasePage):
             frame,
             "Rename Mod...",
             lambda m=mod: self._rename_mod(m),
+        )
+        self._add_context_item(
+            frame,
+            "Copy Online Risk Details",
+            lambda m=mod: self._copy_mod_risk_details(m),
         )
         if self._has_custom_mod_name(mod):
             self._add_context_item(
@@ -680,6 +716,27 @@ class ModsPage(BasePage):
             self.app.config_manager.save(settings)
             self._loaded = False
             self._refresh()
+
+    def _copy_mod_risk_details(self, mod):
+        risk = mod.metadata.online_risk or "unknown_needs_review"
+        reasons = list(mod.metadata.online_reasons or [])
+        badge_text, _color = MOD_RISK_BADGES.get(risk, ("REVIEW", "#b08a2a"))
+        lines = [
+            f"Mod: {mod.original_name}",
+            f"Online Risk: {risk} ({badge_text})",
+        ]
+        if reasons:
+            lines.append("Reasons:")
+            lines.extend(f"- {reason}" for reason in reasons[:12])
+        else:
+            lines.append("Reasons: none recorded")
+        text = "\n".join(lines)
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            messagebox.showinfo("Copied", "Online risk details copied to clipboard.")
+        except Exception:
+            messagebox.showerror("Error", "Failed to copy risk details.")
 
     def _on_toggle(self, mod):
         try:

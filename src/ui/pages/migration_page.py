@@ -1,9 +1,10 @@
-"""Emulator Migration page — migrate, export, and import SSBU data between emulators.
+"""Emulator Migration page - migrate, export, and import SSBU data between emulators.
 
-Switch emulators each run their own multiplayer/LDN networks, so online rooms
-are NOT cross-compatible between emulators. This page makes it easy to migrate
-all SSBU data (mods, plugins, saves, etc.) to a different emulator with one click.
+Different emulators and forks may not interoperate for multiplayer on a given
+build. This page makes it easy to migrate all SSBU data (mods, plugins, saves,
+etc.) to a different emulator with one click.
 """
+
 
 import threading
 import customtkinter as ctk
@@ -38,8 +39,8 @@ class MigrationPage(BasePage):
 
         desc = ctk.CTkLabel(self,
             text="Migrate your SSBU data between emulators. Different emulators run separate multiplayer "
-                 "networks (LDN), so online rooms are NOT cross-compatible — you need the same emulator "
-                 "as your friends to play together online.",
+                 "networks/protocol builds, so cross-emulator play is not guaranteed. "
+                 "For reliable online play, use the same emulator and build as your opponent.",
             font=ctk.CTkFont(size=12), text_color="#999999", anchor="w", wraplength=800,
             justify="left")
         desc.pack(fill="x", padx=30, pady=(0, 15))
@@ -121,7 +122,7 @@ class MigrationPage(BasePage):
             row.pack(fill="x", padx=12, pady=2)
             ctk.CTkCheckBox(row, text=label, variable=var,
                             font=ctk.CTkFont(size=12)).pack(side="left")
-            ctk.CTkLabel(row, text=f"  — {desc_text}",
+            ctk.CTkLabel(row, text=f"  â€” {desc_text}",
                          font=ctk.CTkFont(size=11), text_color="#777777"
                          ).pack(side="left")
 
@@ -161,7 +162,7 @@ class MigrationPage(BasePage):
                      font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(export_section,
-                     text="Export ALL emulator data directly — no need to use the emulator's own export tool. "
+                     text="Export ALL emulator data directly â€” no need to use the emulator's own export tool. "
                           "This reads data straight from the emulator's AppData directories, including keys, "
                           "firmware, and profiles that aren't in the SDMC root.",
                      font=ctk.CTkFont(size=12), text_color="#999999", anchor="w", wraplength=700
@@ -171,7 +172,7 @@ class MigrationPage(BasePage):
         direct_note = ctk.CTkFrame(export_section, fg_color="#1a1a30", corner_radius=6)
         direct_note.pack(fill="x", padx=15, pady=(0, 8))
         ctk.CTkLabel(direct_note,
-            text="\u2139  Direct Export reads from emulator directories automatically — "
+            text="\u2139  Direct Export reads from emulator directories automatically â€” "
                  "you do NOT need to open the emulator first or use its Data Manager page.",
             font=ctk.CTkFont(size=11), text_color="#6688bb", anchor="w",
             wraplength=680, justify="left"
@@ -256,7 +257,7 @@ class MigrationPage(BasePage):
                      font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(upgrade_section,
-                     text="Upgrade to a new version of the same emulator while preserving all your data — "
+                     text="Upgrade to a new version of the same emulator while preserving all your data â€” "
                           "mods, plugins, saves, encryption keys, shader cache, and settings.",
                      font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
                      wraplength=800, justify="left"
@@ -698,7 +699,7 @@ class MigrationPage(BasePage):
             f"Export {emu} data directly to:\n{export_path}\n\n"
             f"Include SDMC: {'Yes' if self.extra_include_sdmc.get() else 'No'}\n"
             f"Include Extended: {'Yes' if self.extra_include_extra.get() else 'No'}\n\n"
-            f"This reads from emulator directories — no emulator UI needed."):
+            f"This reads from emulator directories â€” no emulator UI needed."):
             return
 
         self._migrating = True
@@ -906,7 +907,7 @@ class MigrationPage(BasePage):
         else:
             messagebox.showerror("Import Failed", "\n".join(result.errors[:10]))
 
-    # ─── Emulator Version Upgrade ─────────────────────────────────────
+    # â”€â”€â”€ Emulator Version Upgrade â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _browse_upgrade_old(self):
         path = filedialog.askdirectory(title="Select OLD Emulator Data Folder")
@@ -1113,3 +1114,4 @@ class MigrationPage(BasePage):
             messagebox.showerror("Upgrade Failed",
                 f"Errors during upgrade:\n\n" +
                 "\n".join(result.errors[:10]))
+

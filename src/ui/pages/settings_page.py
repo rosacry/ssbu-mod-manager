@@ -1,4 +1,5 @@
 """Settings page - path configuration and preferences."""
+import re
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from pathlib import Path
@@ -6,6 +7,28 @@ from src.ui.base_page import BasePage
 from src.paths import (auto_detect_sdmc, auto_detect_all_emulators,
                        derive_mods_path, derive_plugins_path, validate_sdmc_path)
 from src.utils.logger import logger
+
+_GAME_VERSION_PATTERN = re.compile(r"^\d+(?:\.\d+){0,3}$")
+
+
+def normalize_game_version(value: str) -> str:
+    """Normalize game version text for compatibility metadata.
+
+    Examples:
+    - "v13.0.1" -> "13.0.1"
+    - "13,0,1" -> "13.0.1"
+    """
+    normalized = (value or "").strip().replace(",", ".").replace(" ", "")
+    if normalized.lower().startswith("v") and len(normalized) > 1 and normalized[1].isdigit():
+        normalized = normalized[1:]
+    return normalized
+
+
+def is_valid_game_version(value: str) -> bool:
+    normalized = normalize_game_version(value)
+    if not normalized:
+        return True
+    return bool(_GAME_VERSION_PATTERN.fullmatch(normalized))
 
 
 class SettingsPage(BasePage):
@@ -99,6 +122,60 @@ class SettingsPage(BasePage):
         ctk.CTkCheckBox(gen_section, text="Create backup before merge operations",
                         variable=self.backup_var).pack(fill="x", padx=15, pady=(3, 15))
 
+        # Online compatibility metadata (used by compatibility codes).
+        online_meta = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        online_meta.pack(fill="x", pady=(0, 15))
+
+        ctk.CTkLabel(online_meta, text="Online Compatibility Metadata",
+                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     ).pack(fill="x", padx=15, pady=(15, 5))
+        ctk.CTkLabel(
+            online_meta,
+            text="Optional but recommended: include exact emulator build and SSBU game update "
+                 "so compatibility checks can enforce environment parity.",
+            font=ctk.CTkFont(size=12),
+            text_color="#999999",
+            anchor="w",
+            wraplength=760,
+            justify="left",
+        ).pack(fill="x", padx=15, pady=(0, 8))
+
+        meta_grid = ctk.CTkFrame(online_meta, fg_color="transparent")
+        meta_grid.pack(fill="x", padx=15, pady=(0, 15))
+        meta_grid.grid_columnconfigure(1, weight=1)
+
+        self.emu_version_var = ctk.StringVar(value=str(getattr(settings, "emulator_version", "") or ""))
+        self.game_version_var = ctk.StringVar(value=str(getattr(settings, "game_version", "") or ""))
+
+        ctk.CTkLabel(meta_grid, text="Emulator Build:", anchor="w").grid(
+            row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 8)
+        )
+        ctk.CTkEntry(
+            meta_grid,
+            textvariable=self.emu_version_var,
+            height=32,
+            placeholder_text="e.g. v0.0.4-rc3",
+        ).grid(row=0, column=1, sticky="ew", pady=(0, 8))
+
+        ctk.CTkLabel(meta_grid, text="SSBU Game Version:", anchor="w").grid(
+            row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 0)
+        )
+        ctk.CTkEntry(
+            meta_grid,
+            textvariable=self.game_version_var,
+            height=32,
+            placeholder_text="e.g. 13.0.1",
+        ).grid(row=1, column=1, sticky="ew", pady=(0, 0))
+
+        self.online_meta_status = ctk.CTkLabel(
+            online_meta,
+            text="",
+            font=ctk.CTkFont(size=11),
+            anchor="w",
+        )
+        self.online_meta_status.pack(fill="x", padx=15, pady=(0, 10))
+        self._refresh_online_metadata_status()
+
         # Reset button (auto-save replaces save button)
         btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(5, 20))
@@ -113,6 +190,8 @@ class SettingsPage(BasePage):
         self.css_var.trace_add("write", lambda *_: self._auto_save())
         self.auto_detect_var.trace_add("write", lambda *_: self._auto_save())
         self.backup_var.trace_add("write", lambda *_: self._auto_save())
+        self.emu_version_var.trace_add("write", lambda *_: self._on_online_meta_change())
+        self.game_version_var.trace_add("write", lambda *_: self._on_online_meta_change())
 
     def _auto_save(self):
         """Auto-save settings whenever any value changes."""
@@ -125,6 +204,32 @@ class SettingsPage(BasePage):
             except Exception:
                 pass
         self._auto_save_id = self.after(300, self._do_auto_save)
+
+    def _on_online_meta_change(self):
+        self._refresh_online_metadata_status()
+        self._auto_save()
+
+    def _refresh_online_metadata_status(self):
+        build = (self.emu_version_var.get() or "").strip()
+        game = (self.game_version_var.get() or "").strip()
+        if not build and not game:
+            self.online_meta_status.configure(
+                text="Optional: fill both values for stronger online compatibility checks.",
+                text_color="#888888",
+            )
+            return
+
+        if not is_valid_game_version(game):
+            self.online_meta_status.configure(
+                text="Game version format looks invalid. Use values like 13.0.1.",
+                text_color="#e94560",
+            )
+            return
+
+        self.online_meta_status.configure(
+            text="Metadata format looks good. Values will be included in compatibility codes.",
+            text_color="#2fa572",
+        )
 
     def _do_auto_save(self):
         """Actually persist the settings."""
@@ -230,6 +335,8 @@ class SettingsPage(BasePage):
         settings.mod_disable_method = self.method_var.get()
         settings.auto_detect_eden = self.auto_detect_var.get()
         settings.backup_before_merge = self.backup_var.get()
+        settings.emulator_version = (self.emu_version_var.get() or "").strip()
+        settings.game_version = normalize_game_version(self.game_version_var.get())
 
         self.app.config_manager.save(settings)
         self.app._update_managers()
@@ -247,6 +354,8 @@ class SettingsPage(BasePage):
         self.method_var.set("move")
         self.auto_detect_var.set(True)
         self.backup_var.set(True)
+        self.emu_version_var.set("")
+        self.game_version_var.set("")
         self.sdmc_status.configure(text="Reset to defaults", text_color="#888888")
         # Sync logger state with the reset debug_mode (False)
         logger.enabled = False

@@ -16,6 +16,8 @@ class AppSettings:
     auto_detect_eden: bool = True
     backup_before_merge: bool = True
     emulator: str = ""  # Empty = auto-detect
+    emulator_version: str = ""
+    game_version: str = ""
     debug_mode: bool = False
     ui_scale: float = 1.2  # 100% baseline (matches previous 120% density)
     use_plugin_friendly_names: bool = True
@@ -23,3 +25,6 @@ class AppSettings:
     plugin_description_overrides: dict[str, str] = field(default_factory=dict)
     show_plugin_descriptions: bool = True
     mod_name_overrides: dict[str, str] = field(default_factory=dict)
+    # Online compatibility checker policy.
+    online_strict_audio_sync: bool = False
+    online_strict_environment_match: bool = False

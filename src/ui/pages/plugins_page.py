@@ -6,7 +6,15 @@ from pathlib import Path
 from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
 from src.core.content_importer import import_plugin_package
+from src.core.desync_classifier import classify_plugin_filename
 from src.utils.logger import logger
+
+PLUGIN_RISK_BADGES = {
+    "desync_vulnerable": ("DESYNC", "#e94560"),
+    "conditionally_shared": ("CONDITIONAL", "#d4a017"),
+    "unknown_needs_review": ("REVIEW", "#b08a2a"),
+    "safe_client_only": ("SAFE", "#2fa572"),
+}
 
 
 class PluginsPage(BasePage):
@@ -148,8 +156,15 @@ class PluginsPage(BasePage):
             widget.destroy()
 
         active = sum(1 for p in plugins if p.status == PluginStatus.ENABLED)
-        self.count_label.configure(
-            text=f"{active} active \u00b7 {len(plugins)} total plugins")
+        desync_plugins = 0
+        for plugin in plugins:
+            rep = classify_plugin_filename(self._base_plugin_filename(plugin))
+            if rep.level.value == "desync_vulnerable":
+                desync_plugins += 1
+        summary = f"{active} active \u00b7 {len(plugins)} total plugins"
+        if desync_plugins:
+            summary += f" \u00b7 {desync_plugins} desync-vulnerable"
+        self.count_label.configure(text=summary)
 
         if not plugins:
             ctk.CTkLabel(self.plugin_list,
@@ -169,6 +184,11 @@ class PluginsPage(BasePage):
         is_required = bool(plugin.known_info and plugin.known_info.required)
         use_friendly_names = self._friendly_names_var.get()
         show_descriptions = self._show_descriptions_var.get()
+        risk_report = classify_plugin_filename(self._base_plugin_filename(plugin))
+        risk_text, risk_color = PLUGIN_RISK_BADGES.get(
+            risk_report.level.value,
+            ("REVIEW", "#b08a2a"),
+        )
 
         row_height = 44
         row = tk.Frame(self.plugin_list, bg="#1c1c34", height=row_height)
@@ -215,6 +235,15 @@ class PluginsPage(BasePage):
         )
         name_label.pack(side="left", fill="x", expand=True, padx=(2, 8))
 
+        tk.Label(
+            row,
+            text=risk_text,
+            font=("Segoe UI", 9, "bold"),
+            fg=risk_color if is_enabled else "#4f4f63",
+            bg="#1c1c34",
+            anchor="e",
+        ).pack(side="right", padx=(0, 10))
+
         if is_required:
             tk.Label(
                 row,
@@ -223,7 +252,7 @@ class PluginsPage(BasePage):
                 fg="#e94560",
                 bg="#1c1c34",
                 anchor="e",
-            ).pack(side="right", padx=(0, 10))
+            ).pack(side="right", padx=(0, 6))
 
         self._bind_context_menu_recursive(row, plugin)
 
@@ -414,8 +443,6 @@ class PluginsPage(BasePage):
             pass
 
     def _show_plugin_context_menu(self, event, plugin):
-        if not (self._friendly_names_var.get() or self._show_descriptions_var.get()):
-            return None
         self._close_context_menu()
         menu = ctk.CTkToplevel(self)
         menu.withdraw()
@@ -436,6 +463,11 @@ class PluginsPage(BasePage):
             frame,
             "Rename Plugin Name",
             lambda p=plugin: self._rename_plugin_title(p),
+        )
+        self._add_context_item(
+            frame,
+            "Copy Online Risk Details",
+            lambda p=plugin: self._copy_plugin_risk_details(p),
         )
         self._add_context_item(
             frame,
@@ -676,6 +708,25 @@ class PluginsPage(BasePage):
             return cx, cy
         except Exception:
             return x, y
+
+    def _copy_plugin_risk_details(self, plugin):
+        base = self._base_plugin_filename(plugin)
+        report = classify_plugin_filename(base)
+        badge_text, _color = PLUGIN_RISK_BADGES.get(report.level.value, ("REVIEW", "#b08a2a"))
+        lines = [
+            f"Plugin: {base}",
+            f"Online Risk: {report.level.value} ({badge_text})",
+            f"Reason: {report.code}: {report.reason}",
+        ]
+        if report.evidence_url:
+            lines.append(f"Source: {report.evidence_url}")
+        text = "\n".join(lines)
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            messagebox.showinfo("Copied", "Online risk details copied to clipboard.")
+        except Exception:
+            messagebox.showerror("Error", "Failed to copy risk details.")
 
     def _reset_single_custom_name(self, plugin):
         settings = self.app.config_manager.settings

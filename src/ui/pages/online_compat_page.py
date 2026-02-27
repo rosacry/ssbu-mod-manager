@@ -1,15 +1,16 @@
-"""Online Compatibility page — guides users on what mods are needed for online play
+"""Online Compatibility page â€” guides users on what mods are needed for online play
 and provides a Compatibility Code system for tournament/multiplayer verification.
 
 Features:
-1. Online Mod Compatibility Guide — explains which mods need to match
-2. Mod Analysis — categorizes your enabled mods by online impact
-3. Compatibility Checker — generate a code the TO/host shares; participants
+1. Online Mod Compatibility Guide â€” explains which mods need to match
+2. Mod Analysis â€” categorizes your enabled mods by online impact
+3. Compatibility Checker â€” generate a code the TO/host shares; participants
    paste it to verify their gameplay setup is compatible.
 
-The checker ONLY fingerprints gameplay-affecting files (fighter params, stage
-collision, gameplay plugins, ExeFS patches). Visual-only mods (skins, audio,
-UI, effects) are completely ignored — they never cause desyncs.
+The checker fingerprints gameplay-affecting files (fighter params, stage
+collision, gameplay plugins, ExeFS patches). In standard mode, visual-only
+mods (skins, audio, UI, effects) are ignored; strict audio mode can include
+audio/BGM for tournament parity policies.
 """
 
 import threading
@@ -21,7 +22,7 @@ from src.models.mod import Mod, ModStatus
 from src.utils.logger import logger
 
 
-# ─── Online compatibility categories ─────────────────────────────────
+# â”€â”€â”€ Online compatibility categories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 COMPAT_CATEGORIES = {
     "required_both": {
@@ -54,7 +55,7 @@ COMPAT_CATEGORIES = {
     },
     "unknown": {
         "label": "Unknown / Mixed",
-        "icon": "?",
+        "icon": "-",
         "color": "#888888",
         "description": "Could not determine online impact. Check mod documentation.",
     },
@@ -107,6 +108,15 @@ def categorize_mod_online(mod: Mod) -> str:
     cats = mod.metadata.categories if mod.metadata else []
     cats_lower = [c.lower() for c in cats]
 
+    # Prefer centralized risk classification when available.
+    risk = (mod.metadata.online_risk if mod.metadata else "") or ""
+    if risk == "desync_vulnerable":
+        return "required_both"
+    if risk == "conditionally_shared":
+        return "stage_mods"
+    if risk == "unknown_needs_review":
+        return "unknown"
+
     # Check gameplay keywords (highest priority)
     for kw in GAMEPLAY_KEYWORDS:
         if kw in name_lower:
@@ -158,6 +168,13 @@ class OnlineCompatPage(BasePage):
         self._analyzed = False
         self._checker_generating = False
         self._checker_checking = False
+        settings = self.app.config_manager.settings
+        self._strict_audio_var = ctk.BooleanVar(
+            value=bool(getattr(settings, "online_strict_audio_sync", False))
+        )
+        self._strict_environment_var = ctk.BooleanVar(
+            value=bool(getattr(settings, "online_strict_environment_match", False))
+        )
         self._build_ui()
 
     def _build_ui(self):
@@ -185,7 +202,7 @@ class OnlineCompatPage(BasePage):
         scroll.pack(fill="both", expand=True, padx=30)
         self._scroll = scroll
 
-        # === Compatibility Checker (TOP — most important feature) ===
+        # === Compatibility Checker (TOP â€” most important feature) ===
         self._build_checker_section(scroll)
 
         # === Info Guide ===
@@ -208,8 +225,8 @@ class OnlineCompatPage(BasePage):
              "purely visual and processed client-side only.",
              "#2fa572"),
             ("\u2713  Custom Audio / Music",
-             "Only the player using custom audio needs it installed. Music and sound "
-             "effects are processed locally. The other player hears their own music.",
+             "Default policy treats audio/music as client-side local content. "
+             "If an event enforces Strict Audio Sync, both players should match audio/BGM files.",
              "#2fa572"),
             ("\u25b2  Custom Stages",
              "If a custom stage is selected for play, BOTH players need the same stage mod. "
@@ -248,8 +265,9 @@ class OnlineCompatPage(BasePage):
         ).pack(fill="x", padx=12, pady=(10, 2))
         ctk.CTkLabel(emu_note,
             text="Different emulators run separate multiplayer networks. Ryujinx LDN rooms, "
-                 "Yuzu rooms, and other emulator lobbies are NOT cross-compatible. Both players "
-                 "must use the same emulator (or a compatible fork) to play together online. "
+                 "Yuzu-family rooms, and other emulator lobbies are not guaranteed to interoperate. "
+                 "For reliable online play, both players should use the same emulator and build "
+                 "(or a specifically validated compatible fork). "
                  "Use the Migration page to transfer your data between emulators.",
             font=ctk.CTkFont(size=11), text_color="#8899aa", anchor="w",
             wraplength=700, justify="left"
@@ -274,7 +292,7 @@ class OnlineCompatPage(BasePage):
         self.share_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
         # Not shown until analysis is done
 
-    # ─── Compatibility Checker ────────────────────────────────────────
+    # â”€â”€â”€ Compatibility Checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _build_checker_section(self, parent):
         """Build the Compatibility Code checker section."""
@@ -292,13 +310,40 @@ class OnlineCompatPage(BasePage):
 
         ctk.CTkLabel(checker,
             text="Generate a compatibility code to share with tournament hosts or friends. "
-                 "Only gameplay-affecting files are fingerprinted — skins, music, and UI mods are "
-                 "completely ignored since they never cause desyncs.",
+                 "By default, only gameplay-affecting files are fingerprinted. Enable Strict Audio Sync "
+                 "to include audio/BGM files for tournament rulesets that require exact parity.",
             font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
             wraplength=760, justify="left"
         ).pack(fill="x", padx=15, pady=(0, 12))
 
-        # ── Tournament workflow explanation ──
+        # â”€â”€ Tournament workflow explanation â”€â”€
+        policy_row = ctk.CTkFrame(checker, fg_color="transparent")
+        policy_row.pack(fill="x", padx=15, pady=(0, 10))
+
+        ctk.CTkCheckBox(
+            policy_row,
+            text="Strict Audio Sync (tournament policy)",
+            variable=self._strict_audio_var,
+            command=self._on_strict_audio_toggle,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+
+        ctk.CTkCheckBox(
+            policy_row,
+            text="Strict Environment Match",
+            variable=self._strict_environment_var,
+            command=self._on_strict_environment_toggle,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=(14, 0))
+
+        ctk.CTkLabel(
+            policy_row,
+            text="Strict audio includes BGM files; strict environment requires emulator/build/game metadata.",
+            font=ctk.CTkFont(size=11),
+            text_color="#8899aa",
+            anchor="w",
+        ).pack(side="left", padx=(10, 0))
+
         workflow = ctk.CTkFrame(checker, fg_color="#1a1a30", corner_radius=8)
         workflow.pack(fill="x", padx=15, pady=(0, 12))
 
@@ -311,8 +356,8 @@ class OnlineCompatPage(BasePage):
             "1.  The host/TO clicks 'Generate My Code' and copies the code.",
             "2.  The host pastes the code in their Discord server or tournament page.",
             "3.  Each participant pastes the host's code into 'Check Against Code' below.",
-            "4.  The tool compares ONLY gameplay files — if you have different skins or music,",
-            "     that's fine! Only mismatched gameplay mods, plugins, or stage data are flagged.",
+            "4.  The tool compares gameplay files (and audio if Strict Audio Sync is enabled).",
+            "     With Strict Environment Match enabled, emulator/build/game metadata must also match.",
         ]
         for step in steps:
             ctk.CTkLabel(workflow, text=step,
@@ -320,7 +365,7 @@ class OnlineCompatPage(BasePage):
                          anchor="w").pack(fill="x", padx=12, pady=1)
         ctk.CTkFrame(workflow, height=8, fg_color="transparent").pack()
 
-        # ── Generate Code ──
+        # â”€â”€ Generate Code â”€â”€
         gen_frame = ctk.CTkFrame(checker, fg_color="#1e1e38", corner_radius=8)
         gen_frame.pack(fill="x", padx=15, pady=(0, 10))
 
@@ -339,7 +384,7 @@ class OnlineCompatPage(BasePage):
 
         ctk.CTkLabel(gen_frame,
             text="Scans all your enabled mods and generates a code containing only gameplay file hashes. "
-                 "Your skins, music, and UI mods are NOT included.",
+                 "Skins and UI are excluded; audio/BGM is included only if Strict Audio Sync is enabled.",
             font=ctk.CTkFont(size=11), text_color="#888888", anchor="w",
             wraplength=700, justify="left"
         ).pack(fill="x", padx=12, pady=(0, 5))
@@ -361,7 +406,7 @@ class OnlineCompatPage(BasePage):
         self._gen_code_frame.pack(fill="x", padx=12, pady=(0, 10))
         # Content populated on generation
 
-        # ── Check Against Code ──
+        # â”€â”€ Check Against Code â”€â”€
         check_frame = ctk.CTkFrame(checker, fg_color="#1e1e38", corner_radius=8)
         check_frame.pack(fill="x", padx=15, pady=(0, 10))
 
@@ -435,14 +480,58 @@ class OnlineCompatPage(BasePage):
         else:
             exefs_path = None
 
-        return mods_path, plugins_path, exefs_path, emulator
+        emulator_version = str(getattr(settings, "emulator_version", "") or "")
+        game_version = str(getattr(settings, "game_version", "") or "")
+        return mods_path, plugins_path, exefs_path, emulator, emulator_version, game_version
+
+    def _strict_audio_enabled(self) -> bool:
+        return bool(self._strict_audio_var.get())
+
+    def _strict_environment_enabled(self) -> bool:
+        return bool(self._strict_environment_var.get())
+
+    def _on_strict_audio_toggle(self):
+        self._persist_checker_policy_settings()
+
+    def _on_strict_environment_toggle(self):
+        self._persist_checker_policy_settings()
+
+    def _persist_checker_policy_settings(self):
+        settings = self.app.config_manager.settings
+        settings.online_strict_audio_sync = self._strict_audio_enabled()
+        settings.online_strict_environment_match = self._strict_environment_enabled()
+        self.app.config_manager.save(settings)
 
     def _generate_code(self):
         """Generate a compatibility code in a background thread."""
         if self._checker_generating:
             return
 
-        mods_path, plugins_path, exefs_path, emulator = self._get_paths()
+        (
+            mods_path,
+            plugins_path,
+            exefs_path,
+            emulator,
+            emulator_version,
+            game_version,
+        ) = self._get_paths()
+
+        if self._strict_environment_enabled():
+            missing_env = []
+            if not emulator:
+                missing_env.append("emulator")
+            if not emulator_version:
+                missing_env.append("emulator build")
+            if not game_version:
+                missing_env.append("game version")
+            if missing_env:
+                messagebox.showwarning(
+                    "Missing Metadata",
+                    "Strict Environment Match is enabled, but required metadata is missing:\n\n"
+                    + ", ".join(missing_env)
+                    + "\n\nSet these values in Settings -> Online Compatibility Metadata.",
+                )
+                return
 
         if not mods_path or not mods_path.exists():
             messagebox.showwarning("Warning",
@@ -475,6 +564,10 @@ class OnlineCompatPage(BasePage):
                     plugins_path=plugins_path,
                     exefs_path=exefs_path,
                     emulator_name=emulator,
+                    emulator_version=emulator_version,
+                    game_version=game_version,
+                    strict_audio_sync=self._strict_audio_enabled(),
+                    strict_environment_match=self._strict_environment_enabled(),
                     progress_callback=progress_cb,
                 )
                 code = encode_fingerprint(fp)
@@ -501,6 +594,8 @@ class OnlineCompatPage(BasePage):
         self._gen_status.configure(
             text=f"Done! {len(fp.gameplay_hashes)} gameplay files, "
                  f"{len(fp.plugin_hashes)} plugins{opt_text} fingerprinted. "
+                 f"Audio policy: {'Strict' if getattr(fp, 'strict_audio_sync', False) else 'Standard'}. "
+                 f"Env policy: {'Strict' if getattr(fp, 'strict_environment_match', False) else 'Standard'}. "
                  f"Digest: {fp.digest[:16]}...",
             text_color="#2fa572")
         self._gen_progress.set(1.0)
@@ -534,10 +629,37 @@ class OnlineCompatPage(BasePage):
                          font=ctk.CTkFont(size=10), text_color="#888888",
                          anchor="w").pack(side="left", fill="x", expand=True)
 
+        env_bits = [f"Emulator: {fp.emulator or 'Unknown'}"]
+        if getattr(fp, "emulator_version", ""):
+            env_bits.append(f"Build: {fp.emulator_version}")
+        if getattr(fp, "game_version", ""):
+            env_bits.append(f"Game: {fp.game_version}")
+        ctk.CTkLabel(
+            self._gen_code_frame,
+            text=" \u00b7 ".join(env_bits),
+            font=ctk.CTkFont(size=10),
+            text_color="#7f88a5",
+            anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+
+        if not getattr(fp, "emulator_version", "") or not getattr(fp, "game_version", ""):
+            ctk.CTkLabel(
+                self._gen_code_frame,
+                text=(
+                    "▲  Recommended: set Emulator Build and SSBU Game Version in Settings "
+                    "for stronger environment matching."
+                ),
+                font=ctk.CTkFont(size=10),
+                text_color="#d4a017",
+                anchor="w",
+                wraplength=700,
+                justify="left",
+            ).pack(fill="x", pady=(0, 4))
+
         if not fp.gameplay_hashes and not fp.plugin_hashes:
             note = ctk.CTkLabel(self._gen_code_frame,
-                text="\u2713  No gameplay-affecting mods detected — you're running "
-                     "vanilla or visual-only mods. Compatible with anyone else running vanilla!",
+                text="\u2713  No gameplay-affecting mods detected under current policy â€” "
+                     "you appear to be running vanilla or visual-only content.",
                 font=ctk.CTkFont(size=11), text_color="#2fa572", anchor="w",
                 wraplength=700, justify="left")
             note.pack(fill="x", pady=(0, 5))
@@ -568,10 +690,20 @@ class OnlineCompatPage(BasePage):
         if ref_fp is None:
             messagebox.showerror("Invalid Code",
                 "The pasted code is invalid or uses an unsupported format.\n\n"
-                "Make sure you copied the entire code starting with 'SSBU-COMPAT-v2:'")
+                "Make sure you copied the entire code starting with "
+                "'SSBU-COMPAT-v2:' or 'SSBU-COMPAT-v3:'.")
             return
+        strict_audio_sync = bool(getattr(ref_fp, "strict_audio_sync", False))
+        strict_environment_match = bool(getattr(ref_fp, "strict_environment_match", False))
 
-        mods_path, plugins_path, exefs_path, emulator = self._get_paths()
+        (
+            mods_path,
+            plugins_path,
+            exefs_path,
+            emulator,
+            emulator_version,
+            game_version,
+        ) = self._get_paths()
 
         if not mods_path or not mods_path.exists():
             messagebox.showwarning("Warning",
@@ -580,8 +712,14 @@ class OnlineCompatPage(BasePage):
 
         self._checker_checking = True
         self._check_btn.configure(state="disabled", text="Checking...")
-        self._check_status.configure(text="Generating local fingerprint...",
-                                     text_color="#6688bb")
+        self._check_status.configure(
+            text=(
+                "Generating local fingerprint "
+                f"(host audio policy: {'Strict' if strict_audio_sync else 'Standard'}, "
+                f"env policy: {'Strict' if strict_environment_match else 'Standard'})..."
+            ),
+            text_color="#6688bb",
+        )
         self._check_progress.set(0)
 
         for w in self._check_results.winfo_children():
@@ -604,6 +742,10 @@ class OnlineCompatPage(BasePage):
                     plugins_path=plugins_path,
                     exefs_path=exefs_path,
                     emulator_name=emulator,
+                    emulator_version=emulator_version,
+                    game_version=game_version,
+                    strict_audio_sync=strict_audio_sync,
+                    strict_environment_match=strict_environment_match,
                     progress_callback=progress_cb,
                 )
                 result = compare_fingerprints(local_fp, ref_fp)
@@ -629,7 +771,7 @@ class OnlineCompatPage(BasePage):
 
         if result.compatible:
             self._check_status.configure(
-                text="\u2713  COMPATIBLE — Your gameplay setup matches!",
+                text="\u2713  COMPATIBLE â€” Your gameplay setup matches!",
                 text_color="#2fa572")
 
             compat_frame = ctk.CTkFrame(self._check_results, fg_color="#1a2e22",
@@ -654,6 +796,18 @@ class OnlineCompatPage(BasePage):
             details.append(f"Gameplay files compared: {len(ref_fp.gameplay_hashes)}")
             details.append(f"Plugins compared: {len(ref_fp.plugin_hashes)}")
             details.append(f"Host emulator: {ref_fp.emulator or 'Unknown'}")
+            if getattr(ref_fp, "emulator_version", ""):
+                details.append(f"Host emulator version: {ref_fp.emulator_version}")
+            if getattr(ref_fp, "game_version", ""):
+                details.append(f"Host game version: {ref_fp.game_version}")
+            details.append(
+                f"Host strict audio policy: "
+                f"{'ON' if getattr(ref_fp, 'strict_audio_sync', False) else 'OFF'}"
+            )
+            details.append(
+                f"Host strict environment policy: "
+                f"{'ON' if getattr(ref_fp, 'strict_environment_match', False) else 'OFF'}"
+            )
             details.append(f"Code generated: {ref_fp.timestamp or 'Unknown'}")
 
             for d in details:
@@ -665,7 +819,7 @@ class OnlineCompatPage(BasePage):
 
         else:
             self._check_status.configure(
-                text=f"\u2716  INCOMPATIBLE — {result.issue_count} issue(s) found",
+                text=f"\u2716  INCOMPATIBLE â€” {result.issue_count} issue(s) found",
                 text_color="#e94560")
 
             incompat_frame = ctk.CTkFrame(self._check_results, fg_color="#2e1a1a",
@@ -674,7 +828,7 @@ class OnlineCompatPage(BasePage):
             incompat_frame.pack(fill="x", pady=5)
 
             ctk.CTkLabel(incompat_frame,
-                text=f"\u2716  INCOMPATIBLE — {result.issue_count} issue(s)",
+                text=f"\u2716  INCOMPATIBLE â€” {result.issue_count} issue(s)",
                 font=ctk.CTkFont(size=16, weight="bold"),
                 text_color="#e94560", anchor="w"
             ).pack(fill="x", padx=12, pady=(10, 3))
@@ -685,6 +839,14 @@ class OnlineCompatPage(BasePage):
                 font=ctk.CTkFont(size=12), text_color="#bb8888", anchor="w",
                 wraplength=700, justify="left"
             ).pack(fill="x", padx=12, pady=(0, 8))
+
+            # Environment issues (emulator/game version mismatches)
+            if getattr(result, "environment_issues", None):
+                self._build_issue_group(incompat_frame,
+                    f"\u2716  Environment Mismatch ({len(result.environment_issues)})",
+                    "Core environment metadata differs between setups "
+                    "(emulator or game version).",
+                    result.environment_issues, "#e94560")
 
             # Missing gameplay files
             if result.missing_gameplay:
@@ -841,7 +1003,7 @@ class OnlineCompatPage(BasePage):
 
         ctk.CTkFrame(grp, height=6, fg_color="transparent").pack()
 
-    # ─── Utility ──────────────────────────────────────────────────────
+    # â”€â”€â”€ Utility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _copy_text(self, text: str, label: str = "Text"):
         """Copy text to clipboard with feedback."""
@@ -852,7 +1014,7 @@ class OnlineCompatPage(BasePage):
         except Exception:
             messagebox.showerror("Error", "Failed to copy to clipboard.")
 
-    # ─── Existing features ────────────────────────────────────────────
+    # â”€â”€â”€ Existing features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def on_show(self):
         """Auto-analyze on first visit, but don't block UI."""
@@ -1032,3 +1194,4 @@ class OnlineCompatPage(BasePage):
                                  command=lambda: self._copy_text(summary_text, "Summary"),
                                  height=34, corner_radius=8)
         copy_btn.pack(padx=15, pady=(5, 15), anchor="w")
+

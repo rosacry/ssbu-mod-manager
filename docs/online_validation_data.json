@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "matrix_runs": [
+    {
+      "date": "2026-02-26",
+      "pair_a": "Eden",
+      "pair_b": "Eden",
+      "result": "UNVERIFIED",
+      "build_a": "",
+      "build_b": "",
+      "notes": "seeded default entry"
+    },
+    {
+      "date": "2026-02-26",
+      "pair_a": "Eden",
+      "pair_b": "Ryujinx",
+      "result": "UNVERIFIED",
+      "build_a": "",
+      "build_b": "",
+      "notes": "seeded default entry"
+    },
+    {
+      "date": "2026-02-26",
+      "pair_a": "Eden",
+      "pair_b": "Yuzu-family fork",
+      "result": "UNVERIFIED",
+      "build_a": "",
+      "build_b": "",
+      "notes": "seeded default entry"
+    },
+    {
+      "date": "2026-02-26",
+      "pair_a": "Ryujinx",
+      "pair_b": "Ryujinx",
+      "result": "UNVERIFIED",
+      "build_a": "",
+      "build_b": "",
+      "notes": "seeded default entry"
+    },
+    {
+      "date": "2026-02-26",
+      "pair_a": "Yuzu-family fork",
+      "pair_b": "Yuzu-family fork",
+      "result": "UNVERIFIED",
+      "build_a": "",
+      "build_b": "",
+      "notes": "seeded default entry"
+    }
+  ],
+  "rtt_runs": []
+}

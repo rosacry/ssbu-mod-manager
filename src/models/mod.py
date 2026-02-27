@@ -29,6 +29,9 @@ class ModMetadata:
     has_msbt: bool = False
     has_prc: bool = False
     categories: list[str] = field(default_factory=list)
+    # Online/desync classification (computed by desync classifier).
+    online_risk: str = ""
+    online_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass

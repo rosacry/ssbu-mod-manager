@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 from src.models.mod import Mod, ModStatus, ModMetadata
 from src.core.file_scanner import FileScanner
+from src.core.desync_classifier import classify_mod_path
 from src.utils.file_utils import safe_rename
 
 # Quick category detection based on top-level directory names
@@ -83,6 +84,7 @@ class ModManager:
 
             # Lightweight category detection
             mod.metadata.categories = self._quick_categorize(folder)
+            self._apply_online_risk(mod)
 
             self._mods.append(mod)
 
@@ -99,6 +101,7 @@ class ModManager:
                     status=ModStatus.DISABLED,
                 )
                 mod.metadata.categories = self._quick_categorize(folder)
+                self._apply_online_risk(mod)
                 self._mods.append(mod)
 
         # Also scan legacy .disabled directory inside mods for backward
@@ -115,10 +118,32 @@ class ModManager:
                     status=ModStatus.DISABLED,
                 )
                 mod.metadata.categories = self._quick_categorize(folder)
+                self._apply_online_risk(mod)
                 self._mods.append(mod)
 
         self._cached = True
         return self._mods
+
+    @staticmethod
+    def _apply_online_risk(mod: Mod) -> None:
+        """Attach online desync risk metadata to a mod entry."""
+        try:
+            report = classify_mod_path(mod.path)
+            mod.metadata.online_risk = report.level.value
+            mod.metadata.online_reasons = [
+                (
+                    f"{r.code}: {r.message} ({r.relative_path}) [source: {r.evidence_url}]"
+                    if r.relative_path else f"{r.code}: {r.message} [source: {r.evidence_url}]"
+                )
+                if r.evidence_url else (
+                    f"{r.code}: {r.message} ({r.relative_path})"
+                    if r.relative_path else f"{r.code}: {r.message}"
+                )
+                for r in report.reasons
+            ]
+        except Exception:
+            mod.metadata.online_risk = "unknown_needs_review"
+            mod.metadata.online_reasons = ["scan_failed: Could not classify mod risk."]
 
     def _quick_categorize(self, mod_path: Path) -> list[str]:
         """Detect mod categories using directory structure, file types, and name heuristics."""
@@ -211,7 +236,14 @@ class ModManager:
             mod.files = files
             mod.file_count = len(files)
             mod.total_size = sum(f.file_size for f in files)
+            preserved_risk = mod.metadata.online_risk
+            preserved_reasons = list(mod.metadata.online_reasons)
             mod.metadata = self.scanner.extract_metadata(mod.path, files)
+            if preserved_risk:
+                mod.metadata.online_risk = preserved_risk
+                mod.metadata.online_reasons = preserved_reasons
+            else:
+                self._apply_online_risk(mod)
         else:
             mod.files = []
             mod.file_count = 0
