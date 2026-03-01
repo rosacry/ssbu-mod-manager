@@ -365,7 +365,11 @@ def reslot_mod_directory(source_dir: Path, output_dir: Path, fighter: str, sourc
             )
 
         if targeted and lower.startswith(effect_prefix):
-            new_rel = re.sub(rf"(?i)\bc{source_num}\b", target_token, new_rel)
+            new_rel = re.sub(
+                rf"(?i)(?<![a-z0-9])c{source_num}(?=[^0-9]|$)",
+                target_token,
+                new_rel,
+            )
             new_rel = re.sub(rf"(?i)(_|/){source_num}(?=\.|/|_|$)", lambda m: m.group(1) + target_num, new_rel)
 
         out_path = output_dir / new_rel

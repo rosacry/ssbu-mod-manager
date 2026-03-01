@@ -43,6 +43,16 @@ _METADATA_FILENAMES = {
     "readme.txt",
     "readme.md",
 }
+_SUPPORT_KIND_TO_CATEGORY = {
+    "voice": "sound",
+    "effect": "effect",
+    "camera": "camera",
+}
+_SUPPORT_KIND_LABELS = {
+    "voice": "voice pack",
+    "effect": "effect pack",
+    "camera": "camera pack",
+}
 
 
 @dataclass
@@ -63,7 +73,8 @@ class ImportSummary:
 
 
 @dataclass
-class VoicePackScopeInfo:
+class SupportPackScopeInfo:
+    support_kind: str
     fighter: str
     source_slots: list[int] = field(default_factory=list)
     recommended_source_slot: int = 0
@@ -71,7 +82,8 @@ class VoicePackScopeInfo:
 
 
 @dataclass
-class VoicePackScopeSummary:
+class SupportPackScopeSummary:
+    support_kind: str
     mod_name: str
     fighter: str
     source_slot: int
@@ -104,53 +116,142 @@ class _PreparedModImport:
 
 SlotConflictResolver = Callable[[SlotConflictInfo], str]
 
+VoicePackScopeInfo = SupportPackScopeInfo
+VoicePackScopeSummary = SupportPackScopeSummary
 
-def inspect_mod_voice_pack(mod_path: Path) -> VoicePackScopeInfo | None:
+
+def inspect_mod_support_pack(mod_path: Path, support_kind: str) -> SupportPackScopeInfo | None:
     mod_path = Path(mod_path)
     if not mod_path.exists() or not mod_path.is_dir():
         return None
 
+    normalized_kind = _normalize_support_kind(support_kind)
+    category = _SUPPORT_KIND_TO_CATEGORY[normalized_kind]
     analysis = analyze_mod_directory(mod_path, [mod_path.name])
-    fighter_sound_slots = {
+    fighter_support_slots = {
         fighter: sorted(
             slot
             for slot in slots
-            if "sound" in analysis.categories_for_slot(fighter, slot)
+            if category in analysis.categories_for_slot(fighter, slot)
         )
         for fighter, slots in analysis.fighter_slots.items()
     }
-    fighter_sound_slots = {
+    fighter_support_slots = {
         fighter: slots
-        for fighter, slots in fighter_sound_slots.items()
+        for fighter, slots in fighter_support_slots.items()
         if slots
     }
-    if not fighter_sound_slots:
+    if not fighter_support_slots:
         return None
 
-    if analysis.primary_fighter in fighter_sound_slots:
+    if analysis.primary_fighter in fighter_support_slots:
         fighter = str(analysis.primary_fighter)
-    elif len(fighter_sound_slots) == 1:
-        fighter = next(iter(fighter_sound_slots))
+    elif len(fighter_support_slots) == 1:
+        fighter = next(iter(fighter_support_slots))
     else:
         fighter = min(
-            fighter_sound_slots.keys(),
+            fighter_support_slots.keys(),
             key=lambda key: (
-                len(fighter_sound_slots[key]),
-                min(fighter_sound_slots[key]),
+                len(fighter_support_slots[key]),
+                min(fighter_support_slots[key]),
                 key,
             ),
         )
 
-    source_slots = fighter_sound_slots[fighter]
+    source_slots = fighter_support_slots[fighter]
     recommended = source_slots[0]
     if analysis.primary_slot in source_slots:
         recommended = int(analysis.primary_slot)
 
-    return VoicePackScopeInfo(
+    return SupportPackScopeInfo(
+        support_kind=normalized_kind,
         fighter=fighter,
         source_slots=source_slots,
         recommended_source_slot=recommended,
         visual_slots=list(analysis.visual_fighter_slots.get(fighter, [])),
+    )
+
+
+def inspect_mod_voice_pack(mod_path: Path) -> VoicePackScopeInfo | None:
+    return inspect_mod_support_pack(mod_path, "voice")
+
+
+def inspect_mod_effect_pack(mod_path: Path) -> SupportPackScopeInfo | None:
+    return inspect_mod_support_pack(mod_path, "effect")
+
+
+def inspect_mod_camera_pack(mod_path: Path) -> SupportPackScopeInfo | None:
+    return inspect_mod_support_pack(mod_path, "camera")
+
+
+def apply_mod_support_pack_scope(
+    mod_path: Path,
+    mods_path: Path,
+    support_kind: str,
+    mode: str,
+    source_slot: int | None = None,
+    target_slot: int | None = None,
+) -> SupportPackScopeSummary:
+    mod_path = Path(mod_path)
+    mods_path = Path(mods_path)
+    normalized_kind = _normalize_support_kind(support_kind)
+    info = inspect_mod_support_pack(mod_path, normalized_kind)
+    support_label = _SUPPORT_KIND_LABELS[normalized_kind].capitalize()
+    if info is None:
+        raise ValueError(f"This mod does not contain any slot-scoped fighter {normalized_kind} files.")
+
+    fighter = str(info.fighter)
+    chosen_source_slot = int(source_slot if source_slot is not None else info.recommended_source_slot)
+    if chosen_source_slot not in info.source_slots:
+        raise ValueError(
+            f"{support_label} source slot {fighter} c{chosen_source_slot:02d} was not found in this mod."
+        )
+
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode == "single_slot":
+        if target_slot is None:
+            raise ValueError(f"Choose a target slot for single-slot {normalized_kind} assignment.")
+        target_slots = [int(target_slot)]
+    elif normalized_mode == "character_wide":
+        target_slots = list(range(8))
+    else:
+        raise ValueError(f"Unsupported {normalized_kind} pack mode.")
+
+    temp_dir = tempfile.TemporaryDirectory(prefix=f"ssbumm_{normalized_kind}_scope_")
+    summary = ImportSummary()
+    files_written = 0
+    try:
+        temp_root = Path(temp_dir.name) / mod_path.name
+        shutil.copytree(mod_path, temp_root)
+        _remove_support_files_for_fighter(temp_root, fighter, normalized_kind)
+        files_written = _copy_support_files_from_source_slot(
+            mod_path,
+            temp_root,
+            fighter,
+            chosen_source_slot,
+            target_slots,
+            normalized_kind,
+        )
+        if files_written == 0:
+            raise ValueError(
+                f"No {normalized_kind} files for {fighter} c{chosen_source_slot:02d} were available to duplicate."
+            )
+
+        _resolve_support_path_conflicts(temp_root, mod_path.name, mods_path, summary)
+        _replace_directory_from_temp(mod_path, temp_root)
+    finally:
+        temp_dir.cleanup()
+
+    return SupportPackScopeSummary(
+        support_kind=normalized_kind,
+        mod_name=mod_path.name,
+        fighter=fighter,
+        source_slot=chosen_source_slot,
+        target_slots=target_slots,
+        files_written=files_written,
+        support_mod_adjustments=summary.support_mod_adjustments,
+        support_files_pruned=summary.support_files_pruned,
+        warnings=list(summary.warnings),
     )
 
 
@@ -161,60 +262,47 @@ def apply_mod_voice_pack_scope(
     source_slot: int | None = None,
     target_slot: int | None = None,
 ) -> VoicePackScopeSummary:
-    mod_path = Path(mod_path)
-    mods_path = Path(mods_path)
-    info = inspect_mod_voice_pack(mod_path)
-    if info is None:
-        raise ValueError("This mod does not contain any slot-scoped fighter voice files.")
+    return apply_mod_support_pack_scope(
+        mod_path,
+        mods_path,
+        "voice",
+        mode=mode,
+        source_slot=source_slot,
+        target_slot=target_slot,
+    )
 
-    fighter = str(info.fighter)
-    chosen_source_slot = int(source_slot if source_slot is not None else info.recommended_source_slot)
-    if chosen_source_slot not in info.source_slots:
-        raise ValueError(f"Voice source slot {fighter} c{chosen_source_slot:02d} was not found in this mod.")
 
-    normalized_mode = str(mode or "").strip().lower()
-    if normalized_mode == "single_slot":
-        if target_slot is None:
-            raise ValueError("Choose a target slot for single-slot voice assignment.")
-        target_slots = [int(target_slot)]
-    elif normalized_mode == "character_wide":
-        target_slots = list(range(8))
-    else:
-        raise ValueError("Unsupported voice pack mode.")
+def apply_mod_effect_pack_scope(
+    mod_path: Path,
+    mods_path: Path,
+    mode: str,
+    source_slot: int | None = None,
+    target_slot: int | None = None,
+) -> SupportPackScopeSummary:
+    return apply_mod_support_pack_scope(
+        mod_path,
+        mods_path,
+        "effect",
+        mode=mode,
+        source_slot=source_slot,
+        target_slot=target_slot,
+    )
 
-    temp_dir = tempfile.TemporaryDirectory(prefix="ssbumm_voice_scope_")
-    summary = ImportSummary()
-    files_written = 0
-    try:
-        temp_root = Path(temp_dir.name) / mod_path.name
-        shutil.copytree(mod_path, temp_root)
-        _remove_voice_files_for_fighter(temp_root, fighter)
-        files_written = _copy_voice_files_from_source_slot(
-            mod_path,
-            temp_root,
-            fighter,
-            chosen_source_slot,
-            target_slots,
-        )
-        if files_written == 0:
-            raise ValueError(
-                f"No voice files for {fighter} c{chosen_source_slot:02d} were available to duplicate."
-            )
 
-        _resolve_support_path_conflicts(temp_root, mod_path.name, mods_path, summary)
-        _replace_directory_from_temp(mod_path, temp_root)
-    finally:
-        temp_dir.cleanup()
-
-    return VoicePackScopeSummary(
-        mod_name=mod_path.name,
-        fighter=fighter,
-        source_slot=chosen_source_slot,
-        target_slots=target_slots,
-        files_written=files_written,
-        support_mod_adjustments=summary.support_mod_adjustments,
-        support_files_pruned=summary.support_files_pruned,
-        warnings=list(summary.warnings),
+def apply_mod_camera_pack_scope(
+    mod_path: Path,
+    mods_path: Path,
+    mode: str,
+    source_slot: int | None = None,
+    target_slot: int | None = None,
+) -> SupportPackScopeSummary:
+    return apply_mod_support_pack_scope(
+        mod_path,
+        mods_path,
+        "camera",
+        mode=mode,
+        source_slot=source_slot,
+        target_slot=target_slot,
     )
 
 
@@ -878,16 +966,58 @@ def _resolve_support_path_conflicts(
         )
 
 
-def _remove_voice_files_for_fighter(mod_root: Path, fighter: str) -> None:
+def _normalize_support_kind(support_kind: str) -> str:
+    normalized = str(support_kind or "").strip().lower()
+    if normalized not in _SUPPORT_KIND_TO_CATEGORY:
+        raise ValueError("Unsupported support pack type.")
+    return normalized
+
+
+def _remove_support_files_for_fighter(mod_root: Path, fighter: str, support_kind: str) -> None:
+    normalized_kind = _normalize_support_kind(support_kind)
     fighter = str(fighter).lower()
     for file_path in list(mod_root.rglob("*")):
         if not file_path.is_file():
             continue
         rel = str(file_path.relative_to(mod_root)).replace("\\", "/")
-        if not _is_voice_file_for_fighter_slot(rel, fighter):
+        if not _is_support_file_for_fighter_slot(rel, fighter, normalized_kind):
             continue
         file_path.unlink()
         _prune_empty_parents(file_path.parent, mod_root)
+
+
+def _remove_voice_files_for_fighter(mod_root: Path, fighter: str) -> None:
+    _remove_support_files_for_fighter(mod_root, fighter, "voice")
+
+
+def _copy_support_files_from_source_slot(
+    source_root: Path,
+    dest_root: Path,
+    fighter: str,
+    source_slot: int,
+    target_slots: list[int],
+    support_kind: str,
+) -> int:
+    normalized_kind = _normalize_support_kind(support_kind)
+    fighter = str(fighter).lower()
+    written = 0
+    seen: set[str] = set()
+    for file_path in source_root.rglob("*"):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(source_root)).replace("\\", "/")
+        if not _is_support_file_for_fighter_slot(rel, fighter, normalized_kind, source_slot):
+            continue
+        for slot in target_slots:
+            new_rel = _retarget_support_relative_path(rel, normalized_kind, fighter, source_slot, int(slot))
+            if new_rel in seen:
+                continue
+            seen.add(new_rel)
+            out_path = dest_root / new_rel
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(file_path, out_path)
+            written += 1
+    return written
 
 
 def _copy_voice_files_from_source_slot(
@@ -897,25 +1027,14 @@ def _copy_voice_files_from_source_slot(
     source_slot: int,
     target_slots: list[int],
 ) -> int:
-    fighter = str(fighter).lower()
-    written = 0
-    seen: set[str] = set()
-    for file_path in source_root.rglob("*"):
-        if not file_path.is_file():
-            continue
-        rel = str(file_path.relative_to(source_root)).replace("\\", "/")
-        if not _is_voice_file_for_fighter_slot(rel, fighter, source_slot):
-            continue
-        for slot in target_slots:
-            new_rel = _retarget_voice_relative_path(rel, source_slot, int(slot))
-            if new_rel in seen:
-                continue
-            seen.add(new_rel)
-            out_path = dest_root / new_rel
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(file_path, out_path)
-            written += 1
-    return written
+    return _copy_support_files_from_source_slot(
+        source_root,
+        dest_root,
+        fighter,
+        source_slot,
+        target_slots,
+        "voice",
+    )
 
 
 def _flatten_nested_mod(mod_path: Path) -> bool:
@@ -1075,6 +1194,48 @@ def _is_voice_file_for_fighter_slot(relative_path: str, fighter: str, slot: int 
     return f"_c{int(slot):02d}" in rel
 
 
+def _is_camera_file_for_fighter_slot(relative_path: str, fighter: str, slot: int | None = None) -> bool:
+    rel = relative_path.replace("\\", "/").lower()
+    fighter = str(fighter).lower()
+    prefix = f"camera/fighter/{fighter}/"
+    if not rel.startswith(prefix):
+        return False
+    if slot is None:
+        return True
+    return f"/c{int(slot):02d}/" in rel
+
+
+def _is_effect_file_for_fighter_slot(relative_path: str, fighter: str, slot: int | None = None) -> bool:
+    rel = relative_path.replace("\\", "/").lower()
+    fighter = str(fighter).lower()
+    prefix = f"effect/fighter/{fighter}/"
+    if not rel.startswith(prefix):
+        return False
+    if slot is None:
+        return re.search(r"(?i)(?<![a-z0-9])c\d{2,3}(?=[^0-9]|$)", rel) is not None or (
+            re.search(r"(?i)(_|/)\d{2}(?=\.|/|_|$)", rel) is not None
+        )
+    slot_num = f"{int(slot):02d}"
+    return (
+        f"c{slot_num}" in rel
+        or re.search(rf"(?i)(_|/){slot_num}(?=\.|/|_|$)", rel) is not None
+    )
+
+
+def _is_support_file_for_fighter_slot(
+    relative_path: str,
+    fighter: str,
+    support_kind: str,
+    slot: int | None = None,
+) -> bool:
+    normalized_kind = _normalize_support_kind(support_kind)
+    if normalized_kind == "voice":
+        return _is_voice_file_for_fighter_slot(relative_path, fighter, slot)
+    if normalized_kind == "effect":
+        return _is_effect_file_for_fighter_slot(relative_path, fighter, slot)
+    return _is_camera_file_for_fighter_slot(relative_path, fighter, slot)
+
+
 def _retarget_voice_relative_path(relative_path: str, source_slot: int, target_slot: int) -> str:
     source_num = f"{int(source_slot):02d}"
     target_num = f"{int(target_slot):02d}"
@@ -1082,6 +1243,52 @@ def _retarget_voice_relative_path(relative_path: str, source_slot: int, target_s
         rf"(?i)_c{source_num}(?=\.|_)",
         f"_c{target_num}",
         relative_path.replace("\\", "/"),
+    )
+
+
+def _retarget_camera_relative_path(relative_path: str, source_slot: int, target_slot: int) -> str:
+    return _replace_path_segment_token(
+        relative_path.replace("\\", "/"),
+        f"c{int(source_slot):02d}",
+        f"c{int(target_slot):02d}",
+    )
+
+
+def _retarget_effect_relative_path(relative_path: str, source_slot: int, target_slot: int) -> str:
+    source_num = f"{int(source_slot):02d}"
+    target_num = f"{int(target_slot):02d}"
+    retargeted = re.sub(
+        rf"(?i)(?<![a-z0-9])c{source_num}(?=[^0-9]|$)",
+        f"c{target_num}",
+        relative_path.replace("\\", "/"),
+    )
+    return re.sub(
+        rf"(?i)(_|/){source_num}(?=\.|/|_|$)",
+        lambda match: match.group(1) + target_num,
+        retargeted,
+    )
+
+
+def _retarget_support_relative_path(
+    relative_path: str,
+    support_kind: str,
+    fighter: str,
+    source_slot: int,
+    target_slot: int,
+) -> str:
+    normalized_kind = _normalize_support_kind(support_kind)
+    if normalized_kind == "voice":
+        return _retarget_voice_relative_path(relative_path, source_slot, target_slot)
+    if normalized_kind == "camera":
+        return _retarget_camera_relative_path(relative_path, source_slot, target_slot)
+    return _retarget_effect_relative_path(relative_path, source_slot, target_slot)
+
+
+def _replace_path_segment_token(path: str, source_token: str, target_token: str) -> str:
+    parts = path.replace("\\", "/").split("/")
+    return "/".join(
+        target_token if part.lower() == source_token.lower() else part
+        for part in parts
     )
 
 

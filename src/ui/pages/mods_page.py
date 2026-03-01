@@ -7,8 +7,12 @@ from pathlib import Path
 from src.ui.base_page import BasePage
 from src.models.mod import Mod, ModStatus
 from src.core.content_importer import (
+    apply_mod_camera_pack_scope,
+    apply_mod_effect_pack_scope,
     apply_mod_voice_pack_scope,
     import_mod_package,
+    inspect_mod_camera_pack,
+    inspect_mod_effect_pack,
     inspect_mod_voice_pack,
 )
 from src.core.runtime_guard import ContentOperationBlockedError
@@ -41,6 +45,12 @@ MOD_RISK_BADGES = {
     "conditionally_shared": ("CONDITIONAL", "#d4a017"),
     "unknown_needs_review": ("REVIEW", "#b08a2a"),
     "safe_client_only": ("SAFE", "#2fa572"),
+}
+
+SUPPORT_PACK_LABELS = {
+    "voice": "Voice Pack",
+    "effect": "Effect Pack",
+    "camera": "Camera Pack",
 }
 
 
@@ -104,6 +114,12 @@ class ModsPage(BasePage):
                                        fg_color="#2e6b3e", hover_color="#245530",
                                        corner_radius=8, height=34)
         enable_all_btn.pack(side="right", padx=(5, 0))
+
+        wifi_safe_btn = ctk.CTkButton(header_frame, text="Wi-Fi Safe", width=110,
+                                      command=self._enable_wifi_safe_only,
+                                      fg_color="#1f538d", hover_color="#163b6a",
+                                      corner_radius=8, height=34)
+        wifi_safe_btn.pack(side="right", padx=(5, 0))
 
         # Search, filter, and group toggle
         filter_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -484,12 +500,26 @@ class ModsPage(BasePage):
             "Copy Online Risk Details",
             lambda m=mod: self._copy_mod_risk_details(m),
         )
-        voice_info = self._inspect_voice_pack_info(mod)
+        voice_info = self._inspect_support_pack_info(mod, "voice")
         if voice_info is not None:
             self._add_context_item(
                 frame,
                 "Configure Voice Pack...",
                 lambda m=mod: self._configure_voice_pack_scope(m),
+            )
+        effect_info = self._inspect_support_pack_info(mod, "effect")
+        if effect_info is not None:
+            self._add_context_item(
+                frame,
+                "Configure Effect Pack...",
+                lambda m=mod: self._configure_effect_pack_scope(m),
+            )
+        camera_info = self._inspect_support_pack_info(mod, "camera")
+        if camera_info is not None:
+            self._add_context_item(
+                frame,
+                "Configure Camera Pack...",
+                lambda m=mod: self._configure_camera_pack_scope(m),
             )
         if self._has_custom_mod_name(mod):
             self._add_context_item(
@@ -750,30 +780,58 @@ class ModsPage(BasePage):
         except Exception:
             messagebox.showerror("Error", "Failed to copy risk details.")
 
-    def _inspect_voice_pack_info(self, mod):
+    def _inspect_support_pack_info(self, mod, support_kind: str):
+        inspectors = {
+            "voice": inspect_mod_voice_pack,
+            "effect": inspect_mod_effect_pack,
+            "camera": inspect_mod_camera_pack,
+        }
+        inspector = inspectors.get(str(support_kind).strip().lower())
+        if inspector is None:
+            return None
         try:
-            return inspect_mod_voice_pack(mod.path)
+            return inspector(mod.path)
         except Exception:
             return None
 
     def _configure_voice_pack_scope(self, mod):
+        self._configure_support_pack_scope(mod, "voice")
+
+    def _configure_effect_pack_scope(self, mod):
+        self._configure_support_pack_scope(mod, "effect")
+
+    def _configure_camera_pack_scope(self, mod):
+        self._configure_support_pack_scope(mod, "camera")
+
+    def _configure_support_pack_scope(self, mod, support_kind: str):
+        normalized_kind = str(support_kind).strip().lower()
+        support_label = SUPPORT_PACK_LABELS.get(normalized_kind, "Support Pack")
         settings = self.app.config_manager.settings
         mods_path = settings.mods_path
         if not mods_path:
-            messagebox.showerror("Voice Pack", "Mods path is not configured in Settings.")
+            messagebox.showerror(support_label, "Mods path is not configured in Settings.")
             return
 
-        info = self._inspect_voice_pack_info(mod)
+        info = self._inspect_support_pack_info(mod, normalized_kind)
         if info is None:
-            messagebox.showinfo("Voice Pack", "This mod does not contain a slot-scoped voice pack.")
+            messagebox.showinfo(
+                support_label,
+                f"This mod does not contain a slot-scoped {normalized_kind} pack.",
+            )
             return
 
-        result = self._show_voice_pack_scope_dialog(mod, info)
+        result = self._show_support_pack_scope_dialog(mod, info)
         if result is None:
             return
 
+        appliers = {
+            "voice": apply_mod_voice_pack_scope,
+            "effect": apply_mod_effect_pack_scope,
+            "camera": apply_mod_camera_pack_scope,
+        }
+        applier = appliers[normalized_kind]
         try:
-            summary = apply_mod_voice_pack_scope(
+            summary = applier(
                 mod.path,
                 mods_path,
                 mode=result["mode"],
@@ -781,14 +839,14 @@ class ModsPage(BasePage):
                 target_slot=result.get("target_slot"),
             )
             lines = [
-                f"Configured voice pack for {summary.fighter}.",
+                f"Configured {normalized_kind} pack for {summary.fighter}.",
                 f"Source slot: c{summary.source_slot:02d}.",
             ]
             if len(summary.target_slots) == 8:
                 lines.append("Applied to all 8 default slots.")
             else:
                 lines.append(f"Applied only to c{summary.target_slots[0]:02d}.")
-            lines.append(f"Wrote {summary.files_written} voice file(s).")
+            lines.append(f"Wrote {summary.files_written} {normalized_kind} file(s).")
             if summary.support_mod_adjustments:
                 lines.append(
                     f"Adjusted {summary.support_mod_adjustments} support mod(s) and pruned "
@@ -799,17 +857,19 @@ class ModsPage(BasePage):
                 lines.extend(summary.warnings[:5])
                 if len(summary.warnings) > 5:
                     lines.append(f"...and {len(summary.warnings) - 5} more warning(s).")
-            messagebox.showinfo("Voice Pack Updated", "\n".join(lines))
+            messagebox.showinfo(f"{support_label} Updated", "\n".join(lines))
             self._force_refresh()
         except Exception as e:
-            logger.error("Mods", f"Voice pack configuration failed: {e}")
-            messagebox.showerror("Voice Pack Failed", str(e))
+            logger.error("Mods", f"{normalized_kind} pack configuration failed: {e}")
+            messagebox.showerror(f"{support_label} Failed", str(e))
 
-    def _show_voice_pack_scope_dialog(self, mod, info):
+    def _show_support_pack_scope_dialog(self, mod, info):
+        support_kind = getattr(info, "support_kind", "voice")
+        support_label = SUPPORT_PACK_LABELS.get(support_kind, "Support Pack")
         result = {"value": None}
         dialog = ctk.CTkToplevel(self)
         dialog.withdraw()
-        dialog.title("Configure Voice Pack")
+        dialog.title(f"Configure {support_label}")
         dialog.resizable(False, False)
         dialog.configure(fg_color="#0f1327")
 
@@ -818,19 +878,19 @@ class ModsPage(BasePage):
         shell.pack(fill="both", expand=True, padx=10, pady=10)
 
         ctk.CTkLabel(
-            shell, text="Configure Voice Pack", anchor="w",
+            shell, text=f"Configure {support_label}", anchor="w",
             font=ctk.CTkFont(size=16, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
         current_visual = ", ".join(f"c{slot:02d}" for slot in info.visual_slots) or "none"
-        current_voice = ", ".join(f"c{slot:02d}" for slot in info.source_slots)
+        current_support = ", ".join(f"c{slot:02d}" for slot in info.source_slots)
         ctk.CTkLabel(
             shell,
             text=(
                 f"Mod: {mod.original_name}\n"
                 f"Fighter: {info.fighter}\n"
                 f"Visual slots in this mod: {current_visual}\n"
-                f"Voice slots currently present: {current_voice}"
+                f"{support_label} slots currently present: {current_support}"
             ),
             anchor="w",
             justify="left",
@@ -841,7 +901,7 @@ class ModsPage(BasePage):
         form = ctk.CTkFrame(shell, fg_color="transparent")
         form.pack(fill="x", padx=14, pady=(12, 10))
 
-        ctk.CTkLabel(form, text="Use Voice From", anchor="w").pack(fill="x")
+        ctk.CTkLabel(form, text=f"Use {support_label} From", anchor="w").pack(fill="x")
         source_var = tk.StringVar(value=f"c{info.recommended_source_slot:02d}")
         source_menu = ctk.CTkOptionMenu(
             form,
@@ -887,8 +947,8 @@ class ModsPage(BasePage):
         note_label = ctk.CTkLabel(
             form,
             text=(
-                "Single Slot: apply the selected voice files only to one costume slot.\n"
-                "Whole Character: duplicate the selected voice files across c00-c07."
+                f"Single Slot: apply the selected {support_kind} files only to one costume slot.\n"
+                f"Whole Character: duplicate the selected {support_kind} files across c00-c07."
             ),
             anchor="w",
             justify="left",
@@ -1003,6 +1063,43 @@ class ModsPage(BasePage):
         except Exception as e:
             logger.error("Mods", f"Enable all failed: {e}")
             messagebox.showerror("Error", f"Failed to enable all mods: {e}")
+
+    def _enable_wifi_safe_only(self):
+        safe_disabled = [
+            m for m in self._all_mods
+            if m.status == ModStatus.DISABLED and (m.metadata.online_risk or "") == "safe_client_only"
+        ]
+        unsafe_enabled = [
+            m for m in self._all_mods
+            if m.status == ModStatus.ENABLED and (m.metadata.online_risk or "") != "safe_client_only"
+        ]
+        if not safe_disabled and not unsafe_enabled:
+            messagebox.showinfo("Wi-Fi Safe", "Only Wi-Fi-safe mods are already enabled.")
+            return
+        confirm = messagebox.askyesno(
+            "Enable Only Wi-Fi-Safe Mods",
+            f"Enable {len(safe_disabled)} safe mod(s) and disable {len(unsafe_enabled)} non-safe mod(s)?\n\n"
+            "This keeps only mods classified as SAFE enabled.",
+        )
+        if not confirm:
+            return
+        try:
+            enabled_count, disabled_count = self.app.mod_manager.enable_only_safe_mods()
+            logger.info(
+                "Mods",
+                f"Enabled {enabled_count} Wi-Fi-safe mod(s) and disabled {disabled_count} non-safe mod(s)",
+            )
+            messagebox.showinfo(
+                "Wi-Fi Safe Enabled",
+                f"Enabled {enabled_count} safe mod(s) and disabled {disabled_count} non-safe mod(s).",
+            )
+            self._force_refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Mods", f"Wi-Fi-safe toggle blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
+        except Exception as e:
+            logger.error("Mods", f"Wi-Fi-safe toggle failed: {e}")
+            messagebox.showerror("Error", f"Failed to enable only Wi-Fi-safe mods: {e}")
 
     def _disable_all(self):
         """Disable all enabled mods."""

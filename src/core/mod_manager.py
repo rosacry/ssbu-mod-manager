@@ -353,6 +353,26 @@ class ModManager:
             self.invalidate_cache()
             return count
 
+    def enable_only_safe_mods(self) -> tuple[int, int]:
+        """Enable safe-client-only mods and disable everything else."""
+        with self._lock:
+            mods_snapshot = list(self.list_mods())
+            enabled_count = 0
+            disabled_count = 0
+            for mod in mods_snapshot:
+                is_safe = (mod.metadata.online_risk or "") == "safe_client_only"
+                try:
+                    if is_safe and mod.status == ModStatus.DISABLED:
+                        self.enable_mod(mod)
+                        enabled_count += 1
+                    elif not is_safe and mod.status == ModStatus.ENABLED:
+                        self.disable_mod(mod)
+                        disabled_count += 1
+                except FileExistsError:
+                    pass
+            self.invalidate_cache()
+            return enabled_count, disabled_count
+
     def detect_mod_type(self, mod: Mod) -> list[str]:
         if not mod.metadata.categories:
             self.get_mod_details(mod)

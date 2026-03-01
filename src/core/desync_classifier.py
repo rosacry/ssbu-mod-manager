@@ -9,6 +9,7 @@ This module centralizes rules used by:
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -80,6 +81,23 @@ SAFE_DIR_PARTS = frozenset({
     "stream",
 })
 
+_COSTUME_MOTION_PATH_RE = re.compile(
+    r"^fighter/[^/]+/motion/[^/]+/c\d{2,3}/[^/]+$",
+    re.IGNORECASE,
+)
+_COSTUME_MODEL_UPDATE_RE = re.compile(
+    r"^fighter/[^/]+/model/[^/]+/c\d{2,3}/update\.prc$",
+    re.IGNORECASE,
+)
+_COSTUME_MOTION_SAFE_FILENAMES = frozenset({
+    "flip.prc",
+    "ik.prc",
+    "motion_list.bin",
+    "scharge.prc",
+    "swing.prc",
+    "update.prc",
+})
+
 # Plugins explicitly categorized from project research + existing app behavior.
 KNOWN_GAMEPLAY_PLUGINS = frozenset({
     "libhdr.nro",
@@ -138,9 +156,12 @@ _EVIDENCE_URLS: dict[str, str] = {
     "safe_metadata": "https://github.com/Raytwo/ARCropolis",
     "safe_extension": "https://yuzu-mirror.github.io/help/feature/game-modding/",
     "ui_prc": "https://yuzu-mirror.github.io/help/feature/game-modding/",
+    "ui_param": "https://yuzu-mirror.github.io/help/feature/game-modding/",
     "stage_gameplay_file": "https://github.com/spacemeowx2/switch-lan-play",
+    "stage_visual_file": "https://yuzu-mirror.github.io/help/feature/game-modding/",
     "gameplay_param_file": "https://github.com/blu-dev/smashline",
     "fighter_model_only": "https://yuzu-mirror.github.io/help/feature/game-modding/",
+    "fighter_cosmetic_support": "https://yuzu-mirror.github.io/help/feature/game-modding/",
     "audio_strict_mode": "https://github.com/jugeeya/UltimateTrainingModpack",
     "safe_directory": "https://yuzu-mirror.github.io/help/feature/game-modding/",
     "ui_content": "https://yuzu-mirror.github.io/help/feature/game-modding/",
@@ -178,6 +199,31 @@ def _is_in_fighter_model_dir(parts: list[str]) -> bool:
     return len(parts) > fighter_idx + 2 and parts[fighter_idx + 2] == "model"
 
 
+def _is_ui_param_file(rel_lower: str, ext: str) -> bool:
+    if ext not in {".prc", ".prcx", ".prcxml"}:
+        return False
+    return _is_in_ui_path(rel_lower)
+
+
+def _is_stage_visual_file(rel_lower: str, filename: str) -> bool:
+    if not rel_lower.startswith("stage/"):
+        return False
+    if "/model/" in rel_lower or "/render/" in rel_lower or "/motion/" in rel_lower:
+        return True
+    return filename.endswith("visual.stdat")
+
+
+def _is_fighter_cosmetic_support_file(rel_lower: str, filename: str, ext: str) -> bool:
+    if ext == ".nuanmb" and _COSTUME_MOTION_PATH_RE.match(rel_lower) is not None:
+        return True
+    if filename in _COSTUME_MOTION_SAFE_FILENAMES and _COSTUME_MOTION_PATH_RE.match(rel_lower) is not None:
+        return True
+    return (
+        filename == "update.prc"
+        and _COSTUME_MODEL_UPDATE_RE.match(rel_lower) is not None
+    )
+
+
 def classify_mod_file(relative_path: str, strict_audio_sync: bool = False) -> tuple[DesyncRiskLevel, str, str]:
     """Classify a mod file by desync risk using path + extension rules."""
     rel_lower = relative_path.lower().replace("\\", "/")
@@ -187,6 +233,19 @@ def classify_mod_file(relative_path: str, strict_audio_sync: bool = False) -> tu
 
     if filename in SAFE_FILENAMES:
         return (DesyncRiskLevel.SAFE_CLIENT_ONLY, "safe_metadata", "Metadata file only")
+
+    if _is_ui_param_file(rel_lower, ext):
+        return (DesyncRiskLevel.SAFE_CLIENT_ONLY, "ui_param", "UI/CSS parameter file")
+
+    if _is_stage_visual_file(rel_lower, filename):
+        return (DesyncRiskLevel.SAFE_CLIENT_ONLY, "stage_visual_file", "Visual-only stage asset")
+
+    if _is_fighter_cosmetic_support_file(rel_lower, filename, ext):
+        return (
+            DesyncRiskLevel.SAFE_CLIENT_ONLY,
+            "fighter_cosmetic_support",
+            "Costume-scoped cosmetic support file",
+        )
 
     if ext in SAFE_EXTENSIONS:
         if strict_audio_sync and ext in {".nus3audio", ".nus3bank", ".wav", ".ogg", ".mp3", ".flac"}:

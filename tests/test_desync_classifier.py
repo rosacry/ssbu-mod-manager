@@ -14,6 +14,25 @@ def test_classify_mod_file_core_rules() -> None:
     assert classify_mod_file("stage/battlefield/param/stage_param.prc")[0] == DesyncRiskLevel.CONDITIONALLY_SHARED
 
 
+def test_classify_mod_file_costume_support_assets_are_wifi_safe() -> None:
+    assert classify_mod_file("fighter/mario/motion/body/c04/a00wait1.nuanmb")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("fighter/mario/motion/body/c04/swing.prc")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("fighter/mario/motion/pump/c04/motion_list.bin")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("fighter/mario/motion/pump/c04/update.prc")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("fighter/captain/model/body/c03/update.prc")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+
+
+def test_classify_mod_file_visual_stage_assets_are_wifi_safe() -> None:
+    assert classify_mod_file("stage/trail_castle/normal/render/stage.shpcanim")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("stage/trail_castle/normal/motion/camera/camera00.nuanmb")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("stage/trail_castle/normal/param/trail_castle_visual.stdat")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+
+
+def test_classify_mod_file_ui_param_variants_are_safe_client_only() -> None:
+    assert classify_mod_file("ui/param/database/ui_chara_db.prcx")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("ui/param/database/ui_chara_db.prcxml")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+
+
 def test_classify_mod_file_audio_strict_mode() -> None:
     relaxed = classify_mod_file("sound/bgm/my_song.nus3audio", strict_audio_sync=False)[0]
     strict = classify_mod_file("sound/bgm/my_song.nus3audio", strict_audio_sync=True)[0]

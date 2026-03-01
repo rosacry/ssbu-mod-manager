@@ -2,9 +2,12 @@ from pathlib import Path
 import zipfile
 
 from src.core.content_importer import (
+    apply_mod_camera_pack_scope,
+    apply_mod_effect_pack_scope,
     apply_mod_voice_pack_scope,
     import_mod_package,
     import_plugin_package,
+    inspect_mod_effect_pack,
     inspect_mod_voice_pack,
 )
 from src.core.skin_slot_utils import analyze_relative_paths, choose_primary_skin_slot
@@ -377,6 +380,55 @@ def test_apply_mod_voice_pack_scope_can_expand_character_wide(tmp_path: Path):
     assert summary.target_slots == list(range(8))
     for slot in range(8):
         assert (mod_path / "sound" / "bank" / "fighter_voice" / f"vc_sonic_c{slot:02d}.nus3audio").exists()
+
+
+def test_inspect_mod_effect_pack_detects_slot_scoped_effects(tmp_path: Path):
+    mod_path = tmp_path / "mods" / "Sonic Effects"
+    (mod_path / "effect" / "fighter" / "sonic").mkdir(parents=True)
+    (mod_path / "effect" / "fighter" / "sonic" / "ef_sonic_c07.eff").write_bytes(b"effect")
+
+    info = inspect_mod_effect_pack(mod_path)
+
+    assert info is not None
+    assert info.support_kind == "effect"
+    assert info.fighter == "sonic"
+    assert info.source_slots == [7]
+
+
+def test_apply_mod_effect_pack_scope_can_retarget_to_single_slot(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_path = mods_path / "Sonic Effects"
+    (mod_path / "effect" / "fighter" / "sonic").mkdir(parents=True)
+    (mod_path / "effect" / "fighter" / "sonic" / "ef_sonic_c05.eff").write_bytes(b"effect")
+
+    broad = mods_path / "Broad Effects"
+    (broad / "effect" / "fighter" / "sonic").mkdir(parents=True)
+    (broad / "effect" / "fighter" / "sonic" / "ef_sonic_c02.eff").write_bytes(b"old-effect")
+
+    summary = apply_mod_effect_pack_scope(mod_path, mods_path, mode="single_slot", source_slot=5, target_slot=2)
+
+    assert summary.support_kind == "effect"
+    assert summary.files_written == 1
+    assert summary.target_slots == [2]
+    assert summary.support_mod_adjustments == 1
+    assert not (broad / "effect" / "fighter" / "sonic" / "ef_sonic_c02.eff").exists()
+    assert (mod_path / "effect" / "fighter" / "sonic" / "ef_sonic_c02.eff").exists()
+    assert not (mod_path / "effect" / "fighter" / "sonic" / "ef_sonic_c05.eff").exists()
+
+
+def test_apply_mod_camera_pack_scope_can_expand_character_wide(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_path = mods_path / "Sonic Camera"
+    (mod_path / "camera" / "fighter" / "sonic" / "c05").mkdir(parents=True)
+    (mod_path / "camera" / "fighter" / "sonic" / "c05" / "j02win1.nuanmb").write_bytes(b"camera")
+
+    summary = apply_mod_camera_pack_scope(mod_path, mods_path, mode="character_wide", source_slot=5)
+
+    assert summary.support_kind == "camera"
+    assert summary.files_written == 8
+    assert summary.target_slots == list(range(8))
+    for slot in range(8):
+        assert (mod_path / "camera" / "fighter" / "sonic" / f"c{slot:02d}" / "j02win1.nuanmb").exists()
 
 
 def test_choose_primary_skin_slot_prefers_name_hint_when_present() -> None:
