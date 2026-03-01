@@ -259,12 +259,18 @@ class AudioPlayer:
             logger = None
 
         try:
-            success, message, temp_path = extract_and_convert(file_path)
+            success, message, temp_path = extract_and_convert(
+                file_path,
+                prefer_stream=bool(self._ffplay),
+            )
             if not success or temp_path is None:
                 if logger:
                     logger.warn("AudioPlayer", f"NUS3AUDIO conversion failed: {message}")
                 return False, message
-            ok, play_msg = self._play_file(temp_path)
+            if self._ffplay:
+                ok, play_msg = self._play_file_ffplay(temp_path, start=0.0)
+            else:
+                ok, play_msg = self._play_file(temp_path)
             if ok:
                 return True, f"Playing: {file_path.name}"
             return False, play_msg

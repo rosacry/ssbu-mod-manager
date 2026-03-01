@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.1.1**.
+Current release version: **1.1.2**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -52,7 +52,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.1.1-windows.zip`
+- `dist/SSBUModManager-1.1.2-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -111,6 +111,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Music auto-scan is now deferred slightly on page show and cooperative-cancelled when leaving the Music tab, preventing heavy background track scans from stalling other pages.
 - Music now supports favorite tracks, a favorites-only filter, duplicate-safe multi-select add, and Spotify playlist export that skips tracks already present in the target playlist.
+- `.nus3audio` preview now prefers direct cached Opus stream playback through `ffplay` when available, which reduces unnecessary preview transcoding and preserves higher-fidelity audio in the Music tab.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
 - App status-bar mod/plugin counts now refresh off the UI thread to reduce startup hitching and early frame drops.

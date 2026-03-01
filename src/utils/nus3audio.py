@@ -2045,7 +2045,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r10"
+_DECODER_CACHE_REV = "r11"
 
 
 def _get_cache_dir() -> Path:
@@ -2054,6 +2054,66 @@ def _get_cache_dir() -> Path:
         _CACHE_DIR = Path(tempfile.gettempdir()) / "ssbu-mod-manager-audio"
         _CACHE_DIR.mkdir(exist_ok=True)
     return _CACHE_DIR
+
+
+def _is_ogg_opus(file_path: Path) -> bool:
+    """Return True when *file_path* is an Ogg container carrying Opus."""
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(48)
+        return b"OpusHead" in header
+    except OSError:
+        return False
+
+
+def _copy_audio_variant(source: Optional[Path], destination: Path) -> Optional[Path]:
+    """Copy a cached audio artifact to its canonical cache path."""
+    if source is None or not source.exists():
+        return None
+    if source == destination:
+        return destination
+    try:
+        shutil.copyfile(source, destination)
+        return destination
+    except OSError:
+        return source
+
+
+def _cache_selected_opus_artifacts(
+    cache_dir: Path, cache_key: str, candidate: dict
+) -> tuple[Optional[Path], Optional[Path]]:
+    """Store the selected Opus candidate in canonical cache locations."""
+    ogg_path = _copy_audio_variant(candidate.get("ogg"), cache_dir / f"{cache_key}.ogg")
+    wav_path = _copy_audio_variant(candidate.get("wav"), cache_dir / f"{cache_key}.wav")
+    return ogg_path, wav_path
+
+
+def _resolve_cached_preview(
+    cache_dir: Path, cache_key: str, display_name: str, prefer_stream: bool
+) -> tuple[bool, str, Optional[Path]]:
+    """Return a cached preview path matching the requested fidelity."""
+    cache_order = (".ogg", ".wav") if prefer_stream else (".wav", ".ogg")
+    for ext in cache_order:
+        cached = cache_dir / f"{cache_key}{ext}"
+        if not cached.exists():
+            continue
+        try:
+            size = cached.stat().st_size
+        except OSError:
+            size = 0
+        if ext == ".wav" and size < 1000:
+            try:
+                cached.unlink()
+            except OSError:
+                pass
+            continue
+        if ext == ".ogg" and _is_ogg_opus(cached) and not prefer_stream:
+            wav_path = _convert_ogg_opus_to_wav(cached)
+            if wav_path and wav_path.exists():
+                return True, f"Playing: {display_name}", wav_path
+            continue
+        return True, f"Playing: {display_name}", cached
+    return False, "", None
 
 
 def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path) -> Optional[Path]:
@@ -2096,7 +2156,9 @@ def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path) -> Optional[Path]
     return None
 
 
-def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]]:
+def extract_and_convert(
+    nus3audio_path: Path, prefer_stream: bool = False
+) -> tuple[bool, str, Optional[Path]]:
     """
     Extract audio from a NUS3AUDIO file and convert to a playable format.
     Supports LOPUS, IDSP, BWAV, WAV, and OGG formats inside NUS3AUDIO containers.
@@ -2114,37 +2176,11 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     from src import __version__
     cache_key = f"{nus3audio_path.stem}_{file_size}_v{__version__}_{_DECODER_CACHE_REV}"
 
-    # Check for any cached format (prefer WAV over OGG since pygame handles WAV better)
-    for ext in ('.wav', '.ogg'):
-        cached = cache_dir / f"{cache_key}{ext}"
-        if cached.exists():
-            # Validate cached file isn't truncated / corrupt
-            try:
-                sz = cached.stat().st_size
-            except OSError:
-                sz = 0
-            if ext == '.wav' and sz < 1000:
-                # Bad / partial WAV  delete and re-convert
-                try:
-                    cached.unlink()
-                except OSError:
-                    pass
-                continue
-            # If cached file is an OGG Opus, it can't be played by pygame.
-            # Try to convert to WAV first, or skip the cache entry.
-            if ext == '.ogg':
-                try:
-                    with open(cached, 'rb') as _f:
-                        _hdr = _f.read(48)
-                    if b'OpusHead' in _hdr:
-                        wav_path = _convert_ogg_opus_to_wav(cached)
-                        if wav_path and wav_path.exists():
-                            return True, f"Playing: {nus3audio_path.name}", wav_path
-                        # ffmpeg not available  skip this cached OGG
-                        continue
-                except OSError:
-                    pass
-            return True, f"Playing: {nus3audio_path.name}", cached
+    cached_result = _resolve_cached_preview(
+        cache_dir, cache_key, nus3audio_path.name, prefer_stream
+    )
+    if cached_result[0]:
+        return cached_result
 
     try:
         with open(nus3audio_path, 'rb') as f:
@@ -2180,7 +2216,9 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
         return False, "Audio data too short", None
 
     # Try each format, returning the first successful conversion
-    result = _try_convert_audio(audio_data, cache_dir, cache_key, nus3audio_path.name)
+    result = _try_convert_audio(
+        audio_data, cache_dir, cache_key, nus3audio_path.name, prefer_stream=prefer_stream
+    )
     if result[0]:
         return result
 
@@ -2188,7 +2226,13 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     for i, entry in enumerate(audio_entries[1:], 1):
         if len(entry) < 4:
             continue
-        result = _try_convert_audio(entry, cache_dir, f"{cache_key}_{i}", nus3audio_path.name)
+        result = _try_convert_audio(
+            entry,
+            cache_dir,
+            f"{cache_key}_{i}",
+            nus3audio_path.name,
+            prefer_stream=prefer_stream,
+        )
         if result[0]:
             return result
 
@@ -2203,8 +2247,13 @@ def extract_and_convert(nus3audio_path: Path) -> tuple[bool, str, Optional[Path]
     return False, f"Could not convert audio (format: 0x{fmt_hex:08X} / '{fmt_ascii}', size: {len(audio_data)} bytes)", None
 
 
-def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
-                        display_name: str) -> tuple[bool, str, Optional[Path]]:
+def _try_convert_audio(
+    audio_data: bytes,
+    cache_dir: Path,
+    cache_key: str,
+    display_name: str,
+    prefer_stream: bool = False,
+) -> tuple[bool, str, Optional[Path]]:
     """Try converting audio data from various Nintendo formats to a playable format."""
     # Standard WAV
     if audio_data[:4] == b'RIFF':
@@ -2224,6 +2273,7 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
         if lopus_magic & 0x80000000:
             from src.utils.logger import logger
             candidates: list[dict] = []
+            best_candidate: Optional[dict] = None
 
             # Prefer auto/stereo. Forced mono is only used as a last resort
             # when no other candidate could be decoded.
@@ -2251,6 +2301,7 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                             "corr": corr,
                             "out_channels": out_channels,
                             "forced_channels": try_channels,
+                            "ogg": ogg_path,
                             "wav": wav_path,
                         }
                         candidates.append(candidate)
@@ -2281,6 +2332,7 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                             "corr": corr,
                             "out_channels": out_channels,
                             "forced_channels": 1,
+                            "ogg": ogg_path,
                             "wav": wav_path,
                         })
                 except Exception as e:
@@ -2299,13 +2351,18 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                         f"corr {noisy['corr']:.3f}->{clean['corr']:.3f})"
                     )
                 best = candidates[chosen_idx]
-                best_wav = best["wav"]
+                best_candidate = best
                 best_label = best["label"]
                 best_score = best["score"]
                 best_duration = best["duration"]
                 best_bitrate = best["bitrate"]
+            else:
+                best_label = ""
+                best_score = 0.0
+                best_duration = 0.0
+                best_bitrate = 0.0
 
-            if best_idx >= 0 and best_wav and best_wav.exists():
+            if best_idx >= 0 and best_candidate:
                 if candidates:
                     top = sorted(candidates, key=lambda x: x["score"], reverse=True)[:4]
                     logger.debug(
@@ -2317,14 +2374,10 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                             for c in top
                         )
                     )
-                canonical = cache_dir / f"{cache_key}.wav"
-                if best_wav != canonical:
-                    try:
-                        shutil.copyfile(best_wav, canonical)
-                        best_wav = canonical
-                    except OSError:
-                        pass
-                if _validate_wav_quality(best_wav):
+                best_ogg, best_wav = _cache_selected_opus_artifacts(
+                    cache_dir, cache_key, best_candidate
+                )
+                if best_wav and _validate_wav_quality(best_wav):
                     logger.info(
                         "NUS3AUDIO",
                         f"LOPUS best decode {best_label} score={best_score:.2f} "
@@ -2337,7 +2390,15 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                         f"score={best_score:.2f}, duration={best_duration:.2f}s, "
                         f"bitrate={best_bitrate:.1f}kbps)"
                     )
-                return True, f"Playing: {display_name}", best_wav
+                chosen_output = (
+                    best_ogg
+                    if prefer_stream and best_ogg and best_ogg.exists()
+                    else best_wav
+                )
+                if chosen_output is None or not chosen_output.exists():
+                    chosen_output = best_ogg if best_ogg and best_ogg.exists() else best_wav
+                if chosen_output is not None and chosen_output.exists():
+                    return True, f"Playing: {display_name}", chosen_output
 
             if not _find_ffmpeg():
                 logger.warn(
@@ -2375,6 +2436,7 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
     if audio_data[:4] == b'OPUS':
         from src.utils.logger import logger
         candidates: list[dict] = []
+        best_candidate: Optional[dict] = None
 
         def _capture_best(ogg_data: bytes, label: str,
                           forced_channels: Optional[int] = None) -> None:
@@ -2398,6 +2460,7 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     "corr": corr,
                     "out_channels": out_channels,
                     "forced_channels": forced_channels,
+                    "ogg": ogg_path,
                     "wav": wav_path,
                 }
                 candidates.append(candidate)
@@ -2453,15 +2516,18 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     f"corr {noisy['corr']:.3f}->{clean['corr']:.3f})"
                 )
             best = candidates[chosen_idx]
-            best_wav = best["wav"]
+            best_candidate = best
             best_label = best["label"]
             best_score = best["score"]
             best_duration = best["duration"]
             best_bitrate = best["bitrate"]
         else:
-            best_wav = None
+            best_label = ""
+            best_score = 0.0
+            best_duration = 0.0
+            best_bitrate = 0.0
 
-        if best_wav and best_wav.exists():
+        if best_candidate:
             if candidates:
                 top = sorted(candidates, key=lambda x: x["score"], reverse=True)[:6]
                 logger.debug(
@@ -2473,14 +2539,10 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                         for c in top
                     )
                 )
-            canonical = cache_dir / f"{cache_key}.wav"
-            if best_wav != canonical:
-                try:
-                    shutil.copyfile(best_wav, canonical)
-                    best_wav = canonical
-                except OSError:
-                    pass
-            if _validate_wav_quality(best_wav):
+            best_ogg, best_wav = _cache_selected_opus_artifacts(
+                cache_dir, cache_key, best_candidate
+            )
+            if best_wav and _validate_wav_quality(best_wav):
                 logger.info(
                     "NUS3AUDIO",
                     f"OPUS best decode {best_label} score={best_score:.2f} "
@@ -2493,7 +2555,15 @@ def _try_convert_audio(audio_data: bytes, cache_dir: Path, cache_key: str,
                     f"score={best_score:.2f}, duration={best_duration:.2f}s, "
                     f"bitrate={best_bitrate:.1f}kbps)"
                 )
-            return True, f"Playing: {display_name}", best_wav
+            chosen_output = (
+                best_ogg
+                if prefer_stream and best_ogg and best_ogg.exists()
+                else best_wav
+            )
+            if chosen_output is None or not chosen_output.exists():
+                chosen_output = best_ogg if best_ogg and best_ogg.exists() else best_wav
+            if chosen_output is not None and chosen_output.exists():
+                return True, f"Playing: {display_name}", chosen_output
 
         if not _find_ffmpeg():
             return False, (
