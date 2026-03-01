@@ -1,8 +1,10 @@
 """Import helpers for mods and plugins."""
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Callable
@@ -30,6 +32,17 @@ _GENERIC_FOLDER_NAMES = {
     "contents", "sdmc", "plugin", "plugins",
 }
 _INVALID_NAME_CHARS = set('<>:"/\\|?*')
+_SUPPORT_BACKUP_DIR_NAME = "_import_backups"
+_METADATA_FILENAMES = {
+    "config.json",
+    "info.toml",
+    "preview.webp",
+    "preview.png",
+    "preview.jpg",
+    "preview.jpeg",
+    "readme.txt",
+    "readme.md",
+}
 
 
 @dataclass
@@ -43,6 +56,8 @@ class ImportSummary:
     plugin_files: int = 0
     archives_processed: int = 0
     slot_reassignments: int = 0
+    support_mod_adjustments: int = 0
+    support_files_pruned: int = 0
     skipped_items: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -176,11 +191,14 @@ def import_mod_package(
                     reslotted_path = Path(temp_dir.name) / target_name
                     reslot_mod_directory(src, reslotted_path, fighter, source_slot, target_slot)
                     src = reslotted_path
+                    target_name = _rename_target_name_for_slot(target_name, source_slot, target_slot)
                     summary.slot_reassignments += 1
                     summary.warnings.append(
                         f"Imported '{target_name}' as {fighter} c{target_slot:02d} "
                         f"instead of c{source_slot:02d} to avoid a slot overlap."
                     )
+
+            _resolve_support_path_conflicts(src, target_name, mods_path, summary)
 
             dest = mods_path / target_name
             if _same_path(src, dest):
@@ -690,6 +708,43 @@ def _copy_tree_contents(
     return copied
 
 
+def _resolve_support_path_conflicts(
+    src: Path,
+    target_name: str,
+    mods_path: Path,
+    summary: ImportSummary,
+) -> None:
+    support_paths = _collect_support_candidate_paths(src)
+    if not support_paths:
+        return
+
+    path_index = _build_relative_path_index(mods_path)
+    prune_map: dict[str, set[str]] = defaultdict(set)
+    unresolved: dict[str, set[str]] = defaultdict(set)
+
+    for rel in support_paths:
+        for mod_name in path_index.get(rel, []):
+            if mod_name == target_name:
+                continue
+            mod_path = mods_path / mod_name
+            if not mod_path.exists() or not mod_path.is_dir():
+                continue
+            analysis = analyze_mod_directory(mod_path, [mod_name])
+            if analysis.has_visual_skin_slot:
+                unresolved[mod_name].add(rel)
+                continue
+            prune_map[mod_name].add(rel)
+
+    for mod_name, rels in sorted(prune_map.items()):
+        _prune_existing_support_files(mods_path, mod_name, sorted(rels), summary)
+
+    for mod_name, rels in sorted(unresolved.items()):
+        summary.warnings.append(
+            f"'{target_name}' still shares {len(rels)} exact support file(s) with visual mod "
+            f"'{mod_name}'. Review those support overrides manually if behavior looks wrong."
+        )
+
+
 def _flatten_nested_mod(mod_path: Path) -> bool:
     flattened = False
     while True:
@@ -774,6 +829,147 @@ def _dedupe_sources(items: list[tuple[Path, str]]) -> list[tuple[Path, str]]:
         seen.add(key)
         deduped.append((src, name))
     return deduped
+
+
+def _rename_target_name_for_slot(name: str, source_slot: int, target_slot: int) -> str:
+    source_token = f"c{source_slot:02d}"
+    target_token = f"c{target_slot:02d}"
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(0)
+        return target_token.upper() if token[:1].isupper() else target_token
+
+    updated = re.sub(
+        rf"(?i)(?<![a-z0-9]){re.escape(source_token)}(?!\d)",
+        repl,
+        name,
+    )
+    return _sanitize_name(updated)
+
+
+def _build_relative_path_index(mods_path: Path) -> dict[str, list[str]]:
+    index: dict[str, list[str]] = defaultdict(list)
+    if not mods_path.exists() or not mods_path.is_dir():
+        return {}
+    for folder in sorted(mods_path.iterdir(), key=lambda p: p.name.lower()):
+        if not folder.is_dir() or folder.name.startswith(".") or folder.name.startswith("_"):
+            continue
+        for file_path in folder.rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel = str(file_path.relative_to(folder)).replace("\\", "/")
+            if rel.lower() in _METADATA_FILENAMES:
+                continue
+            index[rel].append(folder.name)
+    return dict(index)
+
+
+def _collect_support_candidate_paths(src: Path) -> set[str]:
+    rels: set[str] = set()
+    for file_path in src.rglob("*"):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(src)).replace("\\", "/")
+        if _is_support_conflict_candidate(rel):
+            rels.add(rel)
+    return rels
+
+
+def _is_support_conflict_candidate(relative_path: str) -> bool:
+    rel = relative_path.replace("\\", "/").lower()
+    if rel in _METADATA_FILENAMES:
+        return False
+    return (
+        rel.startswith("sound/bank/fighter/")
+        or rel.startswith("sound/bank/fighter_voice/")
+        or rel.startswith("effect/fighter/")
+        or rel.startswith("camera/fighter/")
+    )
+
+
+def _prune_existing_support_files(
+    mods_path: Path,
+    mod_name: str,
+    relative_paths: list[str],
+    summary: ImportSummary,
+) -> None:
+    mod_root = mods_path / mod_name
+    if not mod_root.exists() or not mod_root.is_dir():
+        return
+
+    backup_root = mods_path.parent / _SUPPORT_BACKUP_DIR_NAME / mod_name
+    removed = 0
+    for rel in relative_paths:
+        file_path = mod_root / rel
+        if not file_path.exists() or not file_path.is_file():
+            continue
+        backup_path = backup_root / rel
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        if not backup_path.exists():
+            shutil.copy2(file_path, backup_path)
+        file_path.unlink()
+        _prune_empty_parents(file_path.parent, mod_root)
+        removed += 1
+
+    if removed == 0:
+        return
+
+    summary.support_mod_adjustments += 1
+    summary.support_files_pruned += removed
+    summary.warnings.append(
+        f"Pruned {removed} exact support file(s) from '{mod_name}' so a more specific imported override can win cleanly."
+    )
+
+    if not _has_effective_mod_content(mod_root):
+        _disable_support_only_mod(mods_path, mod_name, summary)
+
+
+def _disable_support_only_mod(mods_path: Path, mod_name: str, summary: ImportSummary) -> None:
+    src = mods_path / mod_name
+    if not src.exists():
+        return
+    disabled_dir = mods_path.parent / "disabled_mods"
+    disabled_dir.mkdir(parents=True, exist_ok=True)
+    dest = disabled_dir / mod_name
+    suffix = 1
+    while dest.exists():
+        dest = disabled_dir / f"{mod_name} ({suffix})"
+        suffix += 1
+    src.rename(dest)
+    summary.warnings.append(
+        f"Disabled support mod '{mod_name}' after all effective conflicting files were pruned."
+    )
+
+
+def _has_effective_mod_content(mod_root: Path) -> bool:
+    try:
+        for file_path in mod_root.rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel = str(file_path.relative_to(mod_root)).replace("\\", "/").lower()
+            if rel in _METADATA_FILENAMES:
+                continue
+            return True
+    except (PermissionError, OSError):
+        return True
+    return False
+
+
+def _prune_empty_parents(path: Path, stop_at: Path) -> None:
+    current = path
+    stop_at = stop_at.resolve()
+    while True:
+        try:
+            resolved = current.resolve()
+        except OSError:
+            break
+        if resolved == stop_at:
+            break
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
 
 
 def _candidate_roots(source_dir: Path) -> list[Path]:

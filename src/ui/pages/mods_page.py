@@ -868,6 +868,11 @@ class ModsPage(BasePage):
                 lines.append(f"Auto-flattened {summary.flattened_mods} nested mod folder(s).")
             if summary.slot_reassignments:
                 lines.append(f"Adjusted {summary.slot_reassignments} slot assignment(s).")
+            if summary.support_mod_adjustments:
+                lines.append(
+                    f"Adjusted {summary.support_mod_adjustments} support mod(s) and pruned "
+                    f"{summary.support_files_pruned} exact support file(s)."
+                )
             if summary.replaced_paths:
                 lines.append(f"Replaced {summary.replaced_paths} existing mod folder(s).")
             if summary.skipped_items:

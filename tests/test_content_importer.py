@@ -181,6 +181,120 @@ def test_import_mod_package_preserves_multi_slot_voice_pack(tmp_path: Path):
     assert not any("Selected base skin" in warning for warning in summary.warnings)
 
 
+def test_import_mod_package_prunes_exact_support_files_from_existing_support_mod(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Sonic Voice Pack"
+    (existing / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (existing / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").write_bytes(b"old-vc00")
+    (existing / "sound" / "bank" / "fighter_voice" / "vc_sonic_c01.nus3audio").write_bytes(b"old-vc01")
+    (existing / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (existing / "sound" / "bank" / "fighter" / "se_sonic_c00.nus3audio").write_bytes(b"old-se00")
+    (existing / "sound" / "bank" / "fighter" / "se_sonic_c01.nus3audio").write_bytes(b"old-se01")
+
+    source = tmp_path / "downloads" / "Sonic Skin"
+    (source / "fighter" / "sonic" / "model" / "body" / "c00").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c00" / "model.bin").write_bytes(b"skin")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_00.bntx").write_bytes(b"ui")
+    (source / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").write_bytes(b"new-vc00")
+    (source / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter" / "se_sonic_c00.nus3audio").write_bytes(b"new-se00")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert summary.support_mod_adjustments == 1
+    assert summary.support_files_pruned == 2
+    assert not (mods_path / "Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").exists()
+    assert not (mods_path / "Sonic Voice Pack" / "sound" / "bank" / "fighter" / "se_sonic_c00.nus3audio").exists()
+    assert (mods_path / "Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c01.nus3audio").exists()
+    assert (mods_path.parent / "_import_backups" / "Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").exists()
+    assert (mods_path / "Sonic Skin" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").exists()
+
+
+def test_import_mod_package_prunes_support_files_after_reslotting(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing_skin = mods_path / "Existing Sonic Skin"
+    (existing_skin / "fighter" / "sonic" / "model" / "body" / "c06").mkdir(parents=True)
+    (existing_skin / "fighter" / "sonic" / "model" / "body" / "c06" / "existing.bin").write_bytes(b"skin")
+    (existing_skin / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (existing_skin / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_06.bntx").write_bytes(b"ui")
+
+    support = mods_path / "Broad Sonic Voice Pack"
+    (support / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (support / "sound" / "bank" / "fighter_voice" / "vc_sonic_c05.nus3audio").write_bytes(b"vc05")
+    (support / "sound" / "bank" / "fighter_voice" / "vc_sonic_c06.nus3audio").write_bytes(b"vc06")
+    (support / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (support / "sound" / "bank" / "fighter" / "se_sonic_c05.nus3audio").write_bytes(b"se05")
+    (support / "sound" / "bank" / "fighter" / "se_sonic_c06.nus3audio").write_bytes(b"se06")
+
+    source = tmp_path / "downloads" / "Incoming Sonic Skin"
+    (source / "fighter" / "sonic" / "model" / "body" / "c06").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c06" / "new.bin").write_bytes(b"new")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_06.bntx").write_bytes(b"new-ui")
+    (source / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter_voice" / "vc_sonic_c06.nus3audio").write_bytes(b"new-vc")
+    (source / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter" / "se_sonic_c06.nus3audio").write_bytes(b"new-se")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert summary.slot_reassignments == 1
+    assert summary.support_mod_adjustments == 1
+    assert summary.support_files_pruned == 2
+    assert (mods_path / "Incoming Sonic Skin" / "fighter" / "sonic" / "model" / "body" / "c05" / "new.bin").exists()
+    assert (mods_path / "Incoming Sonic Skin" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c05.nus3audio").exists()
+    assert not (mods_path / "Broad Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c05.nus3audio").exists()
+    assert (mods_path / "Broad Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c06.nus3audio").exists()
+
+
+def test_import_mod_package_renames_reslotted_target_when_name_has_slot_hint(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Existing Sonic"
+    (existing / "fighter" / "sonic" / "model" / "body" / "c06").mkdir(parents=True)
+    (existing / "fighter" / "sonic" / "model" / "body" / "c06" / "existing.bin").write_bytes(b"skin")
+    (existing / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (existing / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_06.bntx").write_bytes(b"ui")
+
+    source = tmp_path / "downloads" / "Riders Sonic C06 (by Watapascul)"
+    (source / "fighter" / "sonic" / "model" / "body" / "c06").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c06" / "new.bin").write_bytes(b"new")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_06.bntx").write_bytes(b"new-ui")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert summary.slot_reassignments == 1
+    assert (mods_path / "Riders Sonic C05 (by Watapascul)" / "fighter" / "sonic" / "model" / "body" / "c05" / "new.bin").exists()
+    assert not (mods_path / "Riders Sonic C06 (by Watapascul)").exists()
+
+
+def test_import_mod_package_does_not_prune_support_files_from_visual_mod(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Visual Sonic Pack"
+    (existing / "fighter" / "sonic" / "model" / "body" / "c00").mkdir(parents=True)
+    (existing / "fighter" / "sonic" / "model" / "body" / "c00" / "model.bin").write_bytes(b"skin")
+    (existing / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (existing / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_00.bntx").write_bytes(b"ui")
+    (existing / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (existing / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").write_bytes(b"vc")
+
+    source = tmp_path / "downloads" / "Voice Override"
+    (source / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").write_bytes(b"new-vc")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert summary.support_mod_adjustments == 0
+    assert any("still shares 1 exact support file" in warning for warning in summary.warnings)
+    assert (mods_path / "Visual Sonic Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").exists()
+
+
 def test_import_mod_package_can_replace_existing_mod_without_self_conflict(tmp_path: Path):
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     existing = mods_path / "Mario Skin"
