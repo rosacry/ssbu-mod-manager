@@ -124,6 +124,12 @@ class ModsPage(BasePage):
                                       corner_radius=8, height=34)
         wifi_safe_btn.pack(side="right", padx=(5, 0))
 
+        repair_btn = ctk.CTkButton(header_frame, text="Repair Installed", width=130,
+                                   command=self._repair_installed_mods,
+                                   fg_color="#2f3557", hover_color="#3f476f",
+                                   corner_radius=8, height=34)
+        repair_btn.pack(side="right", padx=(5, 0))
+
         # Search, filter, and group toggle
         filter_frame = ctk.CTkFrame(self, fg_color="transparent")
         filter_frame.pack(fill="x", padx=30, pady=(0, 6))
@@ -1276,6 +1282,16 @@ class ModsPage(BasePage):
                     f"Adjusted {summary.support_mod_adjustments} support mod(s) and pruned "
                     f"{summary.support_files_pruned} exact support file(s)."
                 )
+            if summary.manifest_repairs:
+                lines.append(f"Auto-repaired {summary.manifest_repairs} manifest/config issue(s).")
+            if summary.identical_files_pruned:
+                lines.append(
+                    f"Deduped {summary.identical_files_pruned} byte-identical exact overlap file(s)."
+                )
+            if summary.remaining_exact_overlaps:
+                lines.append(
+                    f"{summary.remaining_exact_overlaps} exact active overlap(s) still need manual review."
+                )
             if summary.replaced_paths:
                 lines.append(f"Replaced {summary.replaced_paths} existing mod folder(s).")
             if summary.skipped_items:
@@ -1290,6 +1306,72 @@ class ModsPage(BasePage):
         except Exception as e:
             logger.error("Mods", f"Import failed: {e}")
             messagebox.showerror("Import Failed", str(e))
+
+    def _repair_installed_mods(self):
+        enabled = [m for m in self._all_mods if m.status == ModStatus.ENABLED]
+        disabled = [m for m in self._all_mods if m.status == ModStatus.DISABLED]
+        confirm = messagebox.askyesno(
+            "Repair Installed Mods",
+            f"Audit and repair {len(enabled)} enabled mod(s)"
+            f"{f' plus {len(disabled)} disabled mod(s)' if disabled else ''}?\n\n"
+            "This will auto-fix safe issues like legacy config.txt manifests, missing effect config.json files, "
+            "stale config references, nested wrappers, support-file overlaps where a visual mod should win, "
+            "and byte-identical exact overlap files. Backups are kept under _import_backups.\n\n"
+            "Any remaining differing exact overlaps will be reported for manual review.",
+        )
+        if not confirm:
+            return
+        try:
+            summary = self.app.mod_manager.repair_installed_mods(include_disabled=True)
+            logger.info(
+                "Mods",
+                f"Repair scanned {summary.mods_scanned} mod(s), changed {summary.mods_changed}, "
+                f"resolved {summary.resolved_exact_overlaps} exact overlap(s), "
+                f"remaining {summary.remaining_exact_overlaps}",
+            )
+            lines = [
+                f"Scanned {summary.mods_scanned} mod(s).",
+            ]
+            if summary.mods_changed:
+                lines.append(f"Changed {summary.mods_changed} mod(s).")
+            if summary.flattened_mods:
+                lines.append(f"Flattened {summary.flattened_mods} nested mod folder(s).")
+            if summary.configs_normalized:
+                lines.append(f"Normalized {summary.configs_normalized} legacy config.txt file(s).")
+            if summary.configs_created:
+                lines.append(f"Created {summary.configs_created} missing config.json manifest(s).")
+            if summary.configs_updated:
+                lines.append(f"Updated {summary.configs_updated} existing config manifest(s).")
+            if summary.support_mod_adjustments:
+                lines.append(
+                    f"Adjusted {summary.support_mod_adjustments} support mod(s) and pruned "
+                    f"{summary.support_files_pruned} conflicting support file(s)."
+                )
+            if summary.identical_files_pruned:
+                lines.append(
+                    f"Deduped {summary.identical_files_pruned} byte-identical exact overlap file(s)."
+                )
+            if summary.resolved_exact_overlaps:
+                lines.append(f"Resolved {summary.resolved_exact_overlaps} exact overlap group(s).")
+            if summary.remaining_exact_overlaps:
+                lines.append(
+                    f"{summary.remaining_exact_overlaps} exact active overlap(s) still need manual review."
+                )
+            if len(lines) == 1:
+                lines.append("No repairable issues were found.")
+            if summary.warnings:
+                lines.append("")
+                lines.extend(summary.warnings[:6])
+                if len(summary.warnings) > 6:
+                    lines.append(f"...and {len(summary.warnings) - 6} more warning(s).")
+            messagebox.showinfo("Repair Complete", "\n".join(lines))
+            self._force_refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Mods", f"Repair blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
+        except Exception as e:
+            logger.error("Mods", f"Repair failed: {e}")
+            messagebox.showerror("Repair Failed", str(e))
 
     def _resolve_import_slot_conflict(self, conflict):
         slot_text = str(getattr(conflict, "requested_label", "") or f"{conflict.fighter} c{conflict.requested_slot:02d}")

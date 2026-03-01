@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -36,6 +37,7 @@ _GENERIC_FOLDER_NAMES = {
 }
 _INVALID_NAME_CHARS = set('<>:"/\\|?*')
 _SUPPORT_BACKUP_DIR_NAME = "_import_backups"
+_INSTALLED_REPAIR_BACKUP_DIR_NAME = "_installed_repair"
 _METADATA_FILENAMES = {
     "config.json",
     "config.txt",
@@ -48,6 +50,12 @@ _METADATA_FILENAMES = {
     "readme.md",
 }
 _NON_EFFECTIVE_SUPPORT_LEFTOVERS = {
+    "ui/message/msg_name.xmsbt",
+    "ui/message/msg_name.msbt",
+    "ui/param/database/ui_chara_db.prcxml",
+    "ui/param/database/ui_chara_db.prc",
+}
+_MERGE_SAFE_EXACT_OVERLAP_PATHS = {
     "ui/message/msg_name.xmsbt",
     "ui/message/msg_name.msbt",
     "ui/param/database/ui_chara_db.prcxml",
@@ -83,7 +91,26 @@ class ImportSummary:
     slot_reassignments: int = 0
     support_mod_adjustments: int = 0
     support_files_pruned: int = 0
+    manifest_repairs: int = 0
+    identical_files_pruned: int = 0
+    remaining_exact_overlaps: int = 0
     skipped_items: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class InstalledModsRepairSummary:
+    mods_scanned: int = 0
+    mods_changed: int = 0
+    flattened_mods: int = 0
+    configs_normalized: int = 0
+    configs_created: int = 0
+    configs_updated: int = 0
+    support_mod_adjustments: int = 0
+    support_files_pruned: int = 0
+    identical_files_pruned: int = 0
+    resolved_exact_overlaps: int = 0
+    remaining_exact_overlaps: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
@@ -378,6 +405,7 @@ def import_mod_package(
 
     mods_path.mkdir(parents=True, exist_ok=True)
     slot_index = _build_slot_index(mods_path)
+    imported_mod_names: set[str] = set()
 
     try:
         for prepared in prepared_sources:
@@ -522,6 +550,7 @@ def import_mod_package(
             _copy_dir_replace(src, dest, summary)
             summary.items_imported += 1
             summary.files_copied += _count_files(dest)
+            imported_mod_names.add(target_name)
 
             _repair_imported_mod_metadata(
                 dest,
@@ -547,11 +576,95 @@ def import_mod_package(
                 except Exception:
                     pass
 
+    if imported_mod_names:
+        repair_summary = repair_installed_mods(
+            mods_path,
+            focus_mod_names=imported_mod_names,
+            include_disabled=False,
+        )
+        summary.support_mod_adjustments += repair_summary.support_mod_adjustments
+        summary.support_files_pruned += repair_summary.support_files_pruned
+        summary.manifest_repairs += (
+            repair_summary.configs_normalized
+            + repair_summary.configs_created
+            + repair_summary.configs_updated
+        )
+        summary.identical_files_pruned += repair_summary.identical_files_pruned
+        summary.remaining_exact_overlaps += repair_summary.remaining_exact_overlaps
+        summary.warnings.extend(repair_summary.warnings)
+
     if summary.items_imported == 0:
         skipped = ", ".join(summary.skipped_items[:5]) if summary.skipped_items else ""
         if skipped:
             raise ValueError(f"Nothing was imported. Skipped items: {skipped}")
         raise ValueError("Nothing was imported. The selected folder may already be in use.")
+    return summary
+
+
+def repair_installed_mods(
+    mods_path: Path,
+    focus_mod_names: set[str] | None = None,
+    include_disabled: bool = True,
+) -> InstalledModsRepairSummary:
+    mods_path = Path(mods_path)
+    summary = InstalledModsRepairSummary()
+    if not mods_path.exists() or not mods_path.is_dir():
+        return summary
+
+    focus_names = {str(name) for name in (focus_mod_names or set()) if str(name)}
+    changed_mods: set[str] = set()
+
+    for mod_root in _iter_repair_mod_roots(mods_path, include_disabled=include_disabled):
+        should_repair_root = not focus_names or mod_root.name in focus_names
+        summary.mods_scanned += 1
+        if not should_repair_root:
+            continue
+
+        config_txt = mod_root / "config.txt"
+        config_json = mod_root / "config.json"
+        before_txt_exists = config_txt.exists()
+        before_json_exists = config_json.exists()
+        before_payload = _load_optional_mod_config(mod_root)
+        before_payload_text = json.dumps(before_payload, sort_keys=True) if before_payload is not None else None
+
+        if _flatten_nested_mod(mod_root):
+            summary.flattened_mods += 1
+            changed_mods.add(mod_root.name)
+
+        analysis = analyze_mod_directory(mod_root, [mod_root.name])
+        fighter = str(analysis.primary_fighter) if analysis.has_visual_skin_slot and analysis.primary_fighter else None
+        slot = int(analysis.primary_slot) if analysis.has_visual_skin_slot and analysis.primary_slot is not None else None
+        _repair_imported_mod_metadata(
+            mod_root,
+            fighter=fighter,
+            source_slot=slot,
+            target_slot=slot,
+        )
+
+        after_txt_exists = (mod_root / "config.txt").exists()
+        after_json_exists = (mod_root / "config.json").exists()
+        after_payload = _load_optional_mod_config(mod_root)
+        after_payload_text = json.dumps(after_payload, sort_keys=True) if after_payload is not None else None
+
+        if before_txt_exists and not after_txt_exists and after_json_exists:
+            summary.configs_normalized += 1
+            changed_mods.add(mod_root.name)
+        if not before_json_exists and not before_txt_exists and after_json_exists:
+            summary.configs_created += 1
+            changed_mods.add(mod_root.name)
+        if before_payload_text is not None and after_payload_text is not None and before_payload_text != after_payload_text:
+            summary.configs_updated += 1
+            changed_mods.add(mod_root.name)
+        elif before_payload_text is None and before_json_exists and after_payload_text is not None:
+            summary.configs_updated += 1
+            changed_mods.add(mod_root.name)
+
+    _resolve_installed_exact_overlaps(
+        mods_path,
+        summary,
+        focus_mod_names=focus_names or None,
+    )
+    summary.mods_changed = len(changed_mods)
     return summary
 
 
@@ -1623,6 +1736,249 @@ def _build_relative_path_index(mods_path: Path) -> dict[str, list[str]]:
     return dict(index)
 
 
+def _iter_repair_mod_roots(mods_path: Path, include_disabled: bool = True) -> list[Path]:
+    roots: list[Path] = []
+    for folder in sorted(mods_path.iterdir(), key=lambda p: p.name.lower()):
+        if not folder.is_dir() or folder.name.startswith("_") or folder.name.startswith("."):
+            continue
+        roots.append(folder)
+
+    if include_disabled:
+        disabled_dir = mods_path.parent / "disabled_mods"
+        if disabled_dir.exists() and disabled_dir.is_dir():
+            for folder in sorted(disabled_dir.iterdir(), key=lambda p: p.name.lower()):
+                if folder.is_dir():
+                    roots.append(folder)
+
+        legacy_disabled = mods_path / ".disabled"
+        if legacy_disabled.exists() and legacy_disabled.is_dir():
+            for folder in sorted(legacy_disabled.iterdir(), key=lambda p: p.name.lower()):
+                if folder.is_dir():
+                    roots.append(folder)
+    return roots
+
+
+def _build_active_file_occurrences(
+    mods_path: Path,
+    focus_mod_names: set[str] | None = None,
+) -> dict[str, list[tuple[str, Path]]]:
+    occurrences: dict[str, list[tuple[str, Path]]] = defaultdict(list)
+    focus_names = {str(name) for name in (focus_mod_names or set()) if str(name)}
+    if not mods_path.exists() or not mods_path.is_dir():
+        return {}
+    for folder in sorted(mods_path.iterdir(), key=lambda p: p.name.lower()):
+        if not folder.is_dir() or folder.name.startswith("_") or folder.name.startswith("."):
+            continue
+        for file_path in folder.rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel = str(file_path.relative_to(folder)).replace("\\", "/")
+            if rel.lower() in _METADATA_FILENAMES:
+                continue
+            if rel.lower() in _MERGE_SAFE_EXACT_OVERLAP_PATHS:
+                continue
+            occurrences[rel].append((folder.name, file_path))
+    if not focus_names:
+        return dict(occurrences)
+    return {
+        rel: items
+        for rel, items in occurrences.items()
+        if any(name in focus_names for name, _path in items)
+    }
+
+
+def _resolve_installed_exact_overlaps(
+    mods_path: Path,
+    summary: InstalledModsRepairSummary,
+    focus_mod_names: set[str] | None = None,
+) -> None:
+    occurrences_by_rel = _build_active_file_occurrences(mods_path, focus_mod_names=focus_mod_names)
+    if not occurrences_by_rel:
+        return
+
+    analysis_cache: dict[str, SlotAnalysis] = {}
+    hash_cache: dict[str, str] = {}
+
+    for rel in sorted(occurrences_by_rel):
+        current = _existing_occurrences_for_rel(mods_path, rel, occurrences_by_rel[rel])
+        if len(current) < 2:
+            continue
+
+        if _is_support_conflict_candidate(rel):
+            focus_visual_mods: list[str] = []
+            visual_mods: list[str] = []
+            support_only_mods: list[str] = []
+            for mod_name, _file_path in current:
+                analysis = _cached_mod_analysis(mods_path, mod_name, analysis_cache)
+                if analysis.has_visual_skin_slot:
+                    visual_mods.append(mod_name)
+                    if focus_mod_names and mod_name in focus_mod_names:
+                        focus_visual_mods.append(mod_name)
+                else:
+                    support_only_mods.append(mod_name)
+            prunable_support_mods: list[str] = []
+            if focus_visual_mods:
+                prunable_support_mods = [
+                    mod_name for mod_name in support_only_mods
+                    if not focus_mod_names or mod_name not in focus_mod_names
+                ]
+            elif visual_mods and support_only_mods and not focus_mod_names:
+                prunable_support_mods = [
+                    mod_name
+                    for mod_name in support_only_mods
+                    if _is_broad_support_only_mod(mods_path, mod_name, rel, analysis_cache)
+                ]
+            if prunable_support_mods:
+                removed_any = False
+                for mod_name in sorted(set(prunable_support_mods)):
+                    removed_any = _prune_existing_support_files(mods_path, mod_name, [rel], summary) or removed_any
+                if removed_any:
+                    summary.resolved_exact_overlaps += 1
+                current = _existing_occurrences_for_rel(mods_path, rel, current)
+                if len(current) < 2:
+                    continue
+
+        if _all_occurrence_files_identical(current, hash_cache):
+            kept_mod = _choose_overlap_winner(
+                mods_path,
+                current,
+                focus_mod_names=focus_mod_names,
+                analysis_cache=analysis_cache,
+            )
+            pruned = 0
+            for mod_name, _file_path in current:
+                if mod_name == kept_mod:
+                    continue
+                if _backup_and_remove_installed_overlap_file(mods_path, mod_name, rel):
+                    pruned += 1
+            if pruned:
+                summary.identical_files_pruned += pruned
+                summary.resolved_exact_overlaps += 1
+                summary.warnings.append(
+                    f"Deduped {pruned} byte-identical exact overlap file(s) for '{rel}' and kept "
+                    f"'{kept_mod}' as the active copy. Backups were saved under "
+                    f"'{_SUPPORT_BACKUP_DIR_NAME}/{_INSTALLED_REPAIR_BACKUP_DIR_NAME}/'."
+                )
+            continue
+
+        summary.remaining_exact_overlaps += 1
+        summary.warnings.append(
+            f"Remaining exact overlap for '{rel}' across {', '.join(name for name, _path in current[:4])}"
+            f"{'...' if len(current) > 4 else ''}. Automatic repair skipped because the files differ."
+        )
+
+
+def _existing_occurrences_for_rel(
+    mods_path: Path,
+    relative_path: str,
+    occurrences: list[tuple[str, Path]],
+) -> list[tuple[str, Path]]:
+    current: list[tuple[str, Path]] = []
+    for mod_name, file_path in occurrences:
+        candidate = mods_path / mod_name / relative_path
+        if candidate.exists() and candidate.is_file():
+            current.append((mod_name, candidate))
+        elif file_path.exists() and file_path.is_file():
+            current.append((mod_name, file_path))
+    return current
+
+
+def _cached_mod_analysis(
+    mods_path: Path,
+    mod_name: str,
+    analysis_cache: dict[str, SlotAnalysis],
+) -> SlotAnalysis:
+    cached = analysis_cache.get(mod_name)
+    if cached is not None:
+        return cached
+    mod_root = mods_path / mod_name
+    analysis = analyze_mod_directory(mod_root, [mod_name])
+    analysis_cache[mod_name] = analysis
+    return analysis
+
+
+def _all_occurrence_files_identical(
+    occurrences: list[tuple[str, Path]],
+    hash_cache: dict[str, str],
+) -> bool:
+    if len(occurrences) < 2:
+        return False
+    digests = {
+        _hash_file_sha256(path, hash_cache)
+        for _mod_name, path in occurrences
+    }
+    return len(digests) == 1
+
+
+def _hash_file_sha256(path: Path, cache: dict[str, str]) -> str:
+    key = _norm_path(path)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    cache[key] = digest
+    return digest
+
+
+def _choose_overlap_winner(
+    mods_path: Path,
+    occurrences: list[tuple[str, Path]],
+    focus_mod_names: set[str] | None,
+    analysis_cache: dict[str, SlotAnalysis],
+) -> str:
+    focus_names = {str(name) for name in (focus_mod_names or set()) if str(name)}
+
+    def rank(item: tuple[str, Path]) -> tuple[int, int, str]:
+        mod_name, _path = item
+        analysis = _cached_mod_analysis(mods_path, mod_name, analysis_cache)
+        return (
+            0 if mod_name in focus_names else 1,
+            0 if analysis.has_visual_skin_slot else 1,
+            mod_name.lower(),
+        )
+
+    return min(occurrences, key=rank)[0]
+
+
+def _backup_and_remove_installed_overlap_file(mods_path: Path, mod_name: str, relative_path: str) -> bool:
+    mod_root = mods_path / mod_name
+    file_path = mod_root / relative_path
+    if not file_path.exists() or not file_path.is_file():
+        return False
+    backup_root = mods_path.parent / _SUPPORT_BACKUP_DIR_NAME / _INSTALLED_REPAIR_BACKUP_DIR_NAME / mod_name
+    backup_path = backup_root / relative_path
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    if not backup_path.exists():
+        shutil.copy2(file_path, backup_path)
+    file_path.unlink()
+    _prune_empty_parents(file_path.parent, mod_root)
+    return True
+
+
+def _is_broad_support_only_mod(
+    mods_path: Path,
+    mod_name: str,
+    relative_path: str,
+    analysis_cache: dict[str, SlotAnalysis],
+) -> bool:
+    support_kind = _support_kind_from_relative_path(relative_path)
+    if support_kind is None:
+        return False
+    info = inspect_mod_support_pack(mods_path / mod_name, support_kind)
+    return info is not None and len(info.source_slots) > 1
+
+
+def _support_kind_from_relative_path(relative_path: str) -> str | None:
+    rel = relative_path.replace("\\", "/").lower()
+    if rel.startswith("sound/bank/fighter/") or rel.startswith("sound/bank/fighter_voice/"):
+        return "voice"
+    if rel.startswith("effect/fighter/"):
+        return "effect"
+    if rel.startswith("camera/fighter/"):
+        return "camera"
+    return None
+
+
 def _collect_support_candidate_paths(src: Path) -> set[str]:
     rels: set[str] = set()
     for file_path in src.rglob("*"):
@@ -2124,11 +2480,11 @@ def _prune_existing_support_files(
     mods_path: Path,
     mod_name: str,
     relative_paths: list[str],
-    summary: ImportSummary,
-) -> None:
+    summary: ImportSummary | InstalledModsRepairSummary,
+) -> bool:
     mod_root = mods_path / mod_name
     if not mod_root.exists() or not mod_root.is_dir():
-        return
+        return False
 
     backup_root = mods_path.parent / _SUPPORT_BACKUP_DIR_NAME / mod_name
     slot_descriptions = _describe_slot_targets_from_paths(mod_root, relative_paths, fallback_name=mod_name)
@@ -2147,7 +2503,7 @@ def _prune_existing_support_files(
         removed += 1
 
     if removed == 0:
-        return
+        return False
 
     summary.support_mod_adjustments += 1
     summary.support_files_pruned += removed
@@ -2160,12 +2516,13 @@ def _prune_existing_support_files(
 
     if not _has_effective_mod_content(mod_root):
         _disable_support_only_mod(mods_path, mod_name, summary, slot_descriptions)
+    return True
 
 
 def _disable_support_only_mod(
     mods_path: Path,
     mod_name: str,
-    summary: ImportSummary,
+    summary: ImportSummary | InstalledModsRepairSummary,
     slot_descriptions: list[str] | None = None,
 ) -> None:
     src = mods_path / mod_name

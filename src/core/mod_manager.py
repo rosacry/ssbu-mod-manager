@@ -5,6 +5,10 @@ import threading
 from pathlib import Path
 from typing import Optional
 from src.models.mod import Mod, ModStatus, ModMetadata
+from src.core.content_importer import (
+    InstalledModsRepairSummary,
+    repair_installed_mods as repair_installed_mods_content,
+)
 from src.core.file_scanner import FileScanner
 from src.core.desync_classifier import classify_mod_path
 from src.core.runtime_guard import (
@@ -372,6 +376,17 @@ class ModManager:
                     pass
             self.invalidate_cache()
             return enabled_count, disabled_count
+
+    def repair_installed_mods(self, include_disabled: bool = True) -> InstalledModsRepairSummary:
+        """Audit and repair installed mod folders where safe automatic fixes exist."""
+        with self._lock:
+            ensure_runtime_content_change_allowed("mods", "repair")
+            summary = repair_installed_mods_content(
+                self.mods_path,
+                include_disabled=include_disabled,
+            )
+            self.invalidate_cache()
+            return summary
 
     def detect_mod_type(self, mod: Mod) -> list[str]:
         if not mod.metadata.categories:

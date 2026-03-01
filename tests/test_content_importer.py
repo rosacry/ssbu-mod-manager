@@ -11,6 +11,7 @@ from src.core.content_importer import (
     import_plugin_package,
     inspect_mod_effect_pack,
     inspect_mod_voice_pack,
+    repair_installed_mods,
 )
 from src.core.skin_slot_utils import analyze_mod_directory, analyze_relative_paths, choose_primary_skin_slot
 from src.paths import SSBU_TITLE_ID
@@ -994,6 +995,125 @@ def test_import_mod_package_sanitizes_non_visual_config_references_to_missing_fi
             "stage/trail_castle/normal/model/empty_set": [],
         }
     }
+
+
+def test_repair_installed_mods_normalizes_configs_and_synthesizes_missing_effect_manifest(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+
+    mario = mods_path / "Mario White"
+    (mario / "fighter" / "mario" / "model" / "body" / "c07").mkdir(parents=True)
+    (mario / "fighter" / "mario" / "model" / "body" / "c07" / "model.bin").write_bytes(b"skin")
+    (mario / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mario / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_07.bntx").write_bytes(b"ui")
+    (mario / "effect" / "fighter" / "mario").mkdir(parents=True)
+    (mario / "effect" / "fighter" / "mario" / "ef_mario_c07.eff").write_bytes(b"effect")
+    (mario / "config.txt").write_text(
+        json.dumps({"new-dir-files": {"fighter/mario/c07": ["effect/fighter/mario/ef_mario_c07.eff"]}}),
+        encoding="utf-8",
+    )
+
+    cloud = mods_path / "Super Sonic Over Cloud"
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c06").mkdir(parents=True)
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / "model.bin").write_bytes(b"skin")
+    (cloud / "ui" / "replace" / "chara" / "chara_1").mkdir(parents=True)
+    (cloud / "ui" / "replace" / "chara" / "chara_1" / "chara_1_cloud_06.bntx").write_bytes(b"ui")
+    (cloud / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
+    (cloud / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"effect")
+    (cloud / "effect" / "fighter" / "cloud" / "trail" / "tex_cloud_sword1.nutexb").write_bytes(b"trail")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.mods_scanned == 2
+    assert summary.configs_normalized == 1
+    assert summary.configs_created == 1
+    assert (mario / "config.json").exists()
+    assert not (mario / "config.txt").exists()
+    assert json.loads((cloud / "config.json").read_text(encoding="utf-8")) == {
+        "new-dir-files": {
+            "fighter/cloud/c06": [
+                "effect/fighter/cloud/ef_cloud.eff",
+                "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
+            ]
+        }
+    }
+
+
+def test_repair_installed_mods_prunes_support_overlap_when_visual_mod_should_win(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    visual = mods_path / "Sonic Skin"
+    (visual / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (visual / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").write_bytes(b"skin")
+    (visual / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (visual / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"ui")
+    (visual / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (visual / "sound" / "bank" / "fighter_voice" / "vc_sonic_c03.nus3audio").write_bytes(b"new-voice")
+
+    support = mods_path / "Broad Sonic Voice"
+    (support / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (support / "sound" / "bank" / "fighter_voice" / "vc_sonic_c03.nus3audio").write_bytes(b"old-voice")
+    (support / "sound" / "bank" / "fighter_voice" / "vc_sonic_c04.nus3audio").write_bytes(b"other-voice")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.support_mod_adjustments == 1
+    assert summary.support_files_pruned == 1
+    assert not (support / "sound" / "bank" / "fighter_voice" / "vc_sonic_c03.nus3audio").exists()
+    assert (support / "sound" / "bank" / "fighter_voice" / "vc_sonic_c04.nus3audio").exists()
+    assert (mods_path.parent / "_import_backups" / "Broad Sonic Voice" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c03.nus3audio").exists()
+
+
+def test_repair_installed_mods_dedupes_identical_exact_overlaps(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    alpha = mods_path / "Alpha UI"
+    beta = mods_path / "Beta UI"
+    for root in (alpha, beta):
+        (root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+        (root / "ui" / "replace" / "chara" / "chara_0" / "shared_texture.bntx").write_bytes(b"same")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.identical_files_pruned == 1
+    assert summary.resolved_exact_overlaps == 1
+    assert (alpha / "ui" / "replace" / "chara" / "chara_0" / "shared_texture.bntx").exists()
+    assert not (beta / "ui" / "replace" / "chara" / "chara_0" / "shared_texture.bntx").exists()
+    assert (
+        mods_path.parent
+        / "_import_backups"
+        / "_installed_repair"
+        / "Beta UI"
+        / "ui"
+        / "replace"
+        / "chara"
+        / "chara_0"
+        / "shared_texture.bntx"
+    ).exists()
+
+
+def test_repair_installed_mods_reports_remaining_differing_exact_overlap(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    alpha = mods_path / "Alpha UI"
+    beta = mods_path / "Beta UI"
+    for root, payload in ((alpha, b"a"), (beta, b"b")):
+        (root / "ui" / "param" / "database").mkdir(parents=True)
+        (root / "ui" / "param" / "database" / "ui_chara_db.prcx").write_bytes(payload)
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.remaining_exact_overlaps == 1
+    assert any("ui/param/database/ui_chara_db.prcx" in warning for warning in summary.warnings)
+
+
+def test_repair_installed_mods_ignores_merge_safe_text_overlap_paths(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    alpha = mods_path / "Alpha UI"
+    beta = mods_path / "Beta UI"
+    for root, payload in ((alpha, "one"), (beta, "two")):
+        (root / "ui" / "message").mkdir(parents=True)
+        (root / "ui" / "message" / "msg_name.xmsbt").write_text(payload, encoding="utf-8")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.remaining_exact_overlaps == 0
 
 
 def test_import_plugin_package_from_atmosphere_tree(tmp_path: Path):
