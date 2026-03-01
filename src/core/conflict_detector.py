@@ -1,7 +1,10 @@
 """Detect file conflicts across mods."""
+from collections import defaultdict
 from pathlib import Path
 from src.models.conflict import FileConflict, ConflictSeverity, ConflictGroup
+from src.core.content_importer import resolve_mod_slot_labels
 from src.core.file_scanner import FileScanner
+from src.core.skin_slot_utils import analyze_mod_directory, iter_slot_matches
 from src.constants import MERGEABLE_EXTENSIONS
 
 _SKIP_MOD_FOLDERS = {"_MergedResources", "_MusicConfig", ".disabled", "__pycache__"}
@@ -19,6 +22,7 @@ class ConflictDetector:
         """Detect all file conflicts across enabled mods."""
         file_index = self.scanner.build_file_index(mods_root)
         conflicts = []
+        analysis_cache: dict[str, object] = {}
 
         for relative_path, providers in file_index.items():
             if len(providers) < 2:
@@ -30,12 +34,14 @@ class ConflictDetector:
 
             conflict = FileConflict(
                 relative_path=relative_path,
+                display_path=relative_path,
                 mods_involved=[p[0] for p in providers],
                 mod_paths=[p[1] for p in providers],
                 severity=severity,
                 file_type=ext,
                 is_mergeable=is_mergeable,
             )
+            self._annotate_conflict_display(conflict, providers, analysis_cache)
             conflicts.append(conflict)
 
         # Also surface folder-structure issues that break mod loading
@@ -131,6 +137,7 @@ class ConflictDetector:
             rel = f"structure/{name}.nestedmod"
             conflicts.append(FileConflict(
                 relative_path=rel,
+                display_path=rel,
                 mods_involved=[name],
                 mod_paths=[folder],
                 severity=ConflictSeverity.HIGH,
@@ -169,3 +176,87 @@ class ConflictDetector:
 
         nested = subdirs[0]
         return nested if self._has_direct_mod_content(nested) else None
+
+    def _annotate_conflict_display(
+        self,
+        conflict: FileConflict,
+        providers: list[tuple[str, Path]],
+        analysis_cache: dict[str, object],
+    ) -> None:
+        slot_map: dict[str, set[int]] = defaultdict(set)
+        for fighter, slot in iter_slot_matches(conflict.relative_path):
+            slot_map[str(fighter).lower()].add(int(slot))
+        if not slot_map:
+            return
+
+        mod_display_labels: dict[str, str] = {}
+        aggregate_labels: list[str] = []
+        for mod_name, file_path in providers:
+            mod_root = self._provider_mod_root(file_path, conflict.relative_path)
+            if mod_root is None or not mod_root.exists():
+                continue
+            cache_key = str(mod_root)
+            analysis = analysis_cache.get(cache_key)
+            if analysis is None:
+                analysis = analyze_mod_directory(mod_root, [mod_name, mod_root.name])
+                analysis_cache[cache_key] = analysis
+            labels = resolve_mod_slot_labels(mod_root, slot_map, analysis=analysis)
+            descriptions = self._build_slot_descriptions(slot_map, labels)
+            if not descriptions:
+                continue
+            compact = ", ".join(descriptions)
+            mod_display_labels[mod_name] = compact
+            aggregate_labels.extend(descriptions)
+
+        aggregate_unique = self._dedupe_strings(aggregate_labels)
+        if aggregate_unique:
+            label = "Affected slot/form" if len(aggregate_unique) == 1 else "Affected slots/forms"
+            conflict.slot_summary = f"{label}: {self._format_limited_list(aggregate_unique)}"
+        conflict.mod_display_labels = mod_display_labels
+
+    @staticmethod
+    def _build_slot_descriptions(
+        slot_map: dict[str, set[int]],
+        labels: dict[tuple[str, int], str],
+    ) -> list[str]:
+        descriptions: list[str] = []
+        for fighter, slots in sorted(slot_map.items()):
+            for slot in sorted(slots):
+                display_name = labels.get((fighter, slot))
+                descriptions.append(ConflictDetector._format_slot_reference(fighter, slot, display_name))
+        return ConflictDetector._dedupe_strings(descriptions)
+
+    @staticmethod
+    def _provider_mod_root(file_path: Path, relative_path: str) -> Path | None:
+        rel_parts = Path(relative_path).parts
+        try:
+            return Path(file_path).parents[max(len(rel_parts) - 1, 0)]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_slot_reference(fighter: str, slot: int, display_name: str | None = None) -> str:
+        slot_token = f"{str(fighter).lower()} c{int(slot):02d}"
+        clean_name = str(display_name or "").strip()
+        if not clean_name:
+            return slot_token
+        return f"{clean_name} ({slot_token})"
+
+    @staticmethod
+    def _dedupe_strings(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for value in values:
+            clean = str(value).strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            deduped.append(clean)
+        return deduped
+
+    @staticmethod
+    def _format_limited_list(values: list[str], max_items: int = 3) -> str:
+        if len(values) <= max_items:
+            return ", ".join(values)
+        shown = ", ".join(values[:max_items])
+        return f"{shown}, and {len(values) - max_items} more"

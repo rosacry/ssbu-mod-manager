@@ -455,7 +455,16 @@ class DashboardPage(BasePage):
         desc_parts = []
         if mergeable:
             files_list = "\n".join(
-                f"  \u2022 {c.relative_path}\n     Mods: {', '.join(c.mods_involved)}"
+                "  \u2022 "
+                f"{getattr(c, 'display_path', '') or c.relative_path}"
+                f"{f' | {getattr(c, \"slot_summary\", \"\")}' if getattr(c, 'slot_summary', '') else ''}\n"
+                "     Mods: "
+                + ", ".join(
+                    f"{mod} [{getattr(c, 'mod_display_labels', {}).get(mod)}]"
+                    if getattr(c, "mod_display_labels", {}).get(mod)
+                    else mod
+                    for mod in c.mods_involved
+                )
                 for c in mergeable[:10])
             if len(mergeable) > 10:
                 files_list += f"\n  ... and {len(mergeable) - 10} more"

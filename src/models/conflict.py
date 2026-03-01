@@ -22,7 +22,10 @@ class ResolutionStrategy(Enum):
 @dataclass
 class FileConflict:
     relative_path: str
+    display_path: str = ""
+    slot_summary: str = ""
     mods_involved: list[str] = field(default_factory=list)
+    mod_display_labels: dict[str, str] = field(default_factory=dict)
     mod_paths: list[Path] = field(default_factory=list)
     severity: ConflictSeverity = ConflictSeverity.MEDIUM
     file_type: str = ""

@@ -38,7 +38,7 @@ class ConflictCard(ctk.CTkFrame):
         severity_badge.pack(side="left", padx=(0, 10))
 
         path_label = ctk.CTkLabel(
-            header, text=conflict.relative_path,
+            header, text=conflict.display_path or conflict.relative_path,
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color="white", anchor="w",
         )
@@ -52,6 +52,18 @@ class ConflictCard(ctk.CTkFrame):
             )
             resolved_badge.pack(side="right")
 
+        if getattr(conflict, "slot_summary", ""):
+            slot_label = ctk.CTkLabel(
+                self,
+                text=conflict.slot_summary,
+                font=ctk.CTkFont(size=11),
+                text_color="#8e97bc",
+                anchor="w",
+                justify="left",
+                wraplength=760,
+            )
+            slot_label.pack(fill="x", padx=12, pady=(0, 5))
+
         # Conflicting mods
         mods_frame = ctk.CTkFrame(self, fg_color="transparent")
         mods_frame.pack(fill="x", padx=12, pady=(0, 5))
@@ -64,8 +76,12 @@ class ConflictCard(ctk.CTkFrame):
         mods_label.pack(anchor="w")
 
         for mod_name in conflict.mods_involved:
+            detail = str(getattr(conflict, "mod_display_labels", {}).get(mod_name, "") or "").strip()
+            label_text = f"  - {mod_name}"
+            if detail:
+                label_text += f" [{detail}]"
             mod_item = ctk.CTkLabel(
-                mods_frame, text=f"  - {mod_name}",
+                mods_frame, text=label_text,
                 font=ctk.CTkFont(size=12),
                 text_color="#cccccc", anchor="w",
             )

@@ -560,6 +560,18 @@ class ConflictsPage(BasePage):
         ext = Path(rel).suffix.lower()
         return ext if ext else ".other"
 
+    @staticmethod
+    def _conflict_display_path(conflict) -> str:
+        return str(getattr(conflict, "display_path", "") or getattr(conflict, "relative_path", "unknown"))
+
+    @staticmethod
+    def _conflict_display_line(conflict) -> str:
+        path = ConflictsPage._conflict_display_path(conflict)
+        slot_summary = str(getattr(conflict, "slot_summary", "") or "").strip()
+        if slot_summary:
+            return f"{path} | {slot_summary}"
+        return path
+
     def _force_scan(self):
         self._scanned = True
         # Cancel any in-progress scan by bumping generation
@@ -898,7 +910,7 @@ class ConflictsPage(BasePage):
                         fallback_row.pack(fill="x", pady=2)
                         ctk.CTkLabel(
                             fallback_row,
-                            text=f"Could not render conflict row: {getattr(conflict, 'relative_path', 'unknown')}",
+                            text=f"Could not render conflict row: {self._conflict_display_line(conflict)}",
                             font=ctk.CTkFont(size=12),
                             text_color="#d4a017",
                             anchor="w",
@@ -922,7 +934,7 @@ class ConflictsPage(BasePage):
                 for conflict in conflicts[:8]:
                     ctk.CTkLabel(
                         fallback_row,
-                        text=f"  - {getattr(conflict, 'relative_path', 'unknown')}",
+                        text=f"  - {self._conflict_display_line(conflict)}",
                         font=ctk.CTkFont(size=11),
                         text_color="#bbbbcc",
                         anchor="w",
@@ -987,7 +999,7 @@ class ConflictsPage(BasePage):
             for conflict in self._conflicts[:20]:
                 ctk.CTkLabel(
                     fallback_frame,
-                    text=f"  - {getattr(conflict, 'relative_path', 'unknown')}",
+                    text=f"  - {self._conflict_display_line(conflict)}",
                     font=ctk.CTkFont(size=11),
                     text_color="#bbbbcc",
                     anchor="w",
@@ -1045,7 +1057,7 @@ class ConflictsPage(BasePage):
         for conflict in self._conflicts[:60]:
             ctk.CTkLabel(
                 fallback_frame,
-                text=f"  - {getattr(conflict, 'relative_path', 'unknown')}",
+                text=f"  - {self._conflict_display_line(conflict)}",
                 font=ctk.CTkFont(size=11),
                 text_color="#bbbbcc",
                 anchor="w",
@@ -1331,7 +1343,7 @@ class ConflictsPage(BasePage):
                 conflict.resolution = ResolutionStrategy.MERGE
                 logger.info("Conflicts", f"Merged: {conflict.relative_path}")
                 messagebox.showinfo("Merged",
-                    f"Merged {conflict.relative_path}\n"
+                    f"Merged {self._conflict_display_path(conflict)}\n"
                     f"Output: {path}")
                 self._render()
             else:
