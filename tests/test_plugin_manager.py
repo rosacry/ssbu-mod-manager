@@ -1,5 +1,18 @@
+import pytest
+
+import src.core.plugin_manager as plugin_manager_module
 from src.core.plugin_manager import PluginManager
+from src.core.runtime_guard import ContentOperationBlockedError, RuntimeBlockInfo
 from src.models.plugin import PluginStatus
+
+
+@pytest.fixture(autouse=True)
+def _allow_plugin_file_operations(monkeypatch):
+    monkeypatch.setattr(
+        plugin_manager_module,
+        "ensure_runtime_content_change_allowed",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 def test_disable_enable_plugin_moves_between_live_and_disabled_folders(tmp_path):
@@ -70,3 +83,29 @@ def test_migrate_legacy_disabled_plugins(tmp_path):
     assert len(plugins) == 1
     assert plugins[0].filename == "liblegacy.nro"
     assert plugins[0].status == PluginStatus.DISABLED
+
+
+def test_disable_plugin_surfaces_runtime_block(tmp_path, monkeypatch):
+    plugins_path = tmp_path / "plugins"
+    plugins_path.mkdir(parents=True)
+    live_plugin = plugins_path / "libexample.nro"
+    live_plugin.write_bytes(b"plugin")
+
+    def _block(*_args, **_kwargs):
+        raise ContentOperationBlockedError(
+            RuntimeBlockInfo(
+                target_label="plugin",
+                action="disable",
+                running_emulators=("Ryujinx",),
+            )
+        )
+
+    monkeypatch.setattr(plugin_manager_module, "ensure_runtime_content_change_allowed", _block)
+
+    manager = PluginManager(plugins_path)
+    plugin = manager.list_plugins(force_refresh=True)[0]
+
+    with pytest.raises(ContentOperationBlockedError) as exc:
+        manager.disable_plugin(plugin)
+
+    assert "Ryujinx" in str(exc.value)

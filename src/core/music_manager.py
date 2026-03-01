@@ -136,6 +136,7 @@ MENU_BGM_FILENAME = "bgm_z90_menu.nus3audio"
 MUSIC_CONFIG_MOD_DIRNAME = "_MusicConfig"
 MUSIC_CONFIG_FILENAME = "music_config.json"
 ASSIGNMENTS_FILENAME = "music_assignments.json"
+LIBRARY_FILENAME = "music_library.json"
 MOD_FOLDER_PREFIXES_TO_SKIP = (".", "_")
 TRACK_SCAN_CANCEL_LOG = "Track discovery cancelled"
 BGM_MESSAGE_MARKERS = ("bgm", "msg_bgm")
@@ -205,6 +206,8 @@ class MusicManager:
         self.tracks: list[MusicTrack] = []
         self.stage_playlists: dict[str, StagePlaylist] = {}
         self.exclude_vanilla = False
+        self.favorite_track_ids: set[str] = set()
+        self._library_loaded = False
 
     @staticmethod
     def _scan_cancelled(cancel_event: Optional[threading.Event]) -> bool:
@@ -235,6 +238,7 @@ class MusicManager:
         ``parse_binary_msbt`` and ``generate_msbt_overlays`` are expensive and
         should only be enabled for explicit full rescans.
         """
+        self._load_library_preferences()
         self.tracks = []
         seen_ids = set()
 
@@ -266,6 +270,7 @@ class MusicManager:
                     source_mod=mod_folder.name,
                     file_size=fsize,
                     is_custom=True,
+                    is_favorite=track_id in self.favorite_track_ids,
                 )
                 self.tracks.append(track)
 
@@ -293,10 +298,14 @@ class MusicManager:
                 return self.tracks
             if not track.display_name:
                 track.display_name = beautify_track_name(track.track_id)
+            track.is_favorite = track.track_id in self.favorite_track_ids
 
         if self._scan_should_abort(cancel_event):
             return self.tracks
-        self._load_saved_assignments()
+        if self.stage_playlists:
+            self._rebind_stage_playlists_to_current_tracks()
+        else:
+            self._load_saved_assignments()
 
         return self.tracks
 
@@ -437,6 +446,94 @@ class MusicManager:
             StageInfo(stage_id=sid, stage_name=sname)
             for sid, sname in sorted(VANILLA_STAGES.items(), key=lambda x: x[1])
         ]
+
+    def _library_config_path(self) -> Path:
+        return CONFIG_DIR / LIBRARY_FILENAME
+
+    def _load_library_preferences(self) -> None:
+        if self._library_loaded:
+            return
+
+        config_file = self._library_config_path()
+        self.favorite_track_ids = set()
+        if config_file.exists():
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                favorites = data.get("favorite_track_ids", [])
+                if isinstance(favorites, list):
+                    self.favorite_track_ids = {
+                        str(track_id).strip()
+                        for track_id in favorites
+                        if str(track_id).strip()
+                    }
+            except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
+                logger.warn("Music", f"Failed to load music library preferences: {e}")
+        self._library_loaded = True
+
+    def _save_library_preferences(self) -> None:
+        config_dir = CONFIG_DIR
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = self._library_config_path()
+        data = {
+            "favorite_track_ids": sorted(self.favorite_track_ids),
+        }
+        try:
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            logger.error("Music", f"Failed to save music library preferences: {e}")
+
+    def _rebind_stage_playlists_to_current_tracks(self) -> None:
+        track_lookup = {track.track_id: track for track in self.tracks}
+        rebound: dict[str, StagePlaylist] = {}
+        for stage_id, playlist in self.stage_playlists.items():
+            rebound_tracks = [
+                track_lookup[track.track_id]
+                for track in playlist.tracks
+                if track.track_id in track_lookup
+            ]
+            rebound[stage_id] = StagePlaylist(
+                stage_id=playlist.stage_id,
+                stage_name=playlist.stage_name,
+                tracks=rebound_tracks,
+            )
+        self.stage_playlists = rebound
+
+    def is_track_favorite(self, track_id: str) -> bool:
+        self._load_library_preferences()
+        return track_id in self.favorite_track_ids
+
+    def set_track_favorite(self, track_id: str, is_favorite: bool) -> bool:
+        self._load_library_preferences()
+        changed = False
+        if is_favorite:
+            if track_id not in self.favorite_track_ids:
+                self.favorite_track_ids.add(track_id)
+                changed = True
+        else:
+            if track_id in self.favorite_track_ids:
+                self.favorite_track_ids.remove(track_id)
+                changed = True
+
+        if changed:
+            for track in self.tracks:
+                if track.track_id == track_id:
+                    track.is_favorite = is_favorite
+            self._save_library_preferences()
+        return is_favorite
+
+    def toggle_track_favorite(self, track_id: str) -> bool:
+        return self.set_track_favorite(track_id, not self.is_track_favorite(track_id))
+
+    def get_favorite_tracks(self) -> list[MusicTrack]:
+        self._load_library_preferences()
+        return [track for track in self.tracks if track.track_id in self.favorite_track_ids]
+
+    def reload_saved_assignments(self) -> None:
+        self.stage_playlists = {}
+        self.exclude_vanilla = False
+        self._load_saved_assignments()
 
     def get_tracks_for_stage(self, stage_id: str) -> list[MusicTrack]:
         """Get tracks assigned to a specific stage."""
@@ -802,5 +899,6 @@ class MusicManager:
             "total_assignments": total_tracks,
             "stages_with_music": stages_with_music,
             "exclude_vanilla": self.exclude_vanilla,
+            "favorite_tracks": len(self.favorite_track_ids),
         }
 

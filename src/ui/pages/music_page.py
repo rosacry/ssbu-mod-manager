@@ -3,6 +3,9 @@ import threading
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
+from src.core.spotify_manager import (
+    SPOTIFY_REDIRECT_URI_DOC,
+)
 from src.ui.base_page import BasePage
 from src.constants import VANILLA_STAGES, COMPETITIVE_STAGES
 from src.utils.logger import logger
@@ -55,6 +58,7 @@ class MusicPage(BasePage):
         self._pending_volume_value = self._DEFAULT_VOLUME
         self._track_data_revision = 0
         self._last_track_render_signature = None
+        self._spotify_dialog = None
         self._build_ui()
 
     def _build_ui(self):
@@ -210,6 +214,25 @@ class MusicPage(BasePage):
                      textvariable=self.track_search_var, height=30,
                      corner_radius=6).pack(fill="x", padx=10, pady=5)
 
+        track_filter_row = ctk.CTkFrame(right, fg_color="transparent")
+        track_filter_row.pack(fill="x", padx=10, pady=(0, 4))
+
+        self.favorites_only_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            track_filter_row,
+            text="Favorites only",
+            variable=self.favorites_only_var,
+            command=self._render_available_tracks,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            track_filter_row,
+            text="Ctrl-click to multi-select",
+            font=ctk.CTkFont(size=10),
+            text_color="#666688",
+        ).pack(side="right")
+
         # Available tracks list
         track_frame = ctk.CTkFrame(right, fg_color="transparent")
         track_frame.pack(fill="both", expand=True, padx=10, pady=(0, 5))
@@ -219,7 +242,9 @@ class MusicPage(BasePage):
                                          selectforeground="white",
                                          font=("Segoe UI", 10),
                                          relief="flat", bd=0, highlightthickness=0,
-                                         activestyle="none", cursor="arrow")
+                                         activestyle="none", cursor="arrow",
+                                         selectmode=tk.EXTENDED,
+                                         exportselection=False)
         track_scroll = ctk.CTkScrollbar(track_frame, command=self.track_listbox.yview)
         self.track_listbox.configure(yscrollcommand=track_scroll.set)
         self.track_listbox.pack(side="left", fill="both", expand=True)
@@ -228,7 +253,7 @@ class MusicPage(BasePage):
         # Double-click to add
         self.track_listbox.bind("<Double-1>", lambda e: self._add_selected_track())
         # Single-click to auto-play when already playing
-        self.track_listbox.bind("<<ListboxSelect>>", self._on_track_click)
+        self.track_listbox.bind("<<ListboxSelect>>", self._on_track_selection_changed)
 
         # Audio player controls: play/stop toggle + volume, right-aligned near track list
         player_frame = ctk.CTkFrame(right, fg_color="#1e1e30", corner_radius=6)
@@ -289,11 +314,36 @@ class MusicPage(BasePage):
         add_btn_frame = ctk.CTkFrame(right, fg_color="transparent")
         add_btn_frame.pack(fill="x", padx=10, pady=(0, 10))
 
-        ctk.CTkButton(add_btn_frame, text="+ Add Selected Track",
+        ctk.CTkButton(add_btn_frame, text="+ Add Selected Tracks",
                       command=self._add_selected_track,
                       fg_color="#2fa572", hover_color="#106a43",
                       height=30, corner_radius=6, font=ctk.CTkFont(size=12),
-                      ).pack(fill="x")
+                      ).pack(fill="x", pady=(0, 4))
+
+        self.favorite_selected_btn = ctk.CTkButton(
+            add_btn_frame,
+            text="Favorite Selected",
+            command=self._toggle_selected_favorites,
+            fg_color="#b08a2a",
+            hover_color="#8a6b1f",
+            height=30,
+            corner_radius=6,
+            font=ctk.CTkFont(size=12),
+            state="disabled",
+        )
+        self.favorite_selected_btn.pack(fill="x", pady=(0, 4))
+
+        self.spotify_export_btn = ctk.CTkButton(
+            add_btn_frame,
+            text="Export to Spotify...",
+            command=self._open_spotify_export_dialog,
+            fg_color="#1f538d",
+            hover_color="#163b6a",
+            height=30,
+            corner_radius=6,
+            font=ctk.CTkFont(size=12),
+        )
+        self.spotify_export_btn.pack(fill="x")
 
     def on_show(self):
         if not self._loaded:
@@ -331,6 +381,15 @@ class MusicPage(BasePage):
                 setattr(self, attr, None)
         for w in self.playlist_frame.winfo_children():
             w.destroy()
+
+    def discard_changes(self):
+        self.app.music_manager.reload_saved_assignments()
+        if self._loaded:
+            self.exclude_var.set(self.app.music_manager.exclude_vanilla)
+            self._update_summary()
+            self._populate_stages()
+            if self._selected_stage:
+                self._render_playlist()
 
     def _schedule_auto_scan(self):
         self._cancel_auto_scan()
@@ -533,18 +592,28 @@ class MusicPage(BasePage):
         self._populate_stages()
         if self._selected_stage:
             self._render_playlist()
+        self._update_track_selection_state()
 
     def _update_summary(self):
         summary = self.app.music_manager.get_assignment_summary()
+        favorite_count = summary.get("favorite_tracks", 0)
         if summary["stages_configured"] > 0:
+            parts = [
+                f"{summary['stages_configured']} stages",
+                f"{summary['total_assignments']} assignments",
+                "Vanilla excluded" if summary["exclude_vanilla"] else "Vanilla included",
+            ]
+            if favorite_count:
+                parts.append(f"{favorite_count} favorites")
             self.summary_label.configure(
-                text=f"{summary['stages_configured']} stages | "
-                     f"{summary['total_assignments']} assignments | "
-                     f"{'Vanilla excluded' if summary['exclude_vanilla'] else 'Vanilla included'}",
+                text=" | ".join(parts),
                 text_color="#2fa572")
         else:
+            text = "Select a stage, then add tracks from the right panel."
+            if favorite_count:
+                text += f" {favorite_count} favorite track(s) saved."
             self.summary_label.configure(
-                text="Select a stage, then add tracks from the right panel.",
+                text=text,
                 text_color="#999999")
 
     def _populate_stages(self):
@@ -703,7 +772,12 @@ class MusicPage(BasePage):
     def _render_available_tracks(self):
         """Populate the listbox with available tracks."""
         search = self.track_search_var.get().lower()
-        render_signature = (self._track_data_revision, search)
+        favorites_only = bool(self.favorites_only_var.get())
+        selected_track_ids = {
+            track.track_id
+            for track in self._get_selected_tracks()
+        }
+        render_signature = (self._track_data_revision, search, favorites_only)
         if render_signature == self._last_track_render_signature:
             return
         self._last_track_render_signature = render_signature
@@ -719,17 +793,29 @@ class MusicPage(BasePage):
             if search and search not in display.lower():
                 if not track.source_mod or search not in track.source_mod.lower():
                     continue
+            if favorites_only and not track.is_favorite:
+                continue
             filtered.append(track)
 
-        self.track_count_label.configure(text=f"{len(filtered)}/{len(tracks)} tracks")
+        favorites_shown = sum(1 for track in filtered if track.is_favorite)
+        total_favorites = len(self.app.music_manager.favorite_track_ids)
+        parts = [f"{len(filtered)}/{len(tracks)} tracks"]
+        parts.append(f"{favorites_shown} favorites shown")
+        if total_favorites != favorites_shown:
+            parts.append(f"{total_favorites} total favorites")
+        self.track_count_label.configure(text=" | ".join(parts))
 
         for i, track in enumerate(filtered):
             display = track.display_name if track.display_name else track.track_id
             mod = f" [{track.source_mod}]" if track.source_mod else ""
-            self.track_listbox.insert(tk.END, f"{display}{mod}")
+            prefix = "[Fav] " if track.is_favorite else ""
+            self.track_listbox.insert(tk.END, f"{prefix}{display}{mod}")
             self._track_id_map[i] = track
+            if track.track_id in selected_track_ids:
+                self.track_listbox.selection_set(i)
 
         logger.debug("Music", f"Populated {len(filtered)} tracks in listbox")
+        self._update_track_selection_state()
 
     def _on_track_filter_input(self, *_args):
         self._schedule_track_filter()
@@ -749,12 +835,69 @@ class MusicPage(BasePage):
     def _filter_tracks(self):
         self._render_available_tracks()
 
+    def _get_selected_tracks(self):
+        """Get the currently selected tracks from the listbox."""
+        return [
+            self._track_id_map[index]
+            for index in self.track_listbox.curselection()
+            if index in self._track_id_map
+        ]
+
     def _get_selected_track(self):
-        """Get the currently selected track from the listbox."""
-        sel = self.track_listbox.curselection()
-        if not sel:
+        """Get the first selected track from the listbox."""
+        tracks = self._get_selected_tracks()
+        if not tracks:
             return None
-        return self._track_id_map.get(sel[0])
+        return tracks[0]
+
+    def _update_track_selection_state(self):
+        selected_tracks = self._get_selected_tracks()
+        if not hasattr(self, "favorite_selected_btn"):
+            return
+
+        if not selected_tracks:
+            self.favorite_selected_btn.configure(
+                text="Favorite Selected",
+                state="disabled",
+            )
+            return
+
+        all_favorites = all(track.is_favorite for track in selected_tracks)
+        any_favorites = any(track.is_favorite for track in selected_tracks)
+        label = "Favorite Selected"
+        if all_favorites:
+            label = "Unfavorite Selected"
+        elif any_favorites:
+            label = "Toggle Favorites"
+
+        self.favorite_selected_btn.configure(text=label, state="normal")
+
+    def _on_track_selection_changed(self, event):
+        self._update_track_selection_state()
+        self._on_track_click(event)
+
+    def _toggle_selected_favorites(self):
+        selected_tracks = self._get_selected_tracks()
+        if not selected_tracks:
+            messagebox.showwarning("Warning", "Select one or more tracks first.")
+            return
+
+        make_favorite = not all(track.is_favorite for track in selected_tracks)
+        changed = 0
+        for track in selected_tracks:
+            before = track.is_favorite
+            after = self.app.music_manager.set_track_favorite(track.track_id, make_favorite)
+            track.is_favorite = after
+            if before != after:
+                changed += 1
+
+        if changed:
+            self._track_data_revision += 1
+            self._last_track_render_signature = None
+            self._render_available_tracks()
+            self._update_summary()
+        else:
+            self._update_track_selection_state()
 
     def _add_selected_track(self):
         """Add the selected track to the current stage."""
@@ -762,22 +905,27 @@ class MusicPage(BasePage):
             messagebox.showwarning("Warning", "Select a stage first.")
             return
 
-        track = self._get_selected_track()
-        if not track:
-            messagebox.showwarning("Warning", "Select a track to add.")
+        selected_tracks = self._get_selected_tracks()
+        if not selected_tracks:
+            messagebox.showwarning("Warning", "Select one or more tracks to add.")
             return
 
         stage_id = self._selected_stage
-        track_ref = track
+        track_refs = list(selected_tracks)
 
         def do_add():
-            self.app.music_manager.assign_track_to_stage(track_ref, stage_id)
+            for track_ref in track_refs:
+                self.app.music_manager.assign_track_to_stage(track_ref, stage_id)
 
         def undo_add():
-            self.app.music_manager.remove_track_from_stage(track_ref.track_id, stage_id)
+            for track_ref in track_refs:
+                self.app.music_manager.remove_track_from_stage(track_ref.track_id, stage_id)
 
         action = Action(
-            description=f"Add track to {VANILLA_STAGES.get(stage_id, stage_id)}",
+            description=(
+                f"Add {len(track_refs)} track(s) to "
+                f"{VANILLA_STAGES.get(stage_id, stage_id)}"
+            ),
             do=do_add, undo=undo_add, page="music",
         )
         action_history.execute(action)
@@ -861,11 +1009,495 @@ class MusicPage(BasePage):
         self._update_summary()
         self.app.mark_unsaved()
 
+    def _tracks_for_spotify_source(self, source: str):
+        if source == "Favorite Tracks":
+            return self.app.music_manager.get_favorite_tracks()
+        return self._get_selected_tracks()
+
+    def _open_spotify_export_dialog(self):
+        existing = self._spotify_dialog
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.withdraw()
+        dialog.title("Export to Spotify")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#0f1327")
+        self._spotify_dialog = dialog
+
+        shell = ctk.CTkFrame(
+            dialog,
+            fg_color="#151b36",
+            corner_radius=10,
+            border_width=1,
+            border_color="#304378",
+        )
+        shell.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            shell,
+            text="Export to Spotify",
+            anchor="w",
+            font=ctk.CTkFont(size=17, weight="bold"),
+        ).pack(fill="x", padx=14, pady=(12, 6))
+
+        ctk.CTkLabel(
+            shell,
+            text=(
+                "Use a Spotify app client ID with the redirect URI "
+                f"{SPOTIFY_REDIRECT_URI_DOC}"
+            ),
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=11),
+            text_color="#b9bfd8",
+        ).pack(fill="x", padx=14, pady=(0, 10))
+
+        settings = self.app.config_manager.settings
+        state = {
+            "busy": False,
+            "playlists": [],
+            "playlist_map": {},
+        }
+        client_id_var = tk.StringVar(value=settings.spotify_client_id or "")
+        source_var = tk.StringVar(
+            value="Selected Tracks" if self._get_selected_tracks() else "Favorite Tracks"
+        )
+        playlist_var = tk.StringVar(value="")
+        new_playlist_var = tk.StringVar(value="")
+        public_var = ctk.BooleanVar(value=False)
+
+        auth_frame = ctk.CTkFrame(shell, fg_color="#11182f", corner_radius=8)
+        auth_frame.pack(fill="x", padx=14, pady=(0, 8))
+
+        ctk.CTkLabel(
+            auth_frame,
+            text="Spotify Connection",
+            anchor="w",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(fill="x", padx=10, pady=(10, 6))
+
+        client_row = ctk.CTkFrame(auth_frame, fg_color="transparent")
+        client_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        ctk.CTkEntry(
+            client_row,
+            textvariable=client_id_var,
+            placeholder_text="Spotify client ID",
+            height=30,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        connect_btn = ctk.CTkButton(
+            client_row,
+            text="Connect",
+            width=96,
+            height=30,
+            fg_color="#2fa572",
+            hover_color="#106a43",
+        )
+        connect_btn.pack(side="left", padx=(0, 6))
+
+        disconnect_btn = ctk.CTkButton(
+            client_row,
+            text="Disconnect",
+            width=96,
+            height=30,
+            fg_color="#555570",
+            hover_color="#666688",
+        )
+        disconnect_btn.pack(side="left")
+
+        auth_status = ctk.CTkLabel(
+            auth_frame,
+            text="",
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=11),
+            text_color="#888888",
+        )
+        auth_status.pack(fill="x", padx=10, pady=(0, 10))
+
+        export_frame = ctk.CTkFrame(shell, fg_color="#11182f", corner_radius=8)
+        export_frame.pack(fill="x", padx=14, pady=(0, 8))
+
+        ctk.CTkLabel(
+            export_frame,
+            text="Playlist Export",
+            anchor="w",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(fill="x", padx=10, pady=(10, 6))
+
+        source_counts = ctk.CTkLabel(
+            export_frame,
+            text=(
+                f"Selected tracks: {len(self._get_selected_tracks())} | "
+                f"Favorite tracks: {len(self.app.music_manager.get_favorite_tracks())}"
+            ),
+            anchor="w",
+            font=ctk.CTkFont(size=11),
+            text_color="#b9bfd8",
+        )
+        source_counts.pack(fill="x", padx=10, pady=(0, 6))
+
+        source_row = ctk.CTkFrame(export_frame, fg_color="transparent")
+        source_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        ctk.CTkLabel(source_row, text="Export source",
+                     font=ctk.CTkFont(size=11), width=110, anchor="w").pack(side="left")
+        source_menu = ctk.CTkOptionMenu(
+            source_row,
+            values=["Selected Tracks", "Favorite Tracks"],
+            variable=source_var,
+            width=220,
+        )
+        source_menu.pack(side="left")
+
+        playlist_row = ctk.CTkFrame(export_frame, fg_color="transparent")
+        playlist_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        ctk.CTkLabel(playlist_row, text="Existing playlist",
+                     font=ctk.CTkFont(size=11), width=110, anchor="w").pack(side="left")
+        playlist_menu = ctk.CTkOptionMenu(
+            playlist_row,
+            values=["Connect Spotify first"],
+            variable=playlist_var,
+            width=280,
+        )
+        playlist_menu.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        refresh_btn = ctk.CTkButton(
+            playlist_row,
+            text="Refresh",
+            width=84,
+            height=28,
+            fg_color="#333352",
+            hover_color="#444470",
+        )
+        refresh_btn.pack(side="left")
+
+        new_playlist_row = ctk.CTkFrame(export_frame, fg_color="transparent")
+        new_playlist_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        ctk.CTkLabel(new_playlist_row, text="New playlist",
+                     font=ctk.CTkFont(size=11), width=110, anchor="w").pack(side="left")
+        ctk.CTkEntry(
+            new_playlist_row,
+            textvariable=new_playlist_var,
+            placeholder_text="Leave blank to use the selected playlist",
+            height=30,
+        ).pack(side="left", fill="x", expand=True)
+
+        ctk.CTkCheckBox(
+            export_frame,
+            text="Create new playlist as public",
+            variable=public_var,
+            font=ctk.CTkFont(size=11),
+        ).pack(anchor="w", padx=10, pady=(0, 10))
+
+        status_label = ctk.CTkLabel(
+            shell,
+            text="",
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=11),
+            text_color="#888888",
+            wraplength=580,
+        )
+        status_label.pack(fill="x", padx=14, pady=(0, 8))
+
+        button_row = ctk.CTkFrame(shell, fg_color="transparent")
+        button_row.pack(fill="x", padx=14, pady=(0, 12))
+
+        export_btn = ctk.CTkButton(
+            button_row,
+            text="Export",
+            width=96,
+            height=30,
+            fg_color="#1f538d",
+            hover_color="#163b6a",
+        )
+        export_btn.pack(side="right", padx=(8, 0))
+
+        close_btn = ctk.CTkButton(
+            button_row,
+            text="Close",
+            width=96,
+            height=30,
+            fg_color="#2f3557",
+            hover_color="#3f476f",
+        )
+        close_btn.pack(side="right")
+
+        def _close_dialog():
+            if state["busy"]:
+                _set_status("Wait for the current Spotify action to finish.")
+                return
+            self._spotify_dialog = None
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        close_btn.configure(command=_close_dialog)
+
+        def _set_status(text: str, color: str = "#888888") -> None:
+            status_label.configure(text=text, text_color=color)
+
+        def _set_busy(busy: bool) -> None:
+            state["busy"] = busy
+            button_state = "disabled" if busy else "normal"
+            connect_btn.configure(state=button_state)
+            disconnect_btn.configure(state=button_state)
+            refresh_btn.configure(state=button_state)
+            export_btn.configure(state=button_state)
+            close_btn.configure(state=button_state)
+
+        def _refresh_auth_ui() -> None:
+            current = self.app.config_manager.settings
+            if self.app.spotify_manager.is_authenticated():
+                name = current.spotify_display_name or current.spotify_user_id or "Connected"
+                auth_status.configure(
+                    text=f"Connected as {name}",
+                    text_color="#2fa572",
+                )
+                connect_btn.configure(text="Reconnect")
+                disconnect_btn.configure(state="normal" if not state["busy"] else "disabled")
+            else:
+                auth_status.configure(
+                    text="Not connected",
+                    text_color="#888888",
+                )
+                connect_btn.configure(text="Connect")
+                disconnect_btn.configure(state="disabled" if not state["busy"] else "disabled")
+
+        def _apply_playlists(playlists) -> None:
+            state["playlists"] = list(playlists)
+            playlist_map = {}
+            for playlist in playlists:
+                label = playlist.label
+                if label in playlist_map:
+                    label = f"{playlist.name} [{playlist.playlist_id[:8]}]"
+                playlist_map[label] = playlist
+            state["playlist_map"] = playlist_map
+
+            if playlist_map:
+                values = list(playlist_map.keys())
+                playlist_menu.configure(values=values)
+                last_id = self.app.config_manager.settings.spotify_last_playlist_id
+                selected_value = values[0]
+                if last_id:
+                    for label, playlist in playlist_map.items():
+                        if playlist.playlist_id == last_id:
+                            selected_value = label
+                            break
+                playlist_var.set(selected_value)
+            else:
+                placeholder = "No owned playlists found"
+                playlist_menu.configure(values=[placeholder])
+                playlist_var.set(placeholder)
+
+        def _load_playlists_async() -> None:
+            if not self.app.spotify_manager.is_authenticated():
+                _apply_playlists([])
+                return
+
+            _set_busy(True)
+            _set_status("Loading your Spotify playlists...")
+
+            def _worker():
+                try:
+                    playlists = self.app.spotify_manager.list_owned_playlists()
+                except Exception as exc:
+                    self.after(
+                        self._ZERO_DELAY_MS,
+                        lambda err=str(exc): (
+                            _set_busy(False),
+                            _set_status(err, "#e94560"),
+                            _refresh_auth_ui(),
+                        ),
+                    )
+                    return
+
+                self.after(
+                    self._ZERO_DELAY_MS,
+                    lambda pls=playlists: (
+                        _set_busy(False),
+                        _apply_playlists(pls),
+                        _refresh_auth_ui(),
+                        _set_status(
+                            f"Loaded {len(pls)} owned Spotify playlist(s).",
+                            "#2fa572",
+                        ),
+                    ),
+                )
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        def _connect_async() -> None:
+            cleaned_client_id = client_id_var.get().strip()
+            if not cleaned_client_id:
+                _set_status("Enter a Spotify client ID first.", "#e94560")
+                return
+
+            _set_busy(True)
+            _set_status("Opening Spotify sign-in in your browser...")
+
+            def _worker():
+                try:
+                    profile = self.app.spotify_manager.connect(cleaned_client_id)
+                    playlists = self.app.spotify_manager.list_owned_playlists()
+                except Exception as exc:
+                    self.after(
+                        self._ZERO_DELAY_MS,
+                        lambda err=str(exc): (
+                            _set_busy(False),
+                            _refresh_auth_ui(),
+                            _set_status(err, "#e94560"),
+                        ),
+                    )
+                    return
+
+                def _done():
+                    _set_busy(False)
+                    _refresh_auth_ui()
+                    _apply_playlists(playlists)
+                    _set_status(
+                        f"Connected as {profile.display_name}. Loaded {len(playlists)} playlist(s).",
+                        "#2fa572",
+                    )
+
+                self.after(self._ZERO_DELAY_MS, _done)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        def _disconnect() -> None:
+            self.app.spotify_manager.disconnect()
+            _apply_playlists([])
+            _refresh_auth_ui()
+            _set_status("Spotify connection removed.", "#888888")
+
+        def _export_async() -> None:
+            source = source_var.get()
+            tracks = self._tracks_for_spotify_source(source)
+            if not tracks:
+                _set_status(f"No tracks available for '{source}'.", "#e94560")
+                return
+            if not self.app.spotify_manager.is_authenticated():
+                _set_status("Connect a Spotify account first.", "#e94560")
+                return
+
+            new_playlist_name = new_playlist_var.get().strip()
+            selected_label = playlist_var.get().strip()
+            selected_playlist = state["playlist_map"].get(selected_label)
+            if not new_playlist_name and selected_playlist is None:
+                _set_status("Select an existing playlist or enter a new playlist name.", "#e94560")
+                return
+
+            _set_busy(True)
+            _set_status(f"Exporting {len(tracks)} track(s) to Spotify...")
+
+            def _worker():
+                try:
+                    playlist = selected_playlist
+                    if new_playlist_name:
+                        playlist = self.app.spotify_manager.create_playlist(
+                            new_playlist_name,
+                            public=bool(public_var.get()),
+                            description="Created by SSBU Mod Manager",
+                        )
+                    report = self.app.spotify_manager.export_tracks_to_playlist(playlist, tracks)
+                    current = self.app.config_manager.settings
+                    current.spotify_last_playlist_id = report.playlist_id
+                    self.app.config_manager.save(current)
+                except Exception as exc:
+                    self.after(
+                        self._ZERO_DELAY_MS,
+                        lambda err=str(exc): (
+                            _set_busy(False),
+                            _set_status(err, "#e94560"),
+                        ),
+                    )
+                    return
+
+                def _done():
+                    _set_busy(False)
+                    _set_status(
+                        f"Spotify export finished for '{report.playlist_name}'.",
+                        "#2fa572",
+                    )
+                    messagebox.showinfo(
+                        "Spotify Export Complete",
+                        self._format_spotify_export_report(report),
+                    )
+                    _load_playlists_async()
+
+                self.after(self._ZERO_DELAY_MS, _done)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        connect_btn.configure(command=_connect_async)
+        disconnect_btn.configure(command=_disconnect)
+        refresh_btn.configure(command=_load_playlists_async)
+        export_btn.configure(command=_export_async)
+        dialog.protocol("WM_DELETE_WINDOW", _close_dialog)
+        dialog.bind("<Escape>", lambda _e: _close_dialog())
+
+        self._center_dialog(dialog, width=640, height=520)
+        self._present_modal_dialog(dialog, focus_widget=None, animate_open=False)
+        _refresh_auth_ui()
+        if self.app.spotify_manager.is_authenticated():
+            _load_playlists_async()
+        else:
+            _apply_playlists([])
+            _set_status("Connect Spotify to load your playlists.")
+
+    @staticmethod
+    def _format_spotify_export_report(report) -> str:
+        lines = [
+            f"Playlist: {report.playlist_name}",
+            f"Attempted: {report.attempted}",
+            f"Matched on Spotify: {report.matched}",
+            f"Added: {report.added}",
+            f"Skipped as duplicates/already present: {report.duplicate_skips}",
+        ]
+        if report.playlist_url:
+            lines.append(f"Spotify URL: {report.playlist_url}")
+        if report.unresolved:
+            lines.append("")
+            lines.append("Unresolved tracks:")
+            lines.extend(f"- {name}" for name in report.unresolved[:8])
+            if len(report.unresolved) > 8:
+                lines.append(f"...and {len(report.unresolved) - 8} more")
+        if report.low_confidence:
+            lines.append("")
+            lines.append("Skipped for low-confidence matching:")
+            lines.extend(f"- {name}" for name in report.low_confidence[:8])
+            if len(report.low_confidence) > 8:
+                lines.append(f"...and {len(report.low_confidence) - 8} more")
+        return "\n".join(lines)
+
+    def _center_dialog(self, dialog, width: int, height: int):
+        try:
+            self.update_idletasks()
+            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
+            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
+        except Exception:
+            x, y = 200, 200
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
     # Audio playback methods
     def _on_track_click(self, event):
         """When user clicks a track while music is already playing,
         auto-play the newly selected track."""
-        if self._is_playing:
+        if self._is_playing and len(self._get_selected_tracks()) == 1:
             # Short delay so the listbox selection updates first
             self.after(self._PLAY_CLICK_DELAY_MS, self._play_selected)
 

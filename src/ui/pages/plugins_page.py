@@ -7,6 +7,7 @@ from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
 from src.core.content_importer import import_plugin_package
 from src.core.desync_classifier import classify_plugin_filename
+from src.core.runtime_guard import ContentOperationBlockedError
 from src.utils.logger import logger
 
 PLUGIN_RISK_BADGES = {
@@ -277,6 +278,11 @@ class PluginsPage(BasePage):
                 logger.info("Plugins", f"Enabled: {self._plugin_label(plugin)}")
             self._loaded = False
             self._refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Plugins", f"Toggle blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
+            self._loaded = False
+            self._refresh()
         except Exception as e:
             logger.error("Plugins", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle plugin: {e}")
@@ -299,6 +305,9 @@ class PluginsPage(BasePage):
             logger.info("Plugins", f"Enabled {count} plugins")
             messagebox.showinfo("Done", f"Enabled {count} plugin(s).")
             self._force_refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Plugins", f"Enable all blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
         except Exception as e:
             logger.error("Plugins", f"Enable all failed: {e}")
             messagebox.showerror("Error", f"Failed to enable all plugins: {e}")
@@ -324,6 +333,9 @@ class PluginsPage(BasePage):
             logger.info("Plugins", f"Disabled {count} plugins")
             messagebox.showinfo("Done", f"Disabled {count} plugin(s).")
             self._force_refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Plugins", f"Disable all blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
         except Exception as e:
             logger.error("Plugins", f"Disable all failed: {e}")
             messagebox.showerror("Error", f"Failed to disable all plugins: {e}")

@@ -221,6 +221,11 @@ class MainWindow(ctk.CTkFrame):
         # Reload current page
         if self.current_page and self.current_page in self.pages:
             page = self.pages[self.current_page]
+            if hasattr(page, "discard_changes") and callable(page.discard_changes):
+                try:
+                    page.discard_changes()
+                except Exception:
+                    pass
             if hasattr(page, '_loaded'):
                 page._loaded = False
             page.on_show()

@@ -7,6 +7,10 @@ from typing import Optional
 from src.models.mod import Mod, ModStatus, ModMetadata
 from src.core.file_scanner import FileScanner
 from src.core.desync_classifier import classify_mod_path
+from src.core.runtime_guard import (
+    ensure_runtime_content_change_allowed,
+    raise_if_files_in_use,
+)
 from src.utils.file_utils import safe_rename
 
 # Quick category detection based on top-level directory names
@@ -265,12 +269,18 @@ class ModManager:
             if mod.status == ModStatus.ENABLED:
                 return
 
+            ensure_runtime_content_change_allowed("mod", "enable")
+
             # Always use "move" strategy - renaming does not prevent
             # ARCropolis / the emulator from loading the folder.
             new_path = self.mods_path / mod.original_name
             if new_path.exists():
                 raise FileExistsError(f"Cannot enable: '{mod.original_name}' already exists in mods folder")
-            mod.path.rename(new_path)
+            try:
+                mod.path.rename(new_path)
+            except OSError as e:
+                raise_if_files_in_use(e, "mod", "enable")
+                raise
             mod.path = new_path
             mod.name = mod.original_name
             mod.status = ModStatus.ENABLED
@@ -282,6 +292,8 @@ class ModManager:
             if mod.status == ModStatus.DISABLED:
                 return
 
+            ensure_runtime_content_change_allowed("mod", "disable")
+
             # Move to a sibling directory OUTSIDE the mods folder so the
             # emulator / ARCropolis cannot see it at all. Using a
             # sub-folder of mods (like ".disabled") does NOT work because
@@ -291,7 +303,11 @@ class ModManager:
             new_path = disabled_dir / mod.name
             if new_path.exists():
                 raise FileExistsError(f"Cannot disable: '{mod.name}' already exists in disabled folder")
-            mod.path.rename(new_path)
+            try:
+                mod.path.rename(new_path)
+            except OSError as e:
+                raise_if_files_in_use(e, "mod", "disable")
+                raise
             mod.path = new_path
             mod.status = ModStatus.DISABLED
 
@@ -306,6 +322,7 @@ class ModManager:
     def enable_all(self) -> int:
         """Enable all disabled mods. Returns count of mods enabled."""
         with self._lock:
+            ensure_runtime_content_change_allowed("mods", "enable")
             count = 0
             # Snapshot list to avoid iteration-during-mutation
             mods_snapshot = list(self.list_mods())
@@ -314,7 +331,7 @@ class ModManager:
                     try:
                         self.enable_mod(mod)
                         count += 1
-                    except (FileExistsError, OSError):
+                    except FileExistsError:
                         pass
             self.invalidate_cache()
             return count
@@ -322,6 +339,7 @@ class ModManager:
     def disable_all(self) -> int:
         """Disable all enabled mods. Returns count of mods disabled."""
         with self._lock:
+            ensure_runtime_content_change_allowed("mods", "disable")
             count = 0
             # Snapshot list to avoid iteration-during-mutation
             mods_snapshot = list(self.list_mods())
@@ -330,7 +348,7 @@ class ModManager:
                     try:
                         self.disable_mod(mod)
                         count += 1
-                    except (FileExistsError, OSError):
+                    except FileExistsError:
                         pass
             self.invalidate_cache()
             return count

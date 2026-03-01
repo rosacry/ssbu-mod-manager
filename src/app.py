@@ -265,6 +265,7 @@ class ModManagerApp(ctk.CTk):
         self._msbt_handler = None
         self._css_manager = None
         self._music_manager = None
+        self._spotify_manager = None
         self._conflict_detector = None
         self._share_manager = None
         self.conflict_resolver = ConflictResolver(settings.mods_path or Path("."))
@@ -2549,6 +2550,15 @@ class ModManagerApp(ctk.CTk):
             self._music_manager = MusicManager()
             logger.info("App", "Music manager initialized lazily")
         return self._music_manager
+
+    @property
+    def spotify_manager(self):
+        if self._spotify_manager is None:
+            from src.core.spotify_manager import SpotifyManager
+
+            self._spotify_manager = SpotifyManager(self.config_manager)
+            logger.info("App", "Spotify manager initialized lazily")
+        return self._spotify_manager
 
     @property
     def conflict_detector(self):

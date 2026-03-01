@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Iterator, Optional
 from src.models.plugin import Plugin, PluginStatus, KnownPluginInfo
 from src.constants import KNOWN_PLUGINS
+from src.core.runtime_guard import (
+    ensure_runtime_content_change_allowed,
+    raise_if_files_in_use,
+)
 
 
 class PluginManager:
@@ -208,13 +212,19 @@ class PluginManager:
             if plugin.status == PluginStatus.ENABLED:
                 return
 
+            ensure_runtime_content_change_allowed("plugin", "enable")
+
             new_name = self.base_filename(plugin.filename)
             self.plugins_path.mkdir(parents=True, exist_ok=True)
             new_path = self.plugins_path / new_name
             if new_path.exists():
                 raise FileExistsError(f"Cannot enable: '{new_name}' already exists")
 
-            plugin.path.rename(new_path)
+            try:
+                plugin.path.rename(new_path)
+            except OSError as e:
+                raise_if_files_in_use(e, "plugin", "enable")
+                raise
             plugin.filename = new_name
             plugin.path = new_path
             plugin.status = PluginStatus.ENABLED
@@ -226,6 +236,8 @@ class PluginManager:
             if plugin.status == PluginStatus.DISABLED:
                 return
 
+            ensure_runtime_content_change_allowed("plugin", "disable")
+
             new_name = self.base_filename(plugin.filename)
             disabled_root = self.disabled_plugins_path
             disabled_root.mkdir(parents=True, exist_ok=True)
@@ -233,7 +245,11 @@ class PluginManager:
             if new_path.exists():
                 raise FileExistsError(f"Cannot disable: '{new_name}' already exists in disabled_plugins")
 
-            plugin.path.rename(new_path)
+            try:
+                plugin.path.rename(new_path)
+            except OSError as e:
+                raise_if_files_in_use(e, "plugin", "disable")
+                raise
             plugin.filename = new_name
             plugin.path = new_path
             plugin.status = PluginStatus.DISABLED
@@ -242,6 +258,7 @@ class PluginManager:
     def enable_all(self) -> int:
         """Enable all disabled plugins. Returns count enabled."""
         with self._lock:
+            ensure_runtime_content_change_allowed("plugins", "enable")
             count = 0
             # Snapshot list to avoid iteration-during-mutation
             plugins_snapshot = list(self.list_plugins())
@@ -250,7 +267,7 @@ class PluginManager:
                     try:
                         self.enable_plugin(plugin)
                         count += 1
-                    except (FileExistsError, OSError):
+                    except FileExistsError:
                         pass
             self.invalidate_cache()
             return count
@@ -258,6 +275,7 @@ class PluginManager:
     def disable_all(self, skip_required: bool = True) -> int:
         """Disable all enabled plugins. Skips required plugins by default. Returns count disabled."""
         with self._lock:
+            ensure_runtime_content_change_allowed("plugins", "disable")
             count = 0
             # Snapshot list to avoid iteration-during-mutation
             plugins_snapshot = list(self.list_plugins())
@@ -268,7 +286,7 @@ class PluginManager:
                     try:
                         self.disable_plugin(plugin)
                         count += 1
-                    except (FileExistsError, OSError):
+                    except FileExistsError:
                         pass
             self.invalidate_cache()
             return count

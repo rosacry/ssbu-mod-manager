@@ -10,6 +10,7 @@ class MusicTrack:
     source_mod: str = ""
     file_size: int = 0
     is_custom: bool = True
+    is_favorite: bool = False
 
 
 @dataclass

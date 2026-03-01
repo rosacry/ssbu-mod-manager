@@ -65,6 +65,16 @@ class ConfigManager:
                     online_strict_environment_match=bool(
                         data.get("online_strict_environment_match", False)
                     ),
+                    spotify_client_id=str(data.get("spotify_client_id", "") or ""),
+                    spotify_access_token=str(data.get("spotify_access_token", "") or ""),
+                    spotify_refresh_token=str(data.get("spotify_refresh_token", "") or ""),
+                    spotify_token_expires_at=max(
+                        0,
+                        int(data.get("spotify_token_expires_at", 0) or 0),
+                    ),
+                    spotify_user_id=str(data.get("spotify_user_id", "") or ""),
+                    spotify_display_name=str(data.get("spotify_display_name", "") or ""),
+                    spotify_last_playlist_id=str(data.get("spotify_last_playlist_id", "") or ""),
                 )
             except (json.JSONDecodeError, KeyError, TypeError, OSError,
                     ValueError, UnicodeDecodeError):
@@ -108,6 +118,13 @@ class ConfigManager:
             "online_strict_environment_match": bool(
                 self.settings.online_strict_environment_match
             ),
+            "spotify_client_id": str(self.settings.spotify_client_id or ""),
+            "spotify_access_token": str(self.settings.spotify_access_token or ""),
+            "spotify_refresh_token": str(self.settings.spotify_refresh_token or ""),
+            "spotify_token_expires_at": int(self.settings.spotify_token_expires_at or 0),
+            "spotify_user_id": str(self.settings.spotify_user_id or ""),
+            "spotify_display_name": str(self.settings.spotify_display_name or ""),
+            "spotify_last_playlist_id": str(self.settings.spotify_last_playlist_id or ""),
         }
 
         try:

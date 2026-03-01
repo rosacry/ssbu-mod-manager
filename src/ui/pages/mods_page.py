@@ -7,6 +7,7 @@ from pathlib import Path
 from src.ui.base_page import BasePage
 from src.models.mod import Mod, ModStatus
 from src.core.content_importer import import_mod_package
+from src.core.runtime_guard import ContentOperationBlockedError
 from src.utils.logger import logger
 from src.utils.action_history import action_history, Action
 
@@ -771,6 +772,11 @@ class ModsPage(BasePage):
             scroll_pos = self._canvas.yview()[0]
             self._render_mods()
             self.after(20, lambda: self._canvas.yview_moveto(scroll_pos))
+        except ContentOperationBlockedError as e:
+            logger.warn("Mods", f"Toggle blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
+            self._loaded = False
+            self._refresh()
         except Exception as e:
             logger.error("Mods", f"Toggle failed: {e}")
             messagebox.showerror("Error", f"Failed to toggle mod: {e}")
@@ -793,6 +799,9 @@ class ModsPage(BasePage):
             logger.info("Mods", f"Enabled {count} mods")
             messagebox.showinfo("Done", f"Enabled {count} mod(s).")
             self._force_refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Mods", f"Enable all blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
         except Exception as e:
             logger.error("Mods", f"Enable all failed: {e}")
             messagebox.showerror("Error", f"Failed to enable all mods: {e}")
@@ -814,6 +823,9 @@ class ModsPage(BasePage):
             logger.info("Mods", f"Disabled {count} mods")
             messagebox.showinfo("Done", f"Disabled {count} mod(s).")
             self._force_refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Mods", f"Disable all blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
         except Exception as e:
             logger.error("Mods", f"Disable all failed: {e}")
             messagebox.showerror("Error", f"Failed to disable all mods: {e}")

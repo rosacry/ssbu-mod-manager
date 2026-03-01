@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.0.0**.
+Current release version: **1.1.0**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -14,7 +14,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: unwraps common extra wrapper folders before install.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
-- Music page with stage playlists, preview playback, and assignment export.
+- Music page with stage playlists, multi-select track actions, favorites list/filtering, preview playback, save/discard-safe assignment export, and Spotify playlist export for selected or favorite tracks.
 - Conflict detection and locale MSBT rename safety tools.
 - Emulator migration tools (copy, direct export/import, upgrade flow).
 - Online Compatibility checker and shareable profile support.
@@ -28,6 +28,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
 - Python 3.11+
 - Dependencies in `requirements.txt`
 - Optional: `ffmpeg`/`ffplay` in `PATH` for broader audio fallback support
+- Optional: Spotify account + Spotify app client ID if you want playlist export from the Music page
 
 ## Install (Dev)
 
@@ -51,7 +52,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.0.0-windows.zip`
+- `dist/SSBUModManager-1.1.0-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -62,6 +63,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 3. Confirm Mods/Plugins paths are populated.
 4. Go to **Mods** and **Plugins** to validate discovery.
 5. Open **Conflicts** and run an initial scan.
+6. Optional for Music -> Spotify export: create a Spotify app client ID and register the loopback redirect URI `http://127.0.0.1/callback`.
 
 ## UX Notes
 
@@ -73,6 +75,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Online Guide and Migration use higher wheel speed than standard pages.
 - Mods and Plugins now share consistent wheel behavior.
 - Mod enable/disable toggles now update in-place immediately (including re-enable) without requiring manual Refresh.
+- Mod/plugin enable and disable actions now stop early with a clear "close the game or emulator first" error when files are in use by a running emulator.
 - Plugin disable now moves binaries into a sibling `disabled_plugins` folder, and legacy `.nro.disabled` files are auto-migrated.
 - Page navigation now uses a very short settle mask during tab switches to hide first-frame partial rendering on heavier pages.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
@@ -107,6 +110,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Scrollbar drag handling now accepts raw Tk callback argument variants under heavy drag load, preventing `_clicked_preserve_offset` event errors.
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Music auto-scan is now deferred slightly on page show and cooperative-cancelled when leaving the Music tab, preventing heavy background track scans from stalling other pages.
+- Music now supports favorite tracks, a favorites-only filter, duplicate-safe multi-select add, and Spotify playlist export that skips tracks already present in the target playlist.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
 - App status-bar mod/plugin counts now refresh off the UI thread to reduce startup hitching and early frame drops.
