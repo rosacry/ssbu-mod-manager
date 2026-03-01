@@ -1251,7 +1251,8 @@ class ModsPage(BasePage):
             text=(
                 f"Pack: {info.mod_name}\n"
                 f"Source: {info.package_name}\n"
-                "This pack contains multiple costume-slot skins. Choose exactly which ones to import."
+                "This pack contains multiple costume-slot skins. Choose exactly which ones to import.\n"
+                "Friendly form names are shown when the pack includes slot metadata."
             ),
             anchor="w",
             justify="left",

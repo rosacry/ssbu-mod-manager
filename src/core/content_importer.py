@@ -19,6 +19,7 @@ from src.core.skin_slot_utils import (
     copy_single_slot_variant,
     reslot_mod_directory,
 )
+from src.utils.xmsbt_parser import extract_entries_from_msbt, parse_xmsbt
 
 _MOD_CONTENT_DIRS = {
     "fighter", "sound", "stage", "ui", "effect", "camera",
@@ -53,6 +54,11 @@ _SUPPORT_KIND_LABELS = {
     "effect": "effect pack",
     "camera": "camera pack",
 }
+_MSG_NAME_ENTRY_PATTERN = re.compile(r"^nam_chr(?P<tier>[12])_(?P<slot>\d{2})_(?P<name_id>[a-z0-9_]+)$", re.IGNORECASE)
+_PRCXML_CHARACALL_PATTERN = re.compile(
+    r'characall_label_c(?P<slot>\d{2})"\s*>\s*vc_narration_characall_(?P<identifier>[^<]+)<',
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -691,7 +697,7 @@ def _append_prepared_visual_variants(
     base_temp_paths: list[tempfile.TemporaryDirectory],
     multi_slot_pack_resolver: MultiSlotPackResolver | None = None,
 ) -> None:
-    visual_options = _build_multi_slot_pack_options(target_name, package_name, analysis)
+    visual_options = _build_multi_slot_pack_options(source_dir, analysis)
     if len(visual_options) <= 1:
         if analysis.has_visual_skin_slot and analysis.slot_count > 1:
             fighter = str(analysis.primary_fighter)
@@ -746,7 +752,7 @@ def _append_prepared_visual_variants(
     if multi_slot_pack_resolver is None and len(selected_options) == 1:
         option = selected_options[0]
         summary.warnings.append(
-            f"Selected base skin {option.fighter} c{option.slot:02d} from '{target_name}' and omitted its other slots."
+            f"Selected base skin {option.label} from '{target_name}' and omitted its other slots."
         )
     else:
         summary.warnings.append(
@@ -793,28 +799,154 @@ def _append_prepared_visual_variants(
 
 
 def _build_multi_slot_pack_options(
-    target_name: str,
-    package_name: str,
+    source_dir: Path,
     analysis: SlotAnalysis,
 ) -> list[MultiSlotPackOption]:
     options: list[MultiSlotPackOption] = []
+    friendly_labels = _resolve_multi_slot_option_labels(source_dir, analysis)
+    labeled_fighters = {fighter for fighter, _slot in friendly_labels}
     recommended_id = None
     if analysis.primary_fighter is not None and analysis.primary_slot is not None:
         recommended_id = f"{analysis.primary_fighter.lower()}:c{int(analysis.primary_slot):02d}"
 
     for fighter, slots in sorted(analysis.visual_fighter_slots.items()):
+        fighter_name = str(fighter).lower()
+        if labeled_fighters and fighter_name not in labeled_fighters:
+            continue
         for slot in slots:
-            option_id = f"{fighter.lower()}:c{int(slot):02d}"
+            option_id = f"{fighter_name}:c{int(slot):02d}"
+            display_name = friendly_labels.get((fighter_name, int(slot)))
+            fallback_label = f"{fighter_name} c{int(slot):02d}"
+            label = fallback_label
+            if display_name and display_name.lower() != fallback_label.lower():
+                label = f"{display_name} ({fallback_label})"
             options.append(
                 MultiSlotPackOption(
                     option_id=option_id,
-                    fighter=str(fighter).lower(),
+                    fighter=fighter_name,
                     slot=int(slot),
-                    label=f"{fighter} c{int(slot):02d}",
+                    label=label,
                     recommended=(option_id == recommended_id),
                 )
             )
     return options
+
+
+def _resolve_multi_slot_option_labels(
+    source_dir: Path,
+    analysis: SlotAnalysis,
+) -> dict[tuple[str, int], str]:
+    visual_slots = {
+        str(fighter).lower(): {int(slot) for slot in slots}
+        for fighter, slots in analysis.visual_fighter_slots.items()
+        if slots
+    }
+    if not visual_slots:
+        return {}
+
+    labels = _extract_multi_slot_names_from_msg_name(source_dir, visual_slots)
+    if len(visual_slots) == 1:
+        for key, value in _extract_multi_slot_names_from_ui_chara_db(source_dir, visual_slots).items():
+            labels.setdefault(key, value)
+    return labels
+
+
+def _extract_multi_slot_names_from_msg_name(
+    source_dir: Path,
+    visual_slots: dict[str, set[int]],
+) -> dict[tuple[str, int], str]:
+    message_dir = source_dir / "ui" / "message"
+    xmsbt_path = message_dir / "msg_name.xmsbt"
+    msbt_path = message_dir / "msg_name.msbt"
+    entries: dict[str, str] = {}
+    if xmsbt_path.is_file():
+        entries = parse_xmsbt(xmsbt_path)
+    elif msbt_path.is_file():
+        entries = extract_entries_from_msbt(msbt_path)
+    if not entries:
+        return {}
+
+    single_fighter = next(iter(visual_slots)) if len(visual_slots) == 1 else None
+    fallback_names: dict[tuple[str, int], str] = {}
+    preferred_names: dict[tuple[str, int], str] = {}
+    for label, text in entries.items():
+        match = _MSG_NAME_ENTRY_PATTERN.match(str(label).strip())
+        if not match:
+            continue
+        slot = int(match.group("slot"))
+        label_fighter = match.group("name_id").lower()
+        if label_fighter in visual_slots:
+            fighter = label_fighter
+        elif single_fighter is not None and slot in visual_slots[single_fighter]:
+            fighter = single_fighter
+        else:
+            continue
+        if slot not in visual_slots.get(fighter, set()):
+            continue
+
+        display_name = _clean_multi_slot_label_text(text)
+        if not display_name:
+            continue
+
+        key = (fighter, slot)
+        if match.group("tier") == "1":
+            preferred_names[key] = display_name
+        else:
+            fallback_names.setdefault(key, display_name)
+
+    resolved = dict(fallback_names)
+    resolved.update(preferred_names)
+    return resolved
+
+
+def _extract_multi_slot_names_from_ui_chara_db(
+    source_dir: Path,
+    visual_slots: dict[str, set[int]],
+) -> dict[tuple[str, int], str]:
+    prcxml_path = source_dir / "ui" / "param" / "database" / "ui_chara_db.prcxml"
+    if not prcxml_path.is_file() or len(visual_slots) != 1:
+        return {}
+
+    fighter = next(iter(visual_slots))
+    try:
+        content = prcxml_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return {}
+
+    labels: dict[tuple[str, int], str] = {}
+    for match in _PRCXML_CHARACALL_PATTERN.finditer(content):
+        slot = int(match.group("slot"))
+        if slot not in visual_slots[fighter]:
+            continue
+        display_name = _humanize_support_identifier(match.group("identifier"))
+        if display_name:
+            labels[(fighter, slot)] = display_name
+    return labels
+
+
+def _clean_multi_slot_label_text(value: str) -> str:
+    collapsed = re.sub(r"\s+", " ", str(value or "")).strip()
+    return collapsed
+
+
+def _humanize_support_identifier(identifier: str) -> str:
+    value = re.sub(r"(?i)^vc_narration_characall_", "", str(identifier or "")).strip(" _-")
+    if not value:
+        return ""
+
+    parts = [part for part in re.split(r"[_\s]+", value) if part]
+    if len(parts) == 1:
+        token = parts[0]
+        compact_match = re.fullmatch(r"([a-z]{1,3})([a-z]{4,})", token, re.IGNORECASE)
+        if compact_match:
+            parts = [compact_match.group(1), compact_match.group(2)]
+
+    def _format_part(part: str) -> str:
+        if len(part) <= 2 and part.isalpha():
+            return part.upper()
+        return part.capitalize()
+
+    return " ".join(_format_part(part) for part in parts)
 
 
 def _resolve_multi_slot_pack_selection(

@@ -2,6 +2,7 @@ from pathlib import Path
 import zipfile
 
 from src.core.content_importer import (
+    _build_multi_slot_pack_options,
     apply_mod_camera_pack_scope,
     apply_mod_effect_pack_scope,
     apply_mod_voice_pack_scope,
@@ -10,7 +11,7 @@ from src.core.content_importer import (
     inspect_mod_effect_pack,
     inspect_mod_voice_pack,
 )
-from src.core.skin_slot_utils import analyze_relative_paths, choose_primary_skin_slot
+from src.core.skin_slot_utils import analyze_mod_directory, analyze_relative_paths, choose_primary_skin_slot
 from src.paths import SSBU_TITLE_ID
 
 
@@ -120,6 +121,109 @@ def test_import_mod_package_can_split_multi_slot_pack_with_selector(tmp_path: Pa
     assert (mods_path / "Nazo Pack [sonic c02]" / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").exists()
     assert (mods_path / "Nazo Pack [sonic c03]" / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").exists()
     assert any("Selected 2 skin(s)" in warning for warning in summary.warnings)
+
+
+def test_import_mod_package_uses_msg_name_labels_for_multi_slot_picker(tmp_path: Path):
+    source = tmp_path / "downloads" / "Nazo Pack"
+    (source / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"c02")
+    (source / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").write_bytes(b"c03")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_02.bntx").write_bytes(b"ui2")
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"ui3")
+    (source / "ui" / "message").mkdir(parents=True)
+    (source / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_02_sonic">
+    <text>Nazo</text>
+  </entry>
+  <entry label="nam_chr1_03_sonic">
+    <text>Hyper Perfect Nazo</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    seen_labels = []
+
+    def resolver(info):
+        seen_labels.extend(option.label for option in info.options)
+        return [option.option_id for option in info.options]
+
+    summary = import_mod_package(source, mods_path, multi_slot_pack_resolver=resolver)
+
+    assert summary.items_imported == 2
+    assert seen_labels == [
+        "Nazo (sonic c02)",
+        "Hyper Perfect Nazo (sonic c03)",
+    ]
+
+
+def test_import_mod_package_falls_back_to_ui_chara_db_labels_for_multi_slot_picker(tmp_path: Path):
+    source = tmp_path / "downloads" / "Sonic Forms"
+    (source / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"c02")
+    (source / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").write_bytes(b"c03")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_02.bntx").write_bytes(b"ui2")
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"ui3")
+    (source / "ui" / "param" / "database").mkdir(parents=True)
+    (source / "ui" / "param" / "database" / "ui_chara_db.prcxml").write_text(
+        """<struct>
+  <hash40 hash="characall_label_c02">vc_narration_characall_dark_sonic</hash40>
+  <hash40 hash="characall_label_c03">vc_narration_characall_super_sonic</hash40>
+</struct>
+""",
+        encoding="utf-8",
+    )
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    seen_labels = []
+
+    def resolver(info):
+        seen_labels.extend(option.label for option in info.options)
+        return [option.option_id for option in info.options]
+
+    summary = import_mod_package(source, mods_path, multi_slot_pack_resolver=resolver)
+
+    assert summary.items_imported == 2
+    assert seen_labels == [
+        "Dark Sonic (sonic c02)",
+        "Super Sonic (sonic c03)",
+    ]
+
+
+def test_import_mod_package_hides_css_only_pseudo_fighters_when_metadata_labels_real_slots(tmp_path: Path):
+    source = tmp_path / "downloads" / "Nazo Pack"
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"ui3")
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_04.bntx").write_bytes(b"ui4")
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_nazo_00.bntx").write_bytes(b"css0")
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_nazo_01.bntx").write_bytes(b"css1")
+    (source / "ui" / "message").mkdir(parents=True)
+    (source / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_03_sonic">
+    <text>Nazo</text>
+  </entry>
+  <entry label="nam_chr1_04_sonic">
+    <text>Wrath of Nazo</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
+
+    analysis = analyze_mod_directory(source, [source.name])
+    options = _build_multi_slot_pack_options(source, analysis)
+
+    assert [option.option_id for option in options] == ["sonic:c03", "sonic:c04"]
 
 
 def test_import_mod_package_moves_incoming_skin_to_open_slot_by_default(tmp_path: Path):
