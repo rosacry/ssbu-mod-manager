@@ -98,6 +98,19 @@ _MODEL_CORE_FILENAMES = frozenset({
     "model.numshexb",
     "model.nusktb",
 })
+_STANDARD_BODY_TEXTURE_PREFIXES = (
+    "def_{fighter}_",
+    "alp_{fighter}_",
+    "eye_{fighter}_",
+    "eye_r_{fighter}_",
+)
+_FIGHTER_WEAPON_SUPPORT_RULES: dict[str, dict[str, tuple[str, ...] | tuple[bytes, ...]]] = {
+    "cloud": {
+        "model_markers": (b"bastar_sword_", b"def_cloud_004"),
+        "weapon_dirs": ("fusionsword",),
+        "body_prefixes": ("def_cloud_004",),
+    },
+}
 
 
 @dataclass
@@ -691,6 +704,9 @@ def repair_installed_mods(
             summary.configs_updated += 1
             changed_mods.add(mod_root.name)
         elif before_payload_text is None and before_json_exists and after_payload_text is not None:
+            summary.configs_updated += 1
+            changed_mods.add(mod_root.name)
+        elif before_payload_text is not None and after_payload_text is None and before_json_exists and not after_json_exists:
             summary.configs_updated += 1
             changed_mods.add(mod_root.name)
 
@@ -2298,7 +2314,7 @@ def _repair_imported_mod_metadata(
             merged_config = _merge_minimal_slot_manifest(existing_config, minimal_manifest)
             sanitized_config = _sanitize_config_payload_paths(dest_root, merged_config)
             if sanitized_config != existing_config or not (dest_root / "config.json").exists():
-                _write_config_json(dest_root / "config.json", sanitized_config)
+                _write_or_remove_config_json(dest_root / "config.json", sanitized_config)
         if not (dest_root / "config.json").exists():
             fallback = _build_minimal_slot_effect_config(dest_root)
             if fallback is not None:
@@ -2310,7 +2326,7 @@ def _repair_imported_mod_metadata(
         merged_existing = _merge_minimal_slot_manifest(existing_config, minimal_manifest)
         sanitized_existing = _sanitize_config_payload_paths(dest_root, merged_existing)
         if sanitized_existing != existing_config or not (dest_root / "config.json").exists():
-            _write_config_json(dest_root / "config.json", sanitized_existing)
+            _write_or_remove_config_json(dest_root / "config.json", sanitized_existing)
         if _config_payload_has_existing_files(dest_root, sanitized_existing):
             return
 
@@ -2329,7 +2345,7 @@ def _repair_imported_mod_metadata(
     else:
         repaired = _merge_minimal_slot_manifest(repaired, minimal_manifest)
     if repaired is not None:
-        _write_config_json(dest_root / "config.json", _sanitize_config_payload_paths(dest_root, repaired))
+        _write_or_remove_config_json(dest_root / "config.json", _sanitize_config_payload_paths(dest_root, repaired))
 
 
 def _normalize_legacy_config_filename(mod_root: Path) -> None:
@@ -2362,6 +2378,16 @@ def _write_config_json(config_path: Path, payload: dict) -> None:
     config_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
 
 
+def _write_or_remove_config_json(config_path: Path, payload: dict) -> None:
+    if _config_payload_has_any_entries(payload):
+        _write_config_json(config_path, payload)
+        return
+    try:
+        config_path.unlink()
+    except FileNotFoundError:
+        return
+
+
 def _sanitize_config_payload_paths(mod_root: Path, payload: dict) -> dict:
     sanitized: dict[str, object] = {}
     for key, value in payload.items():
@@ -2381,6 +2407,9 @@ def _sanitize_config_payload_paths(mod_root: Path, payload: dict) -> dict:
             alias_text = str(alias or "").replace("\\", "/")
             if not isinstance(values, list):
                 continue
+            alias_matches = iter_slot_matches(alias_text)
+            alias_fighter = alias_matches[0][0] if alias_matches else None
+            alias_slot = alias_matches[0][1] if alias_matches else None
             filtered_values: list[str] = []
             seen: set[str] = set()
             for item in values:
@@ -2388,6 +2417,9 @@ def _sanitize_config_payload_paths(mod_root: Path, payload: dict) -> dict:
                 if not rel or rel in seen:
                     continue
                 if (Path(mod_root) / rel).exists():
+                    if alias_fighter is not None and alias_slot is not None:
+                        if _is_unnecessary_base_slot_manifest_path(rel, alias_fighter, alias_slot):
+                            continue
                     filtered_values.append(rel)
                     seen.add(rel)
             if filtered_values or len(values) == 0:
@@ -2460,6 +2492,34 @@ def _config_payload_has_existing_files(mod_root: Path, payload: dict) -> bool:
                 if not (Path(mod_root) / rel).exists():
                     return False
     return found_any
+
+
+def _config_payload_has_any_entries(payload: dict | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    for key in (
+        "new-dir-files",
+        "new_dir_files",
+        "share-to-vanilla",
+        "share_to_vanilla",
+        "share-to-added",
+        "share_to_added",
+    ):
+        section = payload.get(key)
+        if isinstance(section, dict) and any(section.values()):
+            return True
+    other_keys = [
+        key for key in payload
+        if key not in {
+            "new-dir-files",
+            "new_dir_files",
+            "share-to-vanilla",
+            "share_to_vanilla",
+            "share-to-added",
+            "share_to_added",
+        }
+    ]
+    return bool(other_keys)
 
 
 def _build_repaired_visual_slot_config(
@@ -2668,6 +2728,8 @@ def _build_minimal_slot_effect_config(
             continue
         rel = str(file_path.relative_to(dest_root)).replace("\\", "/")
         if _is_fighter_slot_manifest_file(rel, resolved_fighter, resolved_slot):
+            if _is_unnecessary_base_slot_manifest_path(rel, resolved_fighter, resolved_slot):
+                continue
             fighter_paths.append(rel)
             continue
         if _is_effect_file_for_fighter_slot(rel, resolved_fighter, resolved_slot) or (
@@ -2703,6 +2765,28 @@ def _is_fighter_slot_manifest_file(relative_path: str, fighter: str, slot: int) 
     if f"fighter/{fighter_name}/model/" not in rel and f"fighter/{fighter_name}/motion/" not in rel:
         return False
     return _config_path_targets_slot(rel, fighter_name, int(slot))
+
+
+def _is_unnecessary_base_slot_manifest_path(relative_path: str, fighter: str, slot: int) -> bool:
+    if int(slot) > 7:
+        return False
+    rel = relative_path.replace("\\", "/").lower()
+    fighter_name = str(fighter or "").lower()
+    if _is_voice_file_for_fighter_slot(rel, fighter_name, int(slot)):
+        return True
+    motion_prefix = f"fighter/{fighter_name}/motion/body/c{int(slot):02d}/"
+    if rel.startswith(motion_prefix):
+        return True
+    body_prefix = f"fighter/{fighter_name}/model/body/c{int(slot):02d}/"
+    if not rel.startswith(body_prefix):
+        return False
+    filename = Path(rel).name.lower()
+    if filename in _MODEL_CORE_FILENAMES:
+        return True
+    for template in _STANDARD_BODY_TEXTURE_PREFIXES:
+        if filename.startswith(template.format(fighter=fighter_name)):
+            return True
+    return False
 
 
 def _replace_path_segment_token(path: str, source_token: str, target_token: str) -> str:
@@ -2795,13 +2879,14 @@ def _quarantine_suspicious_partial_fighter_pack(
     summary: InstalledModsRepairSummary,
 ) -> bool:
     issues = _find_suspicious_partial_fighter_bundle_issues(mod_root, analysis)
+    issues.extend(_find_missing_weapon_support_issues(mod_root, analysis))
     if not issues:
         return False
     dest = _move_mod_to_disabled_dir(mods_path, mod_root.name)
     if dest is None:
         return False
     summary.warnings.append(
-        f"Disabled suspicious partial fighter mod '{mod_root.name}' because it contains an incomplete model bundle: "
+        f"Disabled suspicious fighter mod '{mod_root.name}' because it contains an unsafe model bundle: "
         f"{'; '.join(issues)}. It was moved to 'disabled_mods/{dest.name}'."
     )
     return True
@@ -2833,6 +2918,85 @@ def _find_suspicious_partial_fighter_bundle_issues(mod_root: Path, analysis: Slo
                 f"{fighter} c{int(slot):02d} is missing {', '.join(missing_core)}"
             )
     return issues
+
+
+def _find_missing_weapon_support_issues(mod_root: Path, analysis: SlotAnalysis) -> list[str]:
+    issues: list[str] = []
+    for fighter, slots in analysis.visual_fighter_slots.items():
+        rule = _FIGHTER_WEAPON_SUPPORT_RULES.get(str(fighter).lower())
+        if not rule:
+            continue
+        for slot in slots:
+            body_dir = mod_root / "fighter" / fighter / "model" / "body" / f"c{int(slot):02d}"
+            if not body_dir.exists() or not body_dir.is_dir():
+                continue
+            if not _body_model_references_weapon_support(body_dir, rule):
+                continue
+            if _has_matching_weapon_support(mod_root, fighter, int(slot), body_dir, rule):
+                continue
+            issues.append(
+                f"{fighter} c{int(slot):02d} references weapon assets but does not include matching weapon support files"
+            )
+    return issues
+
+
+def _body_model_references_weapon_support(
+    body_dir: Path,
+    rule: dict[str, tuple[str, ...] | tuple[bytes, ...]],
+) -> bool:
+    markers = tuple(rule.get("model_markers", ()))
+    if not markers:
+        return False
+    for filename in ("model.numatb", "model.numdlb"):
+        if _file_contains_any_marker(body_dir / filename, markers):
+            return True
+    return False
+
+
+def _has_matching_weapon_support(
+    mod_root: Path,
+    fighter: str,
+    slot: int,
+    body_dir: Path,
+    rule: dict[str, tuple[str, ...] | tuple[bytes, ...]],
+) -> bool:
+    body_prefixes = tuple(
+        str(prefix).lower()
+        for prefix in rule.get("body_prefixes", ())
+    )
+    if body_prefixes:
+        for child in body_dir.iterdir():
+            if not child.is_file():
+                continue
+            name = child.name.lower()
+            if any(name.startswith(prefix) for prefix in body_prefixes):
+                return True
+
+    for weapon_dir_name in rule.get("weapon_dirs", ()):
+        weapon_dir = mod_root / "fighter" / fighter / "model" / str(weapon_dir_name) / f"c{int(slot):02d}"
+        if _dir_has_any_files(weapon_dir):
+            return True
+    return False
+
+
+def _file_contains_any_marker(path: Path, markers: tuple[bytes, ...]) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    lowered = data.lower()
+    return any(marker.lower() in lowered for marker in markers)
+
+
+def _dir_has_any_files(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+    for child in path.rglob("*"):
+        if child.is_file():
+            return True
+    return False
 
 
 def _has_non_body_fighter_model_content(mod_root: Path, fighter: str, slot: int) -> bool:

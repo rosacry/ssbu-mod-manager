@@ -902,7 +902,7 @@ def test_import_mod_package_synthesizes_config_for_generic_fighter_effect_files(
 
     source = tmp_path / "downloads" / "Super Sonic Over Cloud"
     (source / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
-    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "model.bin").write_bytes(b"skin")
+    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numshb").write_bytes(b"skin")
     (source / "ui" / "replace" / "chara" / "chara_1").mkdir(parents=True)
     (source / "ui" / "replace" / "chara" / "chara_1" / "chara_1_cloud_00.bntx").write_bytes(b"ui")
     (source / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
@@ -916,7 +916,6 @@ def test_import_mod_package_synthesizes_config_for_generic_fighter_effect_files(
     assert payload == {
         "new-dir-files": {
             "fighter/cloud/c02": [
-                "fighter/cloud/model/body/c02/model.bin",
                 "effect/fighter/cloud/ef_cloud.eff",
                 "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
             ]
@@ -948,12 +947,6 @@ def test_import_mod_package_synthesizes_config_for_slot_specific_fighter_files_w
         "new-dir-files": {
             "fighter/cloud/c00": [
                 "fighter/cloud/model/body/c00/egle001_body_col.nutexb",
-                "fighter/cloud/model/body/c00/model.nuhlpb",
-                "fighter/cloud/model/body/c00/model.numatb",
-                "fighter/cloud/model/body/c00/model.numdlb",
-                "fighter/cloud/model/body/c00/model.numshb",
-                "fighter/cloud/model/body/c00/model.numshexb",
-                "fighter/cloud/model/body/c00/model.nusktb",
             ]
         }
     }
@@ -991,16 +984,7 @@ def test_import_mod_package_repairs_same_slot_visual_config_with_missing_entries
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     import_mod_package(source, mods_path)
 
-    payload = json.loads((mods_path / "Skadi Byleth" / "config.json").read_text(encoding="utf-8"))
-    assert payload == {
-        "new_dir_files": {
-            "fighter/master/c03": [
-                "fighter/master/model/body/c03/alp_master_female_002_emi.nutexb",
-                "fighter/master/model/body/c03/def_master_female_001_emi.nutexb",
-                "fighter/master/model/body/c03/def_master_female_002_emi.nutexb",
-            ]
-        }
-    }
+    assert not (mods_path / "Skadi Byleth" / "config.json").exists()
 
 
 def test_import_mod_package_sanitizes_non_visual_config_references_to_missing_files(tmp_path: Path):
@@ -1053,7 +1037,7 @@ def test_repair_installed_mods_normalizes_configs_and_synthesizes_missing_effect
 
     cloud = mods_path / "Super Sonic Over Cloud"
     (cloud / "fighter" / "cloud" / "model" / "body" / "c06").mkdir(parents=True)
-    (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / "model.bin").write_bytes(b"skin")
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / "model.numshb").write_bytes(b"skin")
     (cloud / "ui" / "replace" / "chara" / "chara_1").mkdir(parents=True)
     (cloud / "ui" / "replace" / "chara" / "chara_1" / "chara_1_cloud_06.bntx").write_bytes(b"ui")
     (cloud / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
@@ -1070,7 +1054,6 @@ def test_repair_installed_mods_normalizes_configs_and_synthesizes_missing_effect
     assert json.loads((cloud / "config.json").read_text(encoding="utf-8")) == {
         "new-dir-files": {
             "fighter/cloud/c06": [
-                "fighter/cloud/model/body/c06/model.bin",
                 "effect/fighter/cloud/ef_cloud.eff",
                 "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
             ]
@@ -1108,20 +1091,40 @@ def test_repair_installed_mods_merges_existing_slot_manifest_with_missing_fighte
 
     summary = repair_installed_mods(mods_path)
 
-    assert summary.configs_updated == 1
+    assert summary.configs_updated == 0
     assert json.loads((cloud / "config.json").read_text(encoding="utf-8")) == {
         "new-dir-files": {
             "fighter/cloud/c06": [
                 "effect/fighter/cloud/ef_cloud.eff",
-                "fighter/cloud/model/body/c06/model.nuhlpb",
-                "fighter/cloud/model/body/c06/model.numatb",
-                "fighter/cloud/model/body/c06/model.numdlb",
-                "fighter/cloud/model/body/c06/model.numshb",
-                "fighter/cloud/model/body/c06/model.numshexb",
-                "fighter/cloud/model/body/c06/model.nusktb",
             ]
         }
     }
+
+
+def test_repair_installed_mods_removes_unnecessary_visual_only_base_slot_config(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    cloud = mods_path / "Mihawk"
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c00" / "def_cloud_001_col.nutexb").write_bytes(b"tex")
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numshb").write_bytes(b"mesh")
+    (cloud / "config.json").write_text(
+        json.dumps(
+            {
+                "new-dir-files": {
+                    "fighter/cloud/c00": [
+                        "fighter/cloud/model/body/c00/def_cloud_001_col.nutexb",
+                        "fighter/cloud/model/body/c00/model.numshb",
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.configs_updated == 1
+    assert not (cloud / "config.json").exists()
 
 
 def test_repair_installed_mods_prunes_support_overlap_when_visual_mod_should_win(tmp_path: Path):
@@ -1308,7 +1311,59 @@ def test_repair_installed_mods_disables_suspicious_partial_fighter_bundle(tmp_pa
     assert summary.mods_changed == 1
     assert not mod_root.exists()
     assert disabled.exists()
-    assert any("Disabled suspicious partial fighter mod 'Cloud Shadow'" in warning for warning in summary.warnings)
+    assert any("Disabled suspicious fighter mod 'Cloud Shadow'" in warning for warning in summary.warnings)
+
+
+def test_repair_installed_mods_disables_cloud_bundle_missing_weapon_support(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "crossworlds_miku"
+    body = mod_root / "fighter" / "cloud" / "model" / "body" / "c01"
+    body.mkdir(parents=True)
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"LTAM def_cloud_001_col",
+        "model.numdlb": b"LDOM bastar_sword_R_VIS_O_OBJShape",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (body / filename).write_bytes(payload)
+    (body / "def_cloud_001_col.nutexb").write_bytes(b"tex")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_01.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    disabled = mods_path.parent / "disabled_mods" / "crossworlds_miku"
+    assert summary.mods_changed == 1
+    assert not mod_root.exists()
+    assert disabled.exists()
+    assert any("references weapon assets but does not include matching weapon support files" in warning for warning in summary.warnings)
+
+
+def test_repair_installed_mods_keeps_cloud_bundle_with_matching_weapon_support(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Super Sonic Over Cloud"
+    body = mod_root / "fighter" / "cloud" / "model" / "body" / "c06"
+    body.mkdir(parents=True)
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"LTAM def_cloud_004_col",
+        "model.numdlb": b"LDOM bastar_sword_R_VIS_O_OBJShape",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (body / filename).write_bytes(payload)
+    (body / "def_cloud_004_col.nutexb").write_bytes(b"sword-tex")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_06.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert mod_root.exists()
+    assert not (mods_path.parent / "disabled_mods" / "Super Sonic Over Cloud").exists()
+    assert not any("Super Sonic Over Cloud" in warning for warning in summary.warnings)
 
 
 def test_repair_installed_mods_keeps_partial_but_multi_core_model_bundle(tmp_path: Path):
