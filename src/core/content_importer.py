@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 import re
 import shutil
@@ -37,6 +38,7 @@ _INVALID_NAME_CHARS = set('<>:"/\\|?*')
 _SUPPORT_BACKUP_DIR_NAME = "_import_backups"
 _METADATA_FILENAMES = {
     "config.json",
+    "config.txt",
     "info.toml",
     "preview.webp",
     "preview.png",
@@ -144,6 +146,9 @@ class _PreparedModImport:
     target_name: str
     package_name: str
     analysis: SlotAnalysis
+    config_source_dir: Path | None = None
+    config_source_fighter: str | None = None
+    config_source_slot: int | None = None
     temp_paths: list[tempfile.TemporaryDirectory] = field(default_factory=list)
 
 
@@ -379,11 +384,18 @@ def import_mod_package(
             src = prepared.source_dir
             target_name = prepared.target_name
             analysis = prepared.analysis
+            config_source_dir = prepared.config_source_dir or prepared.source_dir
+            config_source_fighter = prepared.config_source_fighter
+            config_source_slot = prepared.config_source_slot
+            final_fighter: str | None = None
+            final_slot: int | None = None
 
             if analysis.has_visual_skin_slot:
                 fighter = str(analysis.primary_fighter)
                 source_slot = int(analysis.primary_slot)
                 target_slot = source_slot
+                final_fighter = fighter
+                final_slot = target_slot
                 source_display_name = _resolve_visual_slot_display_name(
                     src,
                     fighter,
@@ -498,6 +510,7 @@ def import_mod_package(
                         f"Imported '{target_name}' as {target_slot_text} "
                         f"instead of {source_slot_text} to avoid a slot overlap."
                     )
+                final_slot = target_slot
 
             _resolve_support_path_conflicts(src, target_name, mods_path, summary)
 
@@ -509,6 +522,14 @@ def import_mod_package(
             _copy_dir_replace(src, dest, summary)
             summary.items_imported += 1
             summary.files_copied += _count_files(dest)
+
+            _repair_imported_mod_metadata(
+                dest,
+                config_source_dir=config_source_dir,
+                fighter=final_fighter or config_source_fighter,
+                source_slot=config_source_slot,
+                target_slot=final_slot,
+            )
 
             if analysis.has_visual_skin_slot:
                 fighter = str(analysis.primary_fighter)
@@ -764,6 +785,9 @@ def _append_prepared_visual_variants(
                         target_name=target_name,
                         package_name=package_name,
                         analysis=analyze_mod_directory(variant_root, [package_name, target_name]),
+                        config_source_dir=source_dir,
+                        config_source_fighter=str(fighter),
+                        config_source_slot=int(slot),
                         temp_paths=[*base_temp_paths, variant_temp],
                     )
                 )
@@ -778,6 +802,9 @@ def _append_prepared_visual_variants(
                 target_name=target_name,
                 package_name=package_name,
                 analysis=analysis,
+                config_source_dir=source_dir,
+                config_source_fighter=str(analysis.primary_fighter) if analysis.primary_fighter else None,
+                config_source_slot=int(analysis.primary_slot) if analysis.primary_slot is not None else None,
                 temp_paths=list(base_temp_paths),
             )
         )
@@ -845,6 +872,9 @@ def _append_prepared_visual_variants(
                 target_name=variant_root_name,
                 package_name=package_name,
                 analysis=variant_analysis,
+                config_source_dir=source_dir,
+                config_source_fighter=str(option.fighter),
+                config_source_slot=int(option.slot),
                 temp_paths=[*base_temp_paths, variant_temp],
             )
         )
@@ -1719,6 +1749,367 @@ def _retarget_support_relative_path(
     if normalized_kind == "camera":
         return _retarget_camera_relative_path(relative_path, source_slot, target_slot)
     return _retarget_effect_relative_path(relative_path, source_slot, target_slot)
+
+
+def _repair_imported_mod_metadata(
+    dest_root: Path,
+    config_source_dir: Path | None = None,
+    fighter: str | None = None,
+    source_slot: int | None = None,
+    target_slot: int | None = None,
+) -> None:
+    dest_root = Path(dest_root)
+    _normalize_legacy_config_filename(dest_root)
+    existing_config = _load_optional_mod_config(dest_root)
+
+    normalized_fighter = str(fighter or "").lower().strip() or None
+    if normalized_fighter is None or source_slot is None or target_slot is None:
+        if existing_config is not None:
+            sanitized_config = _sanitize_config_payload_paths(dest_root, existing_config)
+            if sanitized_config != existing_config or not (dest_root / "config.json").exists():
+                _write_config_json(dest_root / "config.json", sanitized_config)
+        if not (dest_root / "config.json").exists():
+            fallback = _build_minimal_slot_effect_config(dest_root)
+            if fallback is not None:
+                _write_config_json(dest_root / "config.json", fallback)
+        return
+
+    if existing_config is not None and int(source_slot) == int(target_slot):
+        if _config_payload_has_existing_files(dest_root, existing_config):
+            return
+
+    source_config = _load_optional_mod_config(Path(config_source_dir or dest_root))
+    repaired = None
+    if source_config is not None:
+        repaired = _build_repaired_visual_slot_config(
+            dest_root,
+            source_config,
+            normalized_fighter,
+            int(source_slot),
+            int(target_slot),
+        )
+    if repaired is None:
+        repaired = _build_minimal_slot_effect_config(dest_root, normalized_fighter, int(target_slot))
+    if repaired is not None:
+        _write_config_json(dest_root / "config.json", _sanitize_config_payload_paths(dest_root, repaired))
+
+
+def _normalize_legacy_config_filename(mod_root: Path) -> None:
+    config_json = mod_root / "config.json"
+    config_txt = mod_root / "config.txt"
+    if config_json.exists() or not config_txt.exists():
+        return
+    try:
+        json.loads(config_txt.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    config_txt.rename(config_json)
+
+
+def _load_optional_mod_config(mod_root: Path) -> dict | None:
+    for filename in ("config.json", "config.txt"):
+        config_path = Path(mod_root) / filename
+        if not config_path.is_file():
+            continue
+        try:
+            parsed = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _write_config_json(config_path: Path, payload: dict) -> None:
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+
+
+def _sanitize_config_payload_paths(mod_root: Path, payload: dict) -> dict:
+    sanitized: dict[str, object] = {}
+    for key, value in payload.items():
+        if key not in {
+            "new-dir-files",
+            "new_dir_files",
+            "share-to-vanilla",
+            "share_to_vanilla",
+            "share-to-added",
+            "share_to_added",
+        } or not isinstance(value, dict):
+            sanitized[key] = value
+            continue
+
+        sanitized_section: dict[str, list[str]] = {}
+        for alias, values in value.items():
+            alias_text = str(alias or "").replace("\\", "/")
+            if not isinstance(values, list):
+                continue
+            filtered_values: list[str] = []
+            seen: set[str] = set()
+            for item in values:
+                rel = str(item or "").replace("\\", "/").strip()
+                if not rel or rel in seen:
+                    continue
+                if (Path(mod_root) / rel).exists():
+                    filtered_values.append(rel)
+                    seen.add(rel)
+            if filtered_values or len(values) == 0:
+                sanitized_section[alias_text] = filtered_values
+        sanitized[key] = sanitized_section
+    return sanitized
+
+
+def _config_payload_has_existing_files(mod_root: Path, payload: dict) -> bool:
+    found_any = False
+    for key in (
+        "new-dir-files",
+        "new_dir_files",
+        "share-to-vanilla",
+        "share_to_vanilla",
+        "share-to-added",
+        "share_to_added",
+    ):
+        section = payload.get(key)
+        if not isinstance(section, dict):
+            continue
+        for values in section.values():
+            if not isinstance(values, list):
+                continue
+            for item in values:
+                rel = str(item or "").replace("\\", "/").strip()
+                if not rel:
+                    continue
+                found_any = True
+                if not (Path(mod_root) / rel).exists():
+                    return False
+    return found_any
+
+
+def _build_repaired_visual_slot_config(
+    dest_root: Path,
+    source_config: dict,
+    fighter: str,
+    source_slot: int,
+    target_slot: int,
+) -> dict | None:
+    repaired: dict[str, object] = {}
+
+    source_new_dir = (
+        source_config.get("new-dir-files")
+        if isinstance(source_config.get("new-dir-files"), dict)
+        else source_config.get("new_dir_files")
+        if isinstance(source_config.get("new_dir_files"), dict)
+        else {}
+    )
+    repaired_new_dir = _repair_config_new_dir_files(
+        dest_root,
+        source_new_dir,
+        fighter,
+        source_slot,
+        target_slot,
+    )
+    if repaired_new_dir:
+        key_name = "new-dir-files" if "new-dir-files" in source_config else "new_dir_files"
+        repaired[key_name] = repaired_new_dir
+
+    for source_key, repaired_key in (
+        ("share-to-vanilla", "share-to-vanilla"),
+        ("share_to_vanilla", "share_to_vanilla"),
+        ("share-to-added", "share-to-added"),
+        ("share_to_added", "share_to_added"),
+    ):
+        section = source_config.get(source_key)
+        if not isinstance(section, dict):
+            continue
+        repaired_section = _repair_config_alias_map(
+            dest_root,
+            section,
+            fighter,
+            source_slot,
+            target_slot,
+        )
+        if repaired_section:
+            repaired[repaired_key] = repaired_section
+
+    return repaired or None
+
+
+def _repair_config_new_dir_files(
+    dest_root: Path,
+    section: dict,
+    fighter: str,
+    source_slot: int,
+    target_slot: int,
+) -> dict[str, list[str]]:
+    repaired: dict[str, list[str]] = {}
+    for key, values in section.items():
+        key_text = str(key or "").replace("\\", "/")
+        if not _config_path_targets_slot(key_text, fighter, source_slot):
+            continue
+        new_key = _retarget_visual_config_path(key_text, fighter, source_slot, target_slot)
+        repaired_values = _repair_config_value_list(
+            dest_root,
+            values,
+            fighter,
+            source_slot,
+            target_slot,
+        )
+        if repaired_values:
+            repaired[new_key] = repaired_values
+    return repaired
+
+
+def _repair_config_alias_map(
+    dest_root: Path,
+    section: dict,
+    fighter: str,
+    source_slot: int,
+    target_slot: int,
+) -> dict[str, list[str]]:
+    repaired: dict[str, list[str]] = {}
+    for key, values in section.items():
+        key_text = _retarget_visual_config_path(str(key or "").replace("\\", "/"), fighter, source_slot, target_slot)
+        repaired_values = _repair_config_value_list(
+            dest_root,
+            values,
+            fighter,
+            source_slot,
+            target_slot,
+        )
+        if repaired_values:
+            repaired[key_text] = repaired_values
+    return repaired
+
+
+def _repair_config_value_list(
+    dest_root: Path,
+    values: object,
+    fighter: str,
+    source_slot: int,
+    target_slot: int,
+) -> list[str]:
+    repaired: list[str] = []
+    seen: set[str] = set()
+    for item in values if isinstance(values, list) else []:
+        path_text = _retarget_visual_config_path(str(item or "").replace("\\", "/"), fighter, source_slot, target_slot)
+        if not path_text or path_text in seen:
+            continue
+        if _ensure_config_path_available(dest_root, path_text, fighter, source_slot, target_slot):
+            repaired.append(path_text)
+            seen.add(path_text)
+    return repaired
+
+
+def _config_path_targets_slot(path: str, fighter: str, slot: int) -> bool:
+    fighter_name = str(fighter or "").lower()
+    slot_token = f"c{int(slot):02d}"
+    normalized = str(path or "").replace("\\", "/").lower()
+    matches = iter_slot_matches(normalized)
+    if matches:
+        return any(match_fighter == fighter_name and int(match_slot) == int(slot) for match_fighter, match_slot in matches)
+    return fighter_name in normalized and slot_token in normalized
+
+
+def _retarget_visual_config_path(path: str, fighter: str, source_slot: int, target_slot: int) -> str:
+    rel = str(path or "").replace("\\", "/")
+    lower = rel.lower()
+    fighter_name = str(fighter or "").lower()
+    if not rel:
+        return rel
+    if lower.startswith(f"fighter/{fighter_name}/") or lower.startswith(f"camera/fighter/{fighter_name}/"):
+        return _replace_path_segment_token(rel, f"c{int(source_slot):02d}", f"c{int(target_slot):02d}")
+    if lower.startswith("sound/bank/fighter_voice/") or lower.startswith("sound/bank/fighter/"):
+        return _retarget_voice_relative_path(rel, source_slot, target_slot)
+    if lower.startswith("ui/replace/chara/") or lower.startswith("ui/replace_patch/chara/"):
+        return re.sub(
+            rf"(?i)_{int(source_slot):02d}(?=\.bntx$)",
+            f"_{int(target_slot):02d}",
+            rel,
+        )
+    if lower.startswith(f"effect/fighter/{fighter_name}/"):
+        return _retarget_effect_relative_path(rel, source_slot, target_slot)
+    return rel
+
+
+def _ensure_config_path_available(
+    dest_root: Path,
+    relative_path: str,
+    fighter: str,
+    source_slot: int,
+    target_slot: int,
+) -> bool:
+    target = Path(dest_root) / relative_path
+    if target.exists():
+        return True
+
+    normalized = relative_path.replace("\\", "/").lower()
+    fighter_name = str(fighter or "").lower()
+    if not normalized.startswith(f"effect/fighter/{fighter_name}/"):
+        return False
+
+    source_variant = _retarget_effect_relative_path(relative_path, target_slot, source_slot)
+    source_name = Path(source_variant).name
+    target_name = Path(relative_path).name
+    fallback_candidates = [
+        Path(dest_root) / source_variant,
+        Path(dest_root) / f"fighter/{fighter_name}/{target_name}",
+        Path(dest_root) / f"fighter/{fighter_name}/{source_name}",
+        Path(dest_root) / f"effect/fighter/{fighter_name}/{source_name}",
+    ]
+    if "/trail_c" in normalized:
+        fallback_candidates.extend([
+            Path(dest_root) / f"fighter/{fighter_name}/trail/{target_name}",
+            Path(dest_root) / f"effect/fighter/{fighter_name}/trail/{target_name}",
+        ])
+
+    for candidate in fallback_candidates:
+        if not candidate.exists() or not candidate.is_file():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(candidate, target)
+        return True
+    return False
+
+
+def _build_minimal_slot_effect_config(
+    dest_root: Path,
+    fighter: str | None = None,
+    target_slot: int | None = None,
+) -> dict | None:
+    analysis = analyze_mod_directory(dest_root, [dest_root.name])
+    resolved_fighter = str(fighter or analysis.primary_fighter or "").lower().strip() or None
+    resolved_slot = int(target_slot) if target_slot is not None else (
+        int(analysis.primary_slot) if analysis.primary_slot is not None else None
+    )
+    if resolved_fighter is None or resolved_slot is None:
+        return None
+
+    effect_paths: list[str] = []
+    for file_path in sorted(dest_root.rglob("*")):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(dest_root)).replace("\\", "/")
+        if _is_effect_file_for_fighter_slot(rel, resolved_fighter, resolved_slot) or (
+            _is_generic_effect_file_for_fighter(rel, resolved_fighter)
+        ):
+            effect_paths.append(rel)
+    if not effect_paths:
+        return None
+    return {
+        "new-dir-files": {
+            f"fighter/{resolved_fighter}/c{resolved_slot:02d}": effect_paths,
+        }
+    }
+
+
+def _is_generic_effect_file_for_fighter(relative_path: str, fighter: str) -> bool:
+    rel = relative_path.replace("\\", "/").lower()
+    fighter_name = str(fighter or "").lower()
+    prefix = f"effect/fighter/{fighter_name}/"
+    if not rel.startswith(prefix):
+        return False
+    if _is_effect_file_for_fighter_slot(rel, fighter_name):
+        return False
+    return True
 
 
 def _replace_path_segment_token(path: str, source_token: str, target_token: str) -> str:

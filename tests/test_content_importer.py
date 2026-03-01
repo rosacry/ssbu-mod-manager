@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import zipfile
 
@@ -801,6 +802,198 @@ def test_slot_analysis_detects_effect_only_slot_without_marking_visual() -> None
     assert analysis.fighter_slots == {"sonic": [7]}
     assert analysis.visual_fighter_slots == {}
     assert not analysis.has_visual_skin_slot
+
+
+def test_import_mod_package_normalizes_legacy_config_txt_to_config_json(tmp_path: Path):
+    source = tmp_path / "downloads" / "Mario White"
+    (source / "fighter" / "mario" / "model" / "body" / "c07").mkdir(parents=True)
+    (source / "fighter" / "mario" / "model" / "body" / "c07" / "model.bin").write_bytes(b"skin")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_07.bntx").write_bytes(b"ui")
+    (source / "effect" / "fighter" / "mario").mkdir(parents=True)
+    (source / "effect" / "fighter" / "mario" / "ef_mario_c07.eff").write_bytes(b"effect")
+    (source / "config.txt").write_text(
+        json.dumps(
+            {
+                "new-dir-files": {
+                    "fighter/mario/c07": [
+                        "effect/fighter/mario/ef_mario_c07.eff",
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    import_mod_package(source, mods_path)
+
+    config_path = mods_path / "Mario White" / "config.json"
+    assert config_path.exists()
+    assert not (mods_path / "Mario White" / "config.txt").exists()
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "new-dir-files": {
+            "fighter/mario/c07": [
+                "effect/fighter/mario/ef_mario_c07.eff",
+            ]
+        }
+    }
+
+
+def test_import_mod_package_repairs_reslotted_visual_effect_manifest_from_source_config(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    for slot in (0, 2, 3, 4, 5, 6, 7):
+        existing = mods_path / f"Occupied Edge c{slot:02d}"
+        (existing / "fighter" / "edge" / "model" / "body" / f"c{slot:02d}").mkdir(parents=True)
+        (existing / "fighter" / "edge" / "model" / "body" / f"c{slot:02d}" / "model.bin").write_bytes(b"occupied")
+        (existing / "ui" / "replace_patch" / "chara" / "chara_0").mkdir(parents=True)
+        (existing / "ui" / "replace_patch" / "chara" / "chara_0" / f"chara_0_edge_{slot:02d}.bntx").write_bytes(b"ui")
+
+    source = tmp_path / "downloads" / "Sugeru Geto"
+    (source / "fighter" / "edge" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "edge" / "model" / "body" / "c03" / "model.bin").write_bytes(b"skin")
+    (source / "ui" / "replace_patch" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace_patch" / "chara" / "chara_0" / "chara_0_edge_03.bntx").write_bytes(b"ui")
+    (source / "Fighter" / "edge" / "trail").mkdir(parents=True)
+    (source / "Fighter" / "edge" / "ef_edge_c01.eff").write_bytes(b"effect")
+    (source / "Fighter" / "edge" / "trail" / "tex_edge_sword01.nutexb").write_bytes(b"trail")
+    (source / "config.json").write_text(
+        json.dumps(
+            {
+                "new-dir-files": {
+                    "fighter/edge/c03": [
+                        "effect/fighter/edge/ef_edge_c01.eff",
+                        "effect/fighter/edge/trail_c01/tex_edge_sword01.nutexb",
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = import_mod_package(source, mods_path, slot_conflict_resolver=lambda _conflict: "move_incoming")
+
+    assert summary.slot_reassignments == 1
+    dest = mods_path / "Sugeru Geto"
+    assert (dest / "fighter" / "edge" / "model" / "body" / "c01" / "model.bin").exists()
+    assert (dest / "effect" / "fighter" / "edge" / "ef_edge_c01.eff").exists()
+    assert (dest / "effect" / "fighter" / "edge" / "trail_c01" / "tex_edge_sword01.nutexb").exists()
+    assert json.loads((dest / "config.json").read_text(encoding="utf-8")) == {
+        "new-dir-files": {
+            "fighter/edge/c01": [
+                "effect/fighter/edge/ef_edge_c01.eff",
+                "effect/fighter/edge/trail_c01/tex_edge_sword01.nutexb",
+            ]
+        }
+    }
+
+
+def test_import_mod_package_synthesizes_config_for_generic_fighter_effect_files(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Occupied Cloud"
+    (existing / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
+    (existing / "fighter" / "cloud" / "model" / "body" / "c00" / "model.bin").write_bytes(b"occupied")
+    (existing / "ui" / "replace" / "chara" / "chara_1").mkdir(parents=True)
+    (existing / "ui" / "replace" / "chara" / "chara_1" / "chara_1_cloud_00.bntx").write_bytes(b"ui")
+
+    source = tmp_path / "downloads" / "Super Sonic Over Cloud"
+    (source / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
+    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "model.bin").write_bytes(b"skin")
+    (source / "ui" / "replace" / "chara" / "chara_1").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_1" / "chara_1_cloud_00.bntx").write_bytes(b"ui")
+    (source / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
+    (source / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"effect")
+    (source / "effect" / "fighter" / "cloud" / "trail" / "tex_cloud_sword1.nutexb").write_bytes(b"trail")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.slot_reassignments == 1
+    payload = json.loads((mods_path / "Super Sonic Over Cloud" / "config.json").read_text(encoding="utf-8"))
+    assert payload == {
+        "new-dir-files": {
+            "fighter/cloud/c02": [
+                "effect/fighter/cloud/ef_cloud.eff",
+                "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
+            ]
+        }
+    }
+
+
+def test_import_mod_package_repairs_same_slot_visual_config_with_missing_entries(tmp_path: Path):
+    source = tmp_path / "downloads" / "Skadi Byleth"
+    (source / "fighter" / "master" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "master" / "model" / "body" / "c03" / "alp_master_female_002_emi.nutexb").write_bytes(b"a")
+    (source / "fighter" / "master" / "model" / "body" / "c03" / "def_master_female_001_emi.nutexb").write_bytes(b"b")
+    (source / "fighter" / "master" / "model" / "body" / "c03" / "def_master_female_002_emi.nutexb").write_bytes(b"c")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_master_03.bntx").write_bytes(b"ui")
+    (source / "config.json").write_text(
+        json.dumps(
+            {
+                "new_dir_files": {
+                    "fighter/master/c01": [
+                        "fighter/master/model/body/c01/alp_master_female_002_emi.nutexb",
+                    ],
+                    "fighter/master/c03": [
+                        "fighter/master/model/body/c03/alp_master_female_002_emi.nutexb",
+                        "fighter/master/model/body/c03/def_master_female_001_emi.nutexb",
+                        "fighter/master/model/body/c03/def_master_female_002_emi.nutexb",
+                    ],
+                    "fighter/master/c05": [
+                        "fighter/master/model/body/c05/def_master_female_001_emi.nutexb",
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    import_mod_package(source, mods_path)
+
+    payload = json.loads((mods_path / "Skadi Byleth" / "config.json").read_text(encoding="utf-8"))
+    assert payload == {
+        "new_dir_files": {
+            "fighter/master/c03": [
+                "fighter/master/model/body/c03/alp_master_female_002_emi.nutexb",
+                "fighter/master/model/body/c03/def_master_female_001_emi.nutexb",
+                "fighter/master/model/body/c03/def_master_female_002_emi.nutexb",
+            ]
+        }
+    }
+
+
+def test_import_mod_package_sanitizes_non_visual_config_references_to_missing_files(tmp_path: Path):
+    source = tmp_path / "downloads" / "Eternal Heart"
+    (source / "stage" / "trail_castle" / "normal" / "model" / "ring_set").mkdir(parents=True)
+    (source / "stage" / "trail_castle" / "normal" / "model" / "ring_set" / "white_col.nutexb").write_bytes(b"tex")
+    (source / "config.json").write_text(
+        json.dumps(
+            {
+                "new-dir-files": {
+                    "stage/trail_castle/normal/model/ring_set": [
+                        "stage/trail_castle/normal/model/ring_set/white_col.nutexb",
+                        "stage/trail_castle/normal/model/ring_set/missing.nutexb",
+                    ],
+                    "stage/trail_castle/normal/model/empty_set": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    import_mod_package(source, mods_path)
+
+    payload = json.loads((mods_path / "Eternal Heart" / "config.json").read_text(encoding="utf-8"))
+    assert payload == {
+        "new-dir-files": {
+            "stage/trail_castle/normal/model/ring_set": [
+                "stage/trail_castle/normal/model/ring_set/white_col.nutexb",
+            ],
+            "stage/trail_castle/normal/model/empty_set": [],
+        }
+    }
 
 
 def test_import_plugin_package_from_atmosphere_tree(tmp_path: Path):

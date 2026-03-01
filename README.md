@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.8**.
+Current release version: **1.4.9**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -20,6 +20,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: multi-slot skin packs can now be split during import, with a picker that lets you import the recommended base skin, select individual slot variants, or bring in every form separately, and it shows friendly form names from `msg_name` / `ui_chara_db` metadata when the pack provides them.
   - Mods: skin-slot conflict prompts and overlap warnings now use friendly form names when metadata is available, and they call out which installed skin currently owns the slot plus which default slots remain open.
   - Mods: auto-pruned support-file and disabled-mod reporting now includes friendly form names plus the `_import_backups/...` or `disabled_mods/...` destination, and support-only metadata leftovers no longer keep an otherwise-pruned support pack enabled.
+  - Mods: import repair now normalizes legacy `config.txt` manifests to `config.json`, rebuilds reslotted slot-effect configs from the original source pack when available, synthesizes missing generic fighter-effect manifests for Cloud-style skins, and trims stale config entries that point at files not actually present in the installed mod.
   - Conflicts: scan results now surface friendly slot/form names inside conflict cards and fallback rows, and conflicting mod lists call out which form/slot each mod is touching instead of only showing raw file paths.
   - Conflicts: the Conflicts page now has a compact filter box plus a `By Type` / `By Fighter/Form/Slot` view switch, so large multi-form character setups can be reviewed by costume slot instead of only by file extension.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
@@ -62,7 +63,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.8-windows.zip`
+- `dist/SSBUModManager-1.4.9-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -90,9 +91,10 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Multi-slot visual packs now stop for a selection dialog during import, so you can choose specific slot variants instead of being forced into a single auto-picked skin, and metadata-backed form names like `Nazo` or `Hyper Perfect Nazo` are shown when available.
 - Mods import now distinguishes skin slots from slot-scoped support packs, so voice/effect-only Sonic-style packs can coexist with a skin on the same costume slot, and re-importing the same mod folder replaces it in place without a false self-conflict.
 - Mods import now auto-prunes exact support-file overlaps out of older support-only packs when a more specific imported override needs those paths, and reslotted imports with a slot token in the folder name are renamed to match their final slot.
+- Mods import now repairs broken mod manifests during install: legacy `config.txt` files are normalized to `config.json`, generic fighter-effect skins that ship without a manifest get one synthesized automatically, split/reslotted effect configs are rebuilt from the source pack, and stale config references to missing files are dropped before the mod is left active.
 - Skin-slot conflict prompts and overlap warnings now show metadata-backed form names where packs provide them, list the installed skin occupying the requested slot, and surface open default slots directly in the replace/move decision flow.
 - Auto-pruned support-pack warnings now call out the affected form names and backup folder path, and support-only packs that are reduced to metadata leftovers are moved into `disabled_mods` instead of staying falsely active.
-- Conflicts page scan results now show metadata-backed slot/form labels inside the conflict cards, fallback rows, and merge dialogs, and the dashboard’s quick text-conflict preview uses the same friendly conflict descriptions.
+- Conflicts page scan results now show metadata-backed slot/form labels inside the conflict cards, fallback rows, and merge dialogs, and the dashboard's quick text-conflict preview uses the same friendly conflict descriptions.
 - Conflicts page now includes a compact text filter plus a `By Fighter/Form/Slot` grouping mode, so costume-heavy setups can be reviewed by slot/form without losing the existing file-type view.
 - Plugin disable now moves binaries into a sibling `disabled_plugins` folder, and legacy `.nro.disabled` files are auto-migrated.
 - Page navigation now uses a very short settle mask during tab switches to hide first-frame partial rendering on heavier pages.
