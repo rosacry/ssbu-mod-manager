@@ -837,6 +837,7 @@ def test_import_mod_package_normalizes_legacy_config_txt_to_config_json(tmp_path
         "new-dir-files": {
             "fighter/mario/c07": [
                 "effect/fighter/mario/ef_mario_c07.eff",
+                "fighter/mario/model/body/c07/model.bin",
             ]
         }
     }
@@ -885,6 +886,7 @@ def test_import_mod_package_repairs_reslotted_visual_effect_manifest_from_source
             "fighter/edge/c01": [
                 "effect/fighter/edge/ef_edge_c01.eff",
                 "effect/fighter/edge/trail_c01/tex_edge_sword01.nutexb",
+                "fighter/edge/model/body/c01/model.bin",
             ]
         }
     }
@@ -914,8 +916,31 @@ def test_import_mod_package_synthesizes_config_for_generic_fighter_effect_files(
     assert payload == {
         "new-dir-files": {
             "fighter/cloud/c02": [
+                "fighter/cloud/model/body/c02/model.bin",
                 "effect/fighter/cloud/ef_cloud.eff",
                 "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
+            ]
+        }
+    }
+
+
+def test_import_mod_package_synthesizes_config_for_slot_specific_fighter_files_without_source_manifest(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    source = tmp_path / "downloads" / "Cloud Pack"
+    (source / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
+    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "egle001_body_col.nutexb").write_bytes(b"tex")
+    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numatb").write_bytes(b"mat")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_00.bntx").write_bytes(b"ui")
+
+    import_mod_package(source, mods_path)
+
+    payload = json.loads((mods_path / "Cloud Pack" / "config.json").read_text(encoding="utf-8"))
+    assert payload == {
+        "new-dir-files": {
+            "fighter/cloud/c00": [
+                "fighter/cloud/model/body/c00/egle001_body_col.nutexb",
+                "fighter/cloud/model/body/c00/model.numatb",
             ]
         }
     }
@@ -1032,8 +1057,42 @@ def test_repair_installed_mods_normalizes_configs_and_synthesizes_missing_effect
     assert json.loads((cloud / "config.json").read_text(encoding="utf-8")) == {
         "new-dir-files": {
             "fighter/cloud/c06": [
+                "fighter/cloud/model/body/c06/model.bin",
                 "effect/fighter/cloud/ef_cloud.eff",
                 "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
+            ]
+        }
+    }
+
+
+def test_repair_installed_mods_merges_existing_slot_manifest_with_missing_fighter_files(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    cloud = mods_path / "Super Sonic Over Cloud"
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c06").mkdir(parents=True)
+    (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / "model.numatb").write_bytes(b"mat")
+    (cloud / "effect" / "fighter" / "cloud").mkdir(parents=True)
+    (cloud / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"effect")
+    (cloud / "config.json").write_text(
+        json.dumps(
+            {
+                "new-dir-files": {
+                    "fighter/cloud/c06": [
+                        "effect/fighter/cloud/ef_cloud.eff",
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.configs_updated == 1
+    assert json.loads((cloud / "config.json").read_text(encoding="utf-8")) == {
+        "new-dir-files": {
+            "fighter/cloud/c06": [
+                "effect/fighter/cloud/ef_cloud.eff",
+                "fighter/cloud/model/body/c06/model.numatb",
             ]
         }
     }

@@ -2283,7 +2283,9 @@ def _repair_imported_mod_metadata(
     normalized_fighter = str(fighter or "").lower().strip() or None
     if normalized_fighter is None or source_slot is None or target_slot is None:
         if existing_config is not None:
-            sanitized_config = _sanitize_config_payload_paths(dest_root, existing_config)
+            minimal_manifest = _build_minimal_slot_effect_config(dest_root)
+            merged_config = _merge_minimal_slot_manifest(existing_config, minimal_manifest)
+            sanitized_config = _sanitize_config_payload_paths(dest_root, merged_config)
             if sanitized_config != existing_config or not (dest_root / "config.json").exists():
                 _write_config_json(dest_root / "config.json", sanitized_config)
         if not (dest_root / "config.json").exists():
@@ -2292,8 +2294,13 @@ def _repair_imported_mod_metadata(
                 _write_config_json(dest_root / "config.json", fallback)
         return
 
+    minimal_manifest = _build_minimal_slot_effect_config(dest_root, normalized_fighter, int(target_slot))
     if existing_config is not None and int(source_slot) == int(target_slot):
-        if _config_payload_has_existing_files(dest_root, existing_config):
+        merged_existing = _merge_minimal_slot_manifest(existing_config, minimal_manifest)
+        sanitized_existing = _sanitize_config_payload_paths(dest_root, merged_existing)
+        if sanitized_existing != existing_config or not (dest_root / "config.json").exists():
+            _write_config_json(dest_root / "config.json", sanitized_existing)
+        if _config_payload_has_existing_files(dest_root, sanitized_existing):
             return
 
     source_config = _load_optional_mod_config(Path(config_source_dir or dest_root))
@@ -2307,7 +2314,9 @@ def _repair_imported_mod_metadata(
             int(target_slot),
         )
     if repaired is None:
-        repaired = _build_minimal_slot_effect_config(dest_root, normalized_fighter, int(target_slot))
+        repaired = minimal_manifest
+    else:
+        repaired = _merge_minimal_slot_manifest(repaired, minimal_manifest)
     if repaired is not None:
         _write_config_json(dest_root / "config.json", _sanitize_config_payload_paths(dest_root, repaired))
 
@@ -2374,6 +2383,46 @@ def _sanitize_config_payload_paths(mod_root: Path, payload: dict) -> dict:
                 sanitized_section[alias_text] = filtered_values
         sanitized[key] = sanitized_section
     return sanitized
+
+
+def _merge_minimal_slot_manifest(payload: dict, minimal_manifest: dict | None) -> dict:
+    if not isinstance(payload, dict) or not minimal_manifest:
+        return payload
+
+    minimal_section = (
+        minimal_manifest.get("new-dir-files")
+        if isinstance(minimal_manifest.get("new-dir-files"), dict)
+        else minimal_manifest.get("new_dir_files")
+        if isinstance(minimal_manifest.get("new_dir_files"), dict)
+        else None
+    )
+    if not minimal_section:
+        return payload
+
+    merged = dict(payload)
+    key_name = "new-dir-files" if "new-dir-files" in merged or "new_dir_files" not in merged else "new_dir_files"
+    existing_section = merged.get(key_name)
+    if not isinstance(existing_section, dict):
+        existing_section = {}
+
+    merged_section: dict[str, list[str]] = {}
+    for alias, values in existing_section.items():
+        merged_section[str(alias)] = list(values) if isinstance(values, list) else []
+
+    for alias, values in minimal_section.items():
+        alias_text = str(alias)
+        combined = list(merged_section.get(alias_text, []))
+        seen = {str(item) for item in combined}
+        for item in values if isinstance(values, list) else []:
+            item_text = str(item)
+            if item_text in seen:
+                continue
+            combined.append(item_text)
+            seen.add(item_text)
+        merged_section[alias_text] = combined
+
+    merged[key_name] = merged_section
+    return merged
 
 
 def _config_payload_has_existing_files(mod_root: Path, payload: dict) -> bool:
@@ -2601,20 +2650,25 @@ def _build_minimal_slot_effect_config(
     if resolved_fighter is None or resolved_slot is None:
         return None
 
+    fighter_paths: list[str] = []
     effect_paths: list[str] = []
     for file_path in sorted(dest_root.rglob("*")):
         if not file_path.is_file():
             continue
         rel = str(file_path.relative_to(dest_root)).replace("\\", "/")
+        if _is_fighter_slot_manifest_file(rel, resolved_fighter, resolved_slot):
+            fighter_paths.append(rel)
+            continue
         if _is_effect_file_for_fighter_slot(rel, resolved_fighter, resolved_slot) or (
             _is_generic_effect_file_for_fighter(rel, resolved_fighter)
         ):
             effect_paths.append(rel)
-    if not effect_paths:
+    manifest_paths = fighter_paths + effect_paths
+    if not manifest_paths:
         return None
     return {
         "new-dir-files": {
-            f"fighter/{resolved_fighter}/c{resolved_slot:02d}": effect_paths,
+            f"fighter/{resolved_fighter}/c{resolved_slot:02d}": manifest_paths,
         }
     }
 
@@ -2628,6 +2682,16 @@ def _is_generic_effect_file_for_fighter(relative_path: str, fighter: str) -> boo
     if _is_effect_file_for_fighter_slot(rel, fighter_name):
         return False
     return True
+
+
+def _is_fighter_slot_manifest_file(relative_path: str, fighter: str, slot: int) -> bool:
+    rel = relative_path.replace("\\", "/").lower()
+    fighter_name = str(fighter or "").lower()
+    if not rel.startswith(f"fighter/{fighter_name}/"):
+        return False
+    if f"fighter/{fighter_name}/model/" not in rel and f"fighter/{fighter_name}/motion/" not in rel:
+        return False
+    return _config_path_targets_slot(rel, fighter_name, int(slot))
 
 
 def _replace_path_segment_token(path: str, source_token: str, target_token: str) -> str:

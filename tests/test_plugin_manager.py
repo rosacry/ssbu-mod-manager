@@ -122,10 +122,9 @@ def test_apply_cosmetic_stable_mode_disables_non_required_plugins(tmp_path):
 
     disabled = manager.apply_cosmetic_stable_mode()
 
-    assert sorted(disabled) == ["libone_slot_eff.nro", "libtraining_modpack.nro"]
+    assert disabled == ["libtraining_modpack.nro"]
     assert (plugins_path / "libarcropolis.nro").exists()
-    assert not (plugins_path / "libone_slot_eff.nro").exists()
+    assert (plugins_path / "libone_slot_eff.nro").exists()
     assert not (plugins_path / "libtraining_modpack.nro").exists()
     disabled_root = plugins_path.parent / "disabled_plugins"
-    assert (disabled_root / "libone_slot_eff.nro").exists()
     assert (disabled_root / "libtraining_modpack.nro").exists()

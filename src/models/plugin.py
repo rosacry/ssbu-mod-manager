@@ -16,6 +16,7 @@ class KnownPluginInfo:
     description: str
     url: str = ""
     required: bool = False
+    stable_mode_keep: bool = False
 
 
 @dataclass

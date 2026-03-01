@@ -71,6 +71,7 @@ KNOWN_PLUGINS = {
         filename="libone_slot_eff.nro",
         display_name="One Slot Effect",
         description="Allows visual effects to be loaded per costume slot. Enables unique effects for each alt costume.",
+        stable_mode_keep=True,
     ),
     "libresults_screen.nro": KnownPluginInfo(
         filename="libresults_screen.nro",

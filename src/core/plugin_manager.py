@@ -295,7 +295,8 @@ class PluginManager:
         """Disable all non-required plugins for a minimal cosmetic runtime.
 
         This leaves only plugins explicitly marked required, plus any
-        filenames passed in `keep_filenames`.
+        filenames passed in `keep_filenames`, plus plugins marked safe to
+        preserve in Stable Mode.
         """
         with self._lock:
             ensure_runtime_content_change_allowed("plugins", "disable")
@@ -311,6 +312,8 @@ class PluginManager:
                     continue
                 base_name = self.base_filename(plugin.filename).lower()
                 if plugin.known_info and plugin.known_info.required:
+                    continue
+                if plugin.known_info and plugin.known_info.stable_mode_keep:
                     continue
                 if base_name in preserved:
                     continue

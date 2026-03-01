@@ -366,8 +366,9 @@ class PluginsPage(BasePage):
             "Enable Stable Cosmetic Runtime",
             "Disable all non-required Skyline plugins?\n\n"
             "This keeps the core mod loader active and turns off optional plugin features such as "
-            "training tools, CSS helpers, results-screen helpers, slot-scoped effect plugins, and "
-            "other runtime tweaks that can destabilize cosmetic-heavy setups.\n\n"
+            "training tools, gameplay frameworks, CSS helpers, results-screen helpers, and other "
+            "runtime tweaks that can destabilize cosmetic-heavy setups.\n\n"
+            "Stable Mode keeps core required plugins plus safe cosmetic helpers like One Slot Effect active.\n\n"
             "Disabled plugins can be re-enabled later from this page.",
         )
         if not confirm:
