@@ -491,6 +491,47 @@ def test_inspect_mod_voice_pack_prefers_visual_slot_when_available(tmp_path: Pat
     assert info.recommended_source_slot == 5
 
 
+def test_inspect_mod_voice_pack_includes_msg_name_slot_labels(tmp_path: Path):
+    mod_path = tmp_path / "mods" / "Nazo Voice"
+    (mod_path / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (mod_path / "sound" / "bank" / "fighter_voice" / "vc_sonic_c03.nus3audio").write_bytes(b"voice")
+    (mod_path / "ui" / "message").mkdir(parents=True)
+    (mod_path / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_03_sonic">
+    <text>Nazo</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
+
+    info = inspect_mod_voice_pack(mod_path)
+
+    assert info is not None
+    assert info.slot_labels == {3: "Nazo"}
+
+
+def test_inspect_mod_voice_pack_falls_back_to_ui_chara_db_slot_labels(tmp_path: Path):
+    mod_path = tmp_path / "mods" / "Dark Sonic Voice"
+    (mod_path / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (mod_path / "sound" / "bank" / "fighter_voice" / "vc_sonic_c02.nus3audio").write_bytes(b"voice")
+    (mod_path / "ui" / "param" / "database").mkdir(parents=True)
+    (mod_path / "ui" / "param" / "database" / "ui_chara_db.prcxml").write_text(
+        """<struct>
+  <hash40 hash="characall_label_c02">vc_narration_characall_dark_sonic</hash40>
+</struct>
+""",
+        encoding="utf-8",
+    )
+
+    info = inspect_mod_voice_pack(mod_path)
+
+    assert info is not None
+    assert info.slot_labels == {2: "Dark Sonic"}
+
+
 def test_apply_mod_voice_pack_scope_can_retarget_to_single_slot(tmp_path: Path):
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     mod_path = mods_path / "Sonic Skin"

@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.2**.
+Current release version: **1.4.3**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -15,6 +15,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: detects actual skin-slot overlaps during import, can replace or auto-shift skins into open default slots, and no longer treats voice-only or effect-only slot packs as if they occupied the character's skin slot.
   - Mods: auto-prunes exact slot-scoped support-file conflicts from older support-only packs when a more specific imported skin/voice/effect override should win, and stores removed files under `_import_backups`.
   - Mods: right-click support-pack controls let you retarget slot-scoped voice, effect, or camera packs to another costume slot or duplicate them across the entire fighter without touching the visual skin files.
+  - Mods: support-pack retarget dialogs now show friendly form names from pack metadata when available, and target slots also surface detected installed skin occupants or open default slots to make voice/effect/camera reassignment easier.
   - Mods: one-click `Wi-Fi Safe` mode enables only mods classified as safe client-side content and disables the rest.
   - Mods: multi-slot skin packs can now be split during import, with a picker that lets you import the recommended base skin, select individual slot variants, or bring in every form separately, and it shows friendly form names from `msg_name` / `ui_chara_db` metadata when the pack provides them.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
@@ -57,7 +58,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.2-windows.zip`
+- `dist/SSBUModManager-1.4.3-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -90,6 +91,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.
 - Mods with slot-scoped voice, effect, or camera files can be right-click configured so those support packs stay on one slot, move to another slot, or become fighter-wide.
+- Support-pack configuration dialogs now show metadata-backed form names where packs provide them, and target-slot pickers call out detected installed skin names plus `Open default slot` entries for empty costume slots.
 - The `Wi-Fi Safe` button on the Mods page enables only mods classified as `SAFE` and disables anything that still requires a shared setup.
 - Online-risk classification now recognizes common costume-support assets such as slot-scoped fighter motion/update files and visual-only stage render/motion assets as client-side safe instead of flagging them as desync-prone by default.
 - Nested wrapper folders are auto-flattened on import and also surfaced as conflicts during scans.

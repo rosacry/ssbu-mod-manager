@@ -85,6 +85,7 @@ class SupportPackScopeInfo:
     source_slots: list[int] = field(default_factory=list)
     recommended_source_slot: int = 0
     visual_slots: list[int] = field(default_factory=list)
+    slot_labels: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -185,6 +186,12 @@ def inspect_mod_support_pack(mod_path: Path, support_kind: str) -> SupportPackSc
     recommended = source_slots[0]
     if analysis.primary_slot in source_slots:
         recommended = int(analysis.primary_slot)
+    labels = resolve_mod_slot_labels(mod_path, fighter_support_slots, analysis=analysis)
+    fighter_labels = {
+        slot: label
+        for (label_fighter, slot), label in labels.items()
+        if label_fighter == fighter
+    }
 
     return SupportPackScopeInfo(
         support_kind=normalized_kind,
@@ -192,6 +199,7 @@ def inspect_mod_support_pack(mod_path: Path, support_kind: str) -> SupportPackSc
         source_slots=source_slots,
         recommended_source_slot=recommended,
         visual_slots=list(analysis.visual_fighter_slots.get(fighter, [])),
+        slot_labels=fighter_labels,
     )
 
 
@@ -803,7 +811,7 @@ def _build_multi_slot_pack_options(
     analysis: SlotAnalysis,
 ) -> list[MultiSlotPackOption]:
     options: list[MultiSlotPackOption] = []
-    friendly_labels = _resolve_multi_slot_option_labels(source_dir, analysis)
+    friendly_labels = resolve_mod_slot_labels(source_dir, analysis.visual_fighter_slots, analysis=analysis)
     labeled_fighters = {fighter for fighter, _slot in friendly_labels}
     recommended_id = None
     if analysis.primary_fighter is not None and analysis.primary_slot is not None:
@@ -832,21 +840,27 @@ def _build_multi_slot_pack_options(
     return options
 
 
-def _resolve_multi_slot_option_labels(
-    source_dir: Path,
-    analysis: SlotAnalysis,
+def resolve_mod_slot_labels(
+    mod_path: Path,
+    fighter_slots: dict[str, list[int]] | dict[str, set[int]] | None = None,
+    analysis: SlotAnalysis | None = None,
 ) -> dict[tuple[str, int], str]:
-    visual_slots = {
+    mod_path = Path(mod_path)
+    resolved_analysis = analysis or analyze_mod_directory(mod_path, [mod_path.name])
+    slot_scope = fighter_slots if fighter_slots is not None else (
+        resolved_analysis.visual_fighter_slots or resolved_analysis.fighter_slots
+    )
+    normalized_slots = {
         str(fighter).lower(): {int(slot) for slot in slots}
-        for fighter, slots in analysis.visual_fighter_slots.items()
+        for fighter, slots in slot_scope.items()
         if slots
     }
-    if not visual_slots:
+    if not normalized_slots:
         return {}
 
-    labels = _extract_multi_slot_names_from_msg_name(source_dir, visual_slots)
-    if len(visual_slots) == 1:
-        for key, value in _extract_multi_slot_names_from_ui_chara_db(source_dir, visual_slots).items():
+    labels = _extract_multi_slot_names_from_msg_name(mod_path, normalized_slots)
+    if len(normalized_slots) == 1:
+        for key, value in _extract_multi_slot_names_from_ui_chara_db(mod_path, normalized_slots).items():
             labels.setdefault(key, value)
     return labels
 

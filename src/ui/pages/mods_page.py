@@ -15,7 +15,9 @@ from src.core.content_importer import (
     inspect_mod_camera_pack,
     inspect_mod_effect_pack,
     inspect_mod_voice_pack,
+    resolve_mod_slot_labels,
 )
+from src.core.skin_slot_utils import analyze_mod_directory
 from src.core.runtime_guard import ContentOperationBlockedError
 from src.utils.logger import logger
 from src.utils.action_history import action_history, Action
@@ -824,6 +826,7 @@ class ModsPage(BasePage):
         result = self._show_support_pack_scope_dialog(mod, info)
         if result is None:
             return
+        slot_labels, occupied_slots = self._build_support_slot_label_map(mod, info)
 
         appliers = {
             "voice": apply_mod_voice_pack_scope,
@@ -839,14 +842,24 @@ class ModsPage(BasePage):
                 source_slot=result["source_slot"],
                 target_slot=result.get("target_slot"),
             )
+            source_text = self._format_support_slot_choice(
+                summary.source_slot,
+                slot_labels,
+                occupied_slots,
+            )
             lines = [
                 f"Configured {normalized_kind} pack for {summary.fighter}.",
-                f"Source slot: c{summary.source_slot:02d}.",
+                f"Source slot: {source_text}.",
             ]
             if len(summary.target_slots) == 8:
                 lines.append("Applied to all 8 default slots.")
             else:
-                lines.append(f"Applied only to c{summary.target_slots[0]:02d}.")
+                target_text = self._format_support_slot_choice(
+                    summary.target_slots[0],
+                    slot_labels,
+                    occupied_slots,
+                )
+                lines.append(f"Applied only to {target_text}.")
             lines.append(f"Wrote {summary.files_written} {normalized_kind} file(s).")
             if summary.support_mod_adjustments:
                 lines.append(
@@ -867,6 +880,7 @@ class ModsPage(BasePage):
     def _show_support_pack_scope_dialog(self, mod, info):
         support_kind = getattr(info, "support_kind", "voice")
         support_label = SUPPORT_PACK_LABELS.get(support_kind, "Support Pack")
+        slot_labels, occupied_slots = self._build_support_slot_label_map(mod, info)
         result = {"value": None}
         dialog = ctk.CTkToplevel(self)
         dialog.withdraw()
@@ -883,15 +897,24 @@ class ModsPage(BasePage):
             font=ctk.CTkFont(size=16, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
-        current_visual = ", ".join(f"c{slot:02d}" for slot in info.visual_slots) or "none"
-        current_support = ", ".join(f"c{slot:02d}" for slot in info.source_slots)
+        current_visual = self._format_support_slot_list(
+            info.visual_slots,
+            slot_labels,
+            occupied_slots,
+        ) or "none"
+        current_support = self._format_support_slot_list(
+            info.source_slots,
+            slot_labels,
+            occupied_slots,
+        )
         ctk.CTkLabel(
             shell,
             text=(
                 f"Mod: {mod.original_name}\n"
                 f"Fighter: {info.fighter}\n"
                 f"Visual slots in this mod: {current_visual}\n"
-                f"{support_label} slots currently present: {current_support}"
+                f"{support_label} slots currently present: {current_support}\n"
+                "Friendly form names and installed slot occupants are shown when they can be detected."
             ),
             anchor="w",
             justify="left",
@@ -903,10 +926,18 @@ class ModsPage(BasePage):
         form.pack(fill="x", padx=14, pady=(12, 10))
 
         ctk.CTkLabel(form, text=f"Use {support_label} From", anchor="w").pack(fill="x")
-        source_var = tk.StringVar(value=f"c{info.recommended_source_slot:02d}")
+        source_options = {
+            self._format_support_slot_choice(slot, slot_labels, occupied_slots): slot
+            for slot in info.source_slots
+        }
+        source_default = next(
+            label for label, slot in source_options.items()
+            if slot == info.recommended_source_slot
+        )
+        source_var = tk.StringVar(value=source_default)
         source_menu = ctk.CTkOptionMenu(
             form,
-            values=[f"c{slot:02d}" for slot in info.source_slots],
+            values=list(source_options.keys()),
             variable=source_var,
             width=150,
             corner_radius=8,
@@ -934,10 +965,23 @@ class ModsPage(BasePage):
 
         ctk.CTkLabel(form, text="Target Slot", anchor="w").pack(fill="x")
         default_target = info.visual_slots[0] if info.visual_slots else info.recommended_source_slot
-        target_var = tk.StringVar(value=f"c{default_target:02d}")
+        target_options = {
+            self._format_support_slot_choice(
+                slot,
+                slot_labels,
+                occupied_slots,
+                show_open_default=True,
+            ): slot
+            for slot in range(8)
+        }
+        target_default = next(
+            label for label, slot in target_options.items()
+            if slot == default_target
+        )
+        target_var = tk.StringVar(value=target_default)
         target_menu = ctk.CTkOptionMenu(
             form,
-            values=[f"c{slot:02d}" for slot in range(8)],
+            values=list(target_options.keys()),
             variable=target_var,
             width=150,
             corner_radius=8,
@@ -973,10 +1017,10 @@ class ModsPage(BasePage):
             mode = mode_var.get()
             payload = {
                 "mode": mode,
-                "source_slot": int(source_var.get()[1:]),
+                "source_slot": int(source_options[source_var.get()]),
             }
             if mode == "single_slot":
-                payload["target_slot"] = int(target_var.get()[1:])
+                payload["target_slot"] = int(target_options[target_var.get()])
             close_with(payload)
 
         ctk.CTkButton(
@@ -997,6 +1041,68 @@ class ModsPage(BasePage):
         self._present_modal_dialog(dialog, animate_open=False)
         self.wait_window(dialog)
         return result["value"]
+
+    def _build_support_slot_label_map(self, mod, info):
+        fighter = str(getattr(info, "fighter", "") or "").lower()
+        current_labels = {
+            int(slot): str(label).strip()
+            for slot, label in getattr(info, "slot_labels", {}).items()
+            if str(label or "").strip()
+        }
+        installed_labels: dict[int, str] = {}
+        mods = self._all_mods if self._loaded else self.app.mod_manager.list_mods()
+        for candidate in mods:
+            if candidate.status != ModStatus.ENABLED:
+                continue
+            try:
+                analysis = analyze_mod_directory(candidate.path, [candidate.original_name])
+            except Exception:
+                continue
+            candidate_slots = [int(slot) for slot in analysis.visual_fighter_slots.get(fighter, [])]
+            if not candidate_slots:
+                continue
+            candidate_labels = resolve_mod_slot_labels(
+                candidate.path,
+                {fighter: candidate_slots},
+                analysis=analysis,
+            )
+            for slot in candidate_slots:
+                label = candidate_labels.get((fighter, slot))
+                if not label and len(candidate_slots) == 1:
+                    label = self._mod_display_name(candidate)
+                if not label:
+                    continue
+                existing = installed_labels.get(slot)
+                if existing and label != existing:
+                    if label not in existing.split(" / "):
+                        installed_labels[slot] = f"{existing} / {label}"
+                else:
+                    installed_labels[slot] = label
+
+        effective_labels: dict[int, str] = {}
+        if len(getattr(info, "visual_slots", [])) == 1:
+            effective_labels[int(info.visual_slots[0])] = self._mod_display_name(mod)
+        if len(getattr(info, "source_slots", [])) == 1:
+            effective_labels.setdefault(int(info.source_slots[0]), self._mod_display_name(mod))
+        effective_labels.update(installed_labels)
+        effective_labels.update(current_labels)
+        return effective_labels, set(installed_labels.keys())
+
+    def _format_support_slot_choice(self, slot, slot_labels, occupied_slots, show_open_default=False):
+        slot_num = int(slot)
+        slot_token = f"c{slot_num:02d}"
+        label = str((slot_labels or {}).get(slot_num, "") or "").strip()
+        if label:
+            return f"{label} ({slot_token})"
+        if show_open_default and slot_num not in set(occupied_slots or set()):
+            return f"Open default slot ({slot_token})"
+        return slot_token
+
+    def _format_support_slot_list(self, slots, slot_labels, occupied_slots):
+        return ", ".join(
+            self._format_support_slot_choice(slot, slot_labels, occupied_slots)
+            for slot in slots
+        )
 
     def _on_toggle(self, mod):
         try:
