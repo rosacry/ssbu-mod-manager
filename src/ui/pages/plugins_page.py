@@ -66,6 +66,18 @@ class PluginsPage(BasePage):
                                        corner_radius=8, height=34)
         enable_all_btn.pack(side="right", padx=(5, 0))
 
+        stable_mode_btn = ctk.CTkButton(
+            header_frame,
+            text="Stable Mode",
+            width=110,
+            command=self._apply_stable_mode,
+            fg_color="#735c18",
+            hover_color="#5f4b14",
+            corner_radius=8,
+            height=34,
+        )
+        stable_mode_btn.pack(side="right", padx=(5, 0))
+
         # Plugin count
         self.count_label = ctk.CTkLabel(self, text="",
                                         font=ctk.CTkFont(size=12),
@@ -339,6 +351,47 @@ class PluginsPage(BasePage):
         except Exception as e:
             logger.error("Plugins", f"Disable all failed: {e}")
             messagebox.showerror("Error", f"Failed to disable all plugins: {e}")
+
+    def _apply_stable_mode(self):
+        plugins = self.app.plugin_manager.list_plugins()
+        enabled = [p for p in plugins if p.status == PluginStatus.ENABLED]
+        optional_enabled = [
+            p for p in enabled
+            if not (p.known_info and p.known_info.required)
+        ]
+        if not optional_enabled:
+            messagebox.showinfo("Stable Mode", "Only core required plugins are currently enabled.")
+            return
+        confirm = messagebox.askyesno(
+            "Enable Stable Cosmetic Runtime",
+            "Disable all non-required Skyline plugins?\n\n"
+            "This keeps the core mod loader active and turns off optional plugin features such as "
+            "training tools, CSS helpers, results-screen helpers, slot-scoped effect plugins, and "
+            "other runtime tweaks that can destabilize cosmetic-heavy setups.\n\n"
+            "Disabled plugins can be re-enabled later from this page.",
+        )
+        if not confirm:
+            return
+        try:
+            disabled = self.app.plugin_manager.apply_cosmetic_stable_mode()
+            logger.info("Plugins", f"Applied stable mode, disabled {len(disabled)} plugin(s)")
+            if disabled:
+                preview = ", ".join(disabled[:6])
+                if len(disabled) > 6:
+                    preview += f", and {len(disabled) - 6} more"
+                messagebox.showinfo(
+                    "Stable Mode Enabled",
+                    f"Disabled {len(disabled)} non-required plugin(s):\n{preview}",
+                )
+            else:
+                messagebox.showinfo("Stable Mode", "Only core required plugins remain enabled.")
+            self._force_refresh()
+        except ContentOperationBlockedError as e:
+            logger.warn("Plugins", f"Stable mode blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
+        except Exception as e:
+            logger.error("Plugins", f"Stable mode failed: {e}")
+            messagebox.showerror("Error", f"Failed to apply stable mode: {e}")
 
     def _open_folder(self):
         from src.utils.file_utils import open_folder

@@ -80,17 +80,16 @@ _UI_CHARA_PORTRAIT_RE = re.compile(
     r"^ui/(?P<replace_kind>replace|replace_patch)/chara/chara_(?P<size>\d)/(?P<filename>[^/]+)_(?P<fighter>[^_/]+)_(?P<slot>\d{2})\.bntx$",
     re.IGNORECASE,
 )
-_REQUIRED_UI_PORTRAIT_SIZES = (0, 1, 2, 3, 4, 5, 6, 7)
+_REQUIRED_UI_PORTRAIT_SIZES = (0, 1, 2, 3, 4)
 _UI_PORTRAIT_FALLBACK_ORDER = {
-    0: (1, 2, 3, 4, 5, 6, 7),
-    1: (0, 2, 3, 4, 5, 6, 7),
-    2: (1, 0, 3, 4, 5, 6, 7),
-    3: (4, 2, 1, 5, 0, 6, 7),
-    4: (3, 5, 2, 1, 6, 0, 7),
-    5: (4, 6, 3, 7, 2, 1, 0),
-    6: (7, 5, 4, 3, 2, 1, 0),
-    7: (6, 5, 4, 3, 2, 1, 0),
+    0: (1, 2, 3, 4),
+    1: (0, 2, 3, 4),
+    2: (1, 0, 4, 3),
+    3: (4, 1, 2, 0),
+    4: (3, 1, 2, 0),
 }
+_SUSPECT_GENERATED_UI_STOCK_ICON_SIZE = 5
+_SUSPECT_GENERATED_UI_STOCK_ICON_SOURCES = (4, 3)
 
 
 @dataclass
@@ -650,6 +649,10 @@ def repair_installed_mods(
 
         if _flatten_nested_mod(mod_root):
             summary.flattened_mods += 1
+            changed_mods.add(mod_root.name)
+
+        removed_stock_icons = _cleanup_suspect_generated_ui_stock_icons(mods_path, mod_root)
+        if removed_stock_icons:
             changed_mods.add(mod_root.name)
 
         analysis = analyze_mod_directory(mod_root, [mod_root.name])
@@ -2003,6 +2006,62 @@ def _repair_missing_ui_portraits(mod_root: Path) -> int:
             size_map[target_size] = dest_path
             created += 1
     return created
+
+
+def _cleanup_suspect_generated_ui_stock_icons(mods_path: Path, mod_root: Path) -> int:
+    portrait_map = _collect_ui_portrait_paths(mod_root)
+    removed = 0
+    for size_map in portrait_map.values():
+        target_path = size_map.get(_SUSPECT_GENERATED_UI_STOCK_ICON_SIZE)
+        if target_path is None or not target_path.exists():
+            continue
+        if not _looks_like_generated_ui_stock_icon(size_map, target_path):
+            continue
+        _backup_and_remove_ui_portrait(mods_path, mod_root, target_path)
+        size_map.pop(_SUSPECT_GENERATED_UI_STOCK_ICON_SIZE, None)
+        removed += 1
+    return removed
+
+
+def _looks_like_generated_ui_stock_icon(size_map: dict[int, Path], target_path: Path) -> bool:
+    try:
+        target_stat = target_path.stat()
+        target_bytes = target_path.read_bytes()
+    except OSError:
+        return False
+    for source_size in _SUSPECT_GENERATED_UI_STOCK_ICON_SOURCES:
+        source_path = size_map.get(source_size)
+        if source_path is None or not source_path.exists():
+            continue
+        try:
+            source_stat = source_path.stat()
+        except OSError:
+            continue
+        if abs(source_stat.st_mtime - target_stat.st_mtime) > 1e-6:
+            continue
+        try:
+            if source_path.read_bytes() == target_bytes:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _backup_and_remove_ui_portrait(mods_path: Path, mod_root: Path, portrait_path: Path) -> None:
+    relative_path = portrait_path.relative_to(mod_root)
+    backup_root = (
+        Path(mods_path).parent
+        / _SUPPORT_BACKUP_DIR_NAME
+        / _INSTALLED_REPAIR_BACKUP_DIR_NAME
+        / "_ui_stock_icon_cleanup"
+        / mod_root.name
+    )
+    backup_path = backup_root / relative_path
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    if not backup_path.exists():
+        shutil.copy2(portrait_path, backup_path)
+    portrait_path.unlink()
+    _prune_empty_parents(portrait_path.parent, mod_root)
 
 
 def _invalidate_arcropolis_mod_cache(mods_path: Path) -> None:

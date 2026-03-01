@@ -291,6 +291,37 @@ class PluginManager:
             self.invalidate_cache()
             return count
 
+    def apply_cosmetic_stable_mode(self, keep_filenames: set[str] | None = None) -> list[str]:
+        """Disable all non-required plugins for a minimal cosmetic runtime.
+
+        This leaves only plugins explicitly marked required, plus any
+        filenames passed in `keep_filenames`.
+        """
+        with self._lock:
+            ensure_runtime_content_change_allowed("plugins", "disable")
+            preserved = {
+                self.base_filename(name).lower()
+                for name in (keep_filenames or set())
+                if self.base_filename(name)
+            }
+            disabled: list[str] = []
+            plugins_snapshot = list(self.list_plugins())
+            for plugin in plugins_snapshot:
+                if plugin.status != PluginStatus.ENABLED:
+                    continue
+                base_name = self.base_filename(plugin.filename).lower()
+                if plugin.known_info and plugin.known_info.required:
+                    continue
+                if base_name in preserved:
+                    continue
+                try:
+                    self.disable_plugin(plugin)
+                    disabled.append(self.base_filename(plugin.filename))
+                except FileExistsError:
+                    continue
+            self.invalidate_cache()
+            return disabled
+
     def get_plugin_info(self, filename: str) -> Optional[KnownPluginInfo]:
         """Get known info for a plugin by filename."""
         return KNOWN_PLUGINS.get(self.base_filename(filename))

@@ -109,3 +109,23 @@ def test_disable_plugin_surfaces_runtime_block(tmp_path, monkeypatch):
         manager.disable_plugin(plugin)
 
     assert "Ryujinx" in str(exc.value)
+
+
+def test_apply_cosmetic_stable_mode_disables_non_required_plugins(tmp_path):
+    plugins_path = tmp_path / "plugins"
+    plugins_path.mkdir(parents=True)
+    (plugins_path / "libarcropolis.nro").write_bytes(b"core")
+    (plugins_path / "libone_slot_eff.nro").write_bytes(b"effect")
+    (plugins_path / "libtraining_modpack.nro").write_bytes(b"training")
+
+    manager = PluginManager(plugins_path)
+
+    disabled = manager.apply_cosmetic_stable_mode()
+
+    assert sorted(disabled) == ["libone_slot_eff.nro", "libtraining_modpack.nro"]
+    assert (plugins_path / "libarcropolis.nro").exists()
+    assert not (plugins_path / "libone_slot_eff.nro").exists()
+    assert not (plugins_path / "libtraining_modpack.nro").exists()
+    disabled_root = plugins_path.parent / "disabled_plugins"
+    assert (disabled_root / "libone_slot_eff.nro").exists()
+    assert (disabled_root / "libtraining_modpack.nro").exists()

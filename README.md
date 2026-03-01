@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.12**.
+Current release version: **1.4.13**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -22,12 +22,13 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: auto-pruned support-file and disabled-mod reporting now includes friendly form names plus the `_import_backups/...` or `disabled_mods/...` destination, and support-only metadata leftovers no longer keep an otherwise-pruned support pack enabled.
   - Mods: import repair now normalizes legacy `config.txt` manifests to `config.json`, rebuilds reslotted slot-effect configs from the original source pack when available, synthesizes missing generic fighter-effect manifests for Cloud-style skins, and trims stale config entries that point at files not actually present in the installed mod.
   - Mods: import now runs a postflight installed-content repair pass for the imported mods, so broken manifests, safe broad-support overlaps, and byte-identical exact file collisions are corrected immediately instead of being left for Yuzu/ARCropolis to discover.
-  - Mods: repair/import postflight now fills missing required `ui/replace[_patch]/chara/chara_0..7` portrait assets from the closest available portrait size in the same skin, which hardens CSS, versus/results, battle HUD, and match-loading flows against incomplete skin packs.
+  - Mods: repair/import postflight fills only the required `ui/replace[_patch]/chara/chara_0..4` portrait assets from the closest available portrait size in the same skin, and no longer fabricates advanced `chara_5..7` portrait files from mismatched BNTX sizes.
   - Mods: imports and installed repairs now invalidate ARCropolis `mod_cache` and stale `conflicts.json` automatically after content changes so new file layouts are not masked by cached loader state.
   - Mods: the new `Repair Installed` action on the Mods page audits enabled and disabled mod folders, fixes safe structural/config problems in place, prunes safe overlap cases with backups, and reports only the exact remaining conflicts that still require manual review.
   - Conflicts: scan results now surface friendly slot/form names inside conflict cards and fallback rows, and conflicting mod lists call out which form/slot each mod is touching instead of only showing raw file paths.
   - Conflicts: the Conflicts page now has a compact filter box plus a `By Type` / `By Fighter/Form/Slot` view switch, so large multi-form character setups can be reviewed by costume slot instead of only by file extension.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
+  - Plugins: one-click `Stable Mode` disables all non-required Skyline plugins so cosmetic-only setups can fall back to a minimal runtime when optional helpers or gameplay frameworks destabilize loading.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
 - Music page with PRC-backed stage slot discovery, a built-in safe Main Menu replacement slot, Wi-Fi-safer existing-slot replacement overlays, a standalone library player queue, legacy stage-playlist editing, favorites list/filtering, preview playback, and an explicit `.nus3audio`-only track list.
 - Conflict detection and locale MSBT rename safety tools.
@@ -67,7 +68,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.12-windows.zip`
+- `dist/SSBUModManager-1.4.13-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 

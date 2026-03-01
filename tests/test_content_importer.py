@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shutil
 import zipfile
 
 from src.core.content_importer import (
@@ -1129,15 +1130,9 @@ def test_repair_installed_mods_fills_missing_required_ui_portrait_sizes(tmp_path
     summary = repair_installed_mods(mods_path)
 
     repaired = mod_root / "ui" / "replace" / "chara" / "chara_3" / "chara_3_sonic_02.bntx"
-    repaired_stock = mod_root / "ui" / "replace" / "chara" / "chara_5" / "chara_5_sonic_02.bntx"
-    repaired_small = mod_root / "ui" / "replace" / "chara" / "chara_7" / "chara_7_sonic_02.bntx"
-    assert summary.ui_portrait_repairs == 4
+    assert summary.ui_portrait_repairs == 1
     assert repaired.exists()
     assert repaired.read_bytes() == b"portrait-4"
-    assert repaired_stock.exists()
-    assert repaired_stock.read_bytes() == b"portrait-4"
-    assert repaired_small.exists()
-    assert repaired_small.read_bytes() == b"portrait-4"
 
 
 def test_repair_installed_mods_invalidates_arcropolis_mod_cache_on_change(tmp_path: Path):
@@ -1158,9 +1153,57 @@ def test_repair_installed_mods_invalidates_arcropolis_mod_cache_on_change(tmp_pa
 
     summary = repair_installed_mods(mods_path)
 
-    assert summary.ui_portrait_repairs == 7
+    assert summary.ui_portrait_repairs == 4
     assert not mod_cache.exists()
     assert not conflicts.exists()
+
+
+def test_repair_installed_mods_does_not_synthesize_advanced_ui_portrait_sizes(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Nazo Sonic C02"
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"skin")
+    for size in (0, 1, 2, 4, 6):
+        target = mod_root / "ui" / "replace" / "chara" / f"chara_{size}" / f"chara_{size}_sonic_02.bntx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(f"portrait-{size}".encode("utf-8"))
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.ui_portrait_repairs == 1
+    assert not (mod_root / "ui" / "replace" / "chara" / "chara_5" / "chara_5_sonic_02.bntx").exists()
+    assert not (mod_root / "ui" / "replace" / "chara" / "chara_7" / "chara_7_sonic_02.bntx").exists()
+
+
+def test_repair_installed_mods_removes_suspect_generated_stock_icon_clone(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Modern Sonic"
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c00").mkdir(parents=True)
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c00" / "model.bin").write_bytes(b"skin")
+    chara4 = mod_root / "ui" / "replace" / "chara" / "chara_4" / "chara_4_sonic_00.bntx"
+    chara4.parent.mkdir(parents=True, exist_ok=True)
+    chara4.write_bytes(b"portrait-4")
+    chara5 = mod_root / "ui" / "replace" / "chara" / "chara_5" / "chara_5_sonic_00.bntx"
+    chara5.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(chara4, chara5)
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.mods_changed == 1
+    assert not chara5.exists()
+    backup = (
+        mods_path.parent
+        / "_import_backups"
+        / "_installed_repair"
+        / "_ui_stock_icon_cleanup"
+        / "Modern Sonic"
+        / "ui"
+        / "replace"
+        / "chara"
+        / "chara_5"
+        / "chara_5_sonic_00.bntx"
+    )
+    assert backup.exists()
 
 
 def test_import_mod_package_postflight_fills_missing_required_ui_portrait_sizes(tmp_path: Path):
@@ -1176,15 +1219,9 @@ def test_import_mod_package_postflight_fills_missing_required_ui_portrait_sizes(
     summary = import_mod_package(source, mods_path)
 
     repaired = mods_path / "Nazo Sonic C02" / "ui" / "replace" / "chara" / "chara_3" / "chara_3_sonic_02.bntx"
-    repaired_stock = mods_path / "Nazo Sonic C02" / "ui" / "replace" / "chara" / "chara_5" / "chara_5_sonic_02.bntx"
-    repaired_small = mods_path / "Nazo Sonic C02" / "ui" / "replace" / "chara" / "chara_7" / "chara_7_sonic_02.bntx"
-    assert summary.ui_portrait_repairs == 4
+    assert summary.ui_portrait_repairs == 1
     assert repaired.exists()
     assert repaired.read_bytes() == b"portrait-4"
-    assert repaired_stock.exists()
-    assert repaired_stock.read_bytes() == b"portrait-4"
-    assert repaired_small.exists()
-    assert repaired_small.read_bytes() == b"portrait-4"
 
 
 def test_import_mod_package_invalidates_arcropolis_mod_cache(tmp_path: Path):
