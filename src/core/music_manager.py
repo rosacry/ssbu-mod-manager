@@ -331,6 +331,21 @@ class MusicManager:
                 return stage_id
         return normalized
 
+    def _build_menu_stage_slot(self) -> StageTrackSlot:
+        filename = MENU_BGM_FILENAME
+        display_name = beautify_track_name(Path(filename).stem)
+        return StageTrackSlot(
+            stage_id=MENU_STAGE_ID,
+            stage_name=VANILLA_STAGES.get(MENU_STAGE_ID, "Main Menu"),
+            slot_key=filename,
+            ui_bgm_id="ui_bgm_z90_menu",
+            filename=filename,
+            display_name=display_name,
+            incidence=DEFAULT_BGM_INCIDENCE,
+            order_number=0,
+            is_likely_vanilla=True,
+        )
+
     def discover_tracks(
         self,
         mods_root: Path,
@@ -559,7 +574,9 @@ class MusicManager:
 
     def _discover_stage_slots(self, mods_root: Path) -> None:
         """Build per-stage slot metadata from discovered PRC databases."""
-        self.stage_slots = {}
+        self.stage_slots = {
+            MENU_STAGE_ID: [self._build_menu_stage_slot()],
+        }
         self._slot_source_mod = None
 
         source_mod = self._find_music_source_mod(mods_root)
@@ -600,7 +617,7 @@ class MusicManager:
 
             stage_prc = pyprc.param(str(stage_db_path))
             stage_db = list(stage_prc)[0][1]
-            discovered: dict[str, list[StageTrackSlot]] = {}
+            discovered: dict[str, list[StageTrackSlot]] = dict(self.stage_slots)
             for stage_entry in stage_db:
                 raw_stage_id = self._safe_field_str(stage_entry, "ui_stage_id")
                 if not raw_stage_id:
@@ -637,6 +654,10 @@ class MusicManager:
 
                 if slots:
                     discovered[stage_id] = slots
+
+            menu_slots = discovered.get(MENU_STAGE_ID, [])
+            if not any(slot.slot_key == MENU_BGM_FILENAME for slot in menu_slots):
+                discovered[MENU_STAGE_ID] = [self._build_menu_stage_slot(), *menu_slots]
 
             self.stage_slots = discovered
             self._slot_source_mod = source_mod

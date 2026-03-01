@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.7**.
+Current release version: **1.4.8**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -24,7 +24,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Conflicts: the Conflicts page now has a compact filter box plus a `By Type` / `By Fighter/Form/Slot` view switch, so large multi-form character setups can be reviewed by costume slot instead of only by file extension.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
-- Music page with PRC-backed stage slot discovery, Wi-Fi-safer existing-slot replacement overlays, a standalone library player queue, legacy stage-playlist editing, favorites list/filtering, preview playback, and an explicit `.nus3audio`-only track list.
+- Music page with PRC-backed stage slot discovery, a built-in safe Main Menu replacement slot, Wi-Fi-safer existing-slot replacement overlays, a standalone library player queue, legacy stage-playlist editing, favorites list/filtering, preview playback, and an explicit `.nus3audio`-only track list.
 - Conflict detection and locale MSBT rename safety tools.
 - Emulator migration tools (copy, direct export/import, upgrade flow).
 - Online Compatibility checker and shareable profile support.
@@ -62,7 +62,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.7-windows.zip`
+- `dist/SSBUModManager-1.4.8-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -132,7 +132,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Scrollbar drag handling now accepts raw Tk callback argument variants under heavy drag load, preventing `_clicked_preserve_offset` event errors.
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Music auto-scan is now deferred slightly on page show and cooperative-cancelled when leaving the Music tab, preventing heavy background track scans from stalling other pages.
-- Music now separates safer existing-slot replacement overlays from legacy stage-playlist injection, surfaces discovered stage slots from `ui_stage_db.prc`/`ui_bgm_db.prc` when available, and adds a standalone filtered/favorites queue player for in-app listening.
+- Music now separates safer existing-slot replacement overlays from legacy stage-playlist injection, surfaces discovered stage slots from `ui_stage_db.prc`/`ui_bgm_db.prc` when available, always includes a built-in safe Main Menu replacement slot, shows default-to-custom mappings directly in the UI (`x -> y`), and adds a standalone filtered/favorites queue player for in-app listening.
 - Spotify playlist export is now explicitly gated behind **Settings -> Experimental** so the Music page can treat it as opt-in functionality.
 - `.nus3audio` preview now prefers direct cached Opus stream playback through `ffplay` when available, which reduces unnecessary preview transcoding and preserves higher-fidelity audio in the Music tab.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.

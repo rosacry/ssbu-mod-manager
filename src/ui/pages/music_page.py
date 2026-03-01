@@ -744,9 +744,17 @@ class MusicPage(BasePage):
                 text=text,
                 text_color="#999999")
 
+    def _get_effective_safe_count(self, stage_id: str) -> int:
+        safe_count = len(self.app.music_manager.replacement_assignments.get(stage_id, {}))
+        if safe_count:
+            return safe_count
+        if stage_id == self._MENU_STAGE_ID and self.app.music_manager.get_tracks_for_stage(stage_id):
+            return 1
+        return 0
+
     def _stage_list_suffix(self, stage_id: str) -> str:
         legacy_count = len(self.app.music_manager.get_tracks_for_stage(stage_id))
-        safe_count = len(self.app.music_manager.replacement_assignments.get(stage_id, {}))
+        safe_count = self._get_effective_safe_count(stage_id)
         suffix_parts = []
         if safe_count:
             suffix_parts.append(f"S{safe_count}")
@@ -760,7 +768,7 @@ class MusicPage(BasePage):
         if not self._selected_stage:
             self.playlist_count.configure(text="")
             return
-        safe_count = len(self.app.music_manager.replacement_assignments.get(self._selected_stage, {}))
+        safe_count = self._get_effective_safe_count(self._selected_stage)
         legacy_count = len(self.app.music_manager.get_tracks_for_stage(self._selected_stage))
         self.playlist_count.configure(text=f"Safe {safe_count} | Legacy {legacy_count}")
 
@@ -923,9 +931,9 @@ class MusicPage(BasePage):
 
         source_name = self.app.music_manager.get_stage_slot_source_name()
         if source_name:
-            self.safe_slot_source.configure(text=f"Slot source: {source_name}")
+            self.safe_slot_source.configure(text=f"Menu slot is built in | stage slot source: {source_name}")
         else:
-            self.safe_slot_source.configure(text="Slot source: none discovered")
+            self.safe_slot_source.configure(text="Menu slot is built in | stage slot source: none discovered")
 
         if not self._selected_stage:
             self._update_stage_counts()
@@ -962,10 +970,7 @@ class MusicPage(BasePage):
             return
 
         for slot in safe_slots:
-            assignment = self.app.music_manager.get_stage_slot_replacement_track(
-                self._selected_stage,
-                slot.slot_key,
-            )
+            assignment, using_legacy_menu_fallback = self._get_effective_slot_assignment(slot)
             row = ctk.CTkFrame(self.safe_slot_frame, fg_color="#1e1e38", corner_radius=6)
             row.pack(fill="x", pady=2)
 
@@ -973,23 +978,29 @@ class MusicPage(BasePage):
             meta = slot.filename or slot.ui_bgm_id
             assigned_text = assignment.display_name if assignment else "No replacement assigned"
             assigned_color = "#2fa572" if assignment else "#888888"
+            title_text = title if assignment is None else f"{title} -> {assigned_text}"
+            status_text = "Default slot"
+            if assignment is not None:
+                status_text = "Replaced"
+                if using_legacy_menu_fallback:
+                    status_text = "Replaced from legacy menu selection"
 
             ctk.CTkLabel(
                 row,
-                text=title,
+                text=title_text,
                 font=ctk.CTkFont(size=12, weight="bold"),
                 anchor="w",
             ).pack(fill="x", padx=10, pady=(8, 0))
             ctk.CTkLabel(
                 row,
-                text=f"{meta} | incidence {slot.incidence}",
+                text=f"{meta} | incidence {slot.incidence} | {status_text}",
                 font=ctk.CTkFont(size=10),
                 text_color="#777799",
                 anchor="w",
             ).pack(fill="x", padx=10, pady=(0, 2))
             ctk.CTkLabel(
                 row,
-                text=f"Replacement: {assigned_text}",
+                text=f"{title} -> {assigned_text}" if assignment else "No replacement assigned",
                 font=ctk.CTkFont(size=11),
                 text_color=assigned_color,
                 anchor="w",
@@ -1156,6 +1167,33 @@ class MusicPage(BasePage):
         else:
             self._update_track_selection_state()
 
+    def _get_effective_slot_assignment(self, slot):
+        assignment = self.app.music_manager.get_stage_slot_replacement_track(
+            self._selected_stage,
+            slot.slot_key,
+        )
+        if assignment is not None:
+            return assignment, False
+        if self._selected_stage == self._MENU_STAGE_ID:
+            menu_tracks = self.app.music_manager.get_tracks_for_stage(self._MENU_STAGE_ID)
+            if menu_tracks:
+                return menu_tracks[0], True
+        return None, False
+
+    def _snapshot_legacy_menu_tracks(self):
+        return list(self.app.music_manager.get_tracks_for_stage(self._MENU_STAGE_ID))
+
+    def _restore_legacy_menu_tracks(self, tracks):
+        if self._MENU_STAGE_ID not in self.app.music_manager.stage_playlists:
+            if not tracks:
+                return
+            self.app.music_manager.assign_track_to_stage(tracks[0], self._MENU_STAGE_ID)
+            for track in tracks[1:]:
+                self.app.music_manager.assign_track_to_stage(track, self._MENU_STAGE_ID)
+            return
+
+        self.app.music_manager.stage_playlists[self._MENU_STAGE_ID].tracks = list(tracks)
+
     def _assign_selected_track_to_slot(self, slot):
         if not self._selected_stage:
             messagebox.showwarning("Warning", "Select a stage first.")
@@ -1168,12 +1206,17 @@ class MusicPage(BasePage):
 
         stage_id = self._selected_stage
         previous_track = self.app.music_manager.get_stage_slot_replacement_track(stage_id, slot.slot_key)
+        previous_menu_tracks = self._snapshot_legacy_menu_tracks() if stage_id == self._MENU_STAGE_ID else []
 
         def do_assign():
             self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, track)
+            if stage_id == self._MENU_STAGE_ID:
+                self.app.music_manager.clear_stage(stage_id)
 
         def undo_assign():
             self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, previous_track)
+            if stage_id == self._MENU_STAGE_ID:
+                self._restore_legacy_menu_tracks(previous_menu_tracks)
 
         action = Action(
             description=f"Replace slot {slot.filename or slot.ui_bgm_id} on {VANILLA_STAGES.get(stage_id, stage_id)}",
@@ -1194,14 +1237,20 @@ class MusicPage(BasePage):
 
         stage_id = self._selected_stage
         previous_track = self.app.music_manager.get_stage_slot_replacement_track(stage_id, slot.slot_key)
-        if previous_track is None:
+        previous_menu_tracks = self._snapshot_legacy_menu_tracks() if stage_id == self._MENU_STAGE_ID else []
+        has_legacy_menu_fallback = stage_id == self._MENU_STAGE_ID and bool(previous_menu_tracks)
+        if previous_track is None and not has_legacy_menu_fallback:
             return
 
         def do_clear():
             self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, None)
+            if stage_id == self._MENU_STAGE_ID:
+                self.app.music_manager.clear_stage(stage_id)
 
         def undo_clear():
             self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, previous_track)
+            if stage_id == self._MENU_STAGE_ID:
+                self._restore_legacy_menu_tracks(previous_menu_tracks)
 
         action = Action(
             description=f"Clear replacement for {slot.filename or slot.ui_bgm_id}",
@@ -1222,16 +1271,22 @@ class MusicPage(BasePage):
             return
 
         existing = dict(self.app.music_manager.replacement_assignments.get(self._selected_stage, {}))
-        if not existing:
+        previous_menu_tracks = self._snapshot_legacy_menu_tracks() if self._selected_stage == self._MENU_STAGE_ID else []
+        if not existing and not previous_menu_tracks:
             return
 
         stage_id = self._selected_stage
 
         def do_clear():
             self.app.music_manager.clear_stage_replacements(stage_id)
+            if stage_id == self._MENU_STAGE_ID:
+                self.app.music_manager.clear_stage(stage_id)
 
         def undo_clear():
-            self.app.music_manager.replacement_assignments[stage_id] = dict(existing)
+            if existing:
+                self.app.music_manager.replacement_assignments[stage_id] = dict(existing)
+            if stage_id == self._MENU_STAGE_ID:
+                self._restore_legacy_menu_tracks(previous_menu_tracks)
 
         action = Action(
             description=f"Clear safe replacements for {VANILLA_STAGES.get(stage_id, stage_id)}",
