@@ -50,8 +50,9 @@ class PluginDesyncReport:
 
 # Known safe visual/content extensions (client-only effects).
 SAFE_EXTENSIONS = frozenset({
-    ".nutexb", ".bntx", ".png", ".jpg", ".jpeg", ".tga", ".dds",
+    ".nutexb", ".bntx", ".png", ".jpg", ".jpeg", ".webp", ".tga", ".dds",
     ".numdlb", ".numshb", ".numatb", ".nusrcmdlb", ".nuhlpb",
+    ".eff",
     ".nus3audio", ".nus3bank", ".wav", ".ogg", ".mp3", ".flac",
     ".bfsar", ".bfstm", ".bfwav", ".lopus", ".opus", ".idsp", ".bwav",
     ".xmsbt", ".msbt",

@@ -1,7 +1,12 @@
 from pathlib import Path
 import zipfile
 
-from src.core.content_importer import import_mod_package, import_plugin_package
+from src.core.content_importer import (
+    apply_mod_voice_pack_scope,
+    import_mod_package,
+    import_plugin_package,
+    inspect_mod_voice_pack,
+)
 from src.core.skin_slot_utils import analyze_relative_paths, choose_primary_skin_slot
 from src.paths import SSBU_TITLE_ID
 
@@ -316,6 +321,62 @@ def test_import_mod_package_can_replace_existing_mod_without_self_conflict(tmp_p
     assert summary.replaced_paths == 1
     assert (mods_path / "Mario Skin" / "fighter" / "mario" / "model" / "body" / "c00" / "new.bin").exists()
     assert not (mods_path / "Mario Skin" / "fighter" / "mario" / "model" / "body" / "c00" / "old.bin").exists()
+
+
+def test_inspect_mod_voice_pack_prefers_visual_slot_when_available(tmp_path: Path):
+    mod_path = tmp_path / "mods" / "Sonic Skin"
+    (mod_path / "fighter" / "sonic" / "model" / "body" / "c05").mkdir(parents=True)
+    (mod_path / "fighter" / "sonic" / "model" / "body" / "c05" / "model.bin").write_bytes(b"skin")
+    (mod_path / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (mod_path / "sound" / "bank" / "fighter_voice" / "vc_sonic_c05.nus3audio").write_bytes(b"voice")
+
+    info = inspect_mod_voice_pack(mod_path)
+
+    assert info is not None
+    assert info.fighter == "sonic"
+    assert info.source_slots == [5]
+    assert info.visual_slots == [5]
+    assert info.recommended_source_slot == 5
+
+
+def test_apply_mod_voice_pack_scope_can_retarget_to_single_slot(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_path = mods_path / "Sonic Skin"
+    (mod_path / "fighter" / "sonic" / "model" / "body" / "c05").mkdir(parents=True)
+    (mod_path / "fighter" / "sonic" / "model" / "body" / "c05" / "model.bin").write_bytes(b"skin")
+    (mod_path / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (mod_path / "sound" / "bank" / "fighter_voice" / "vc_sonic_c05.nus3audio").write_bytes(b"voice")
+    (mod_path / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (mod_path / "sound" / "bank" / "fighter" / "se_sonic_c05.nus3audio").write_bytes(b"sfx")
+
+    broad = mods_path / "Broad Voice"
+    (broad / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (broad / "sound" / "bank" / "fighter_voice" / "vc_sonic_c02.nus3audio").write_bytes(b"old-vc")
+    (broad / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (broad / "sound" / "bank" / "fighter" / "se_sonic_c02.nus3audio").write_bytes(b"old-se")
+
+    summary = apply_mod_voice_pack_scope(mod_path, mods_path, mode="single_slot", source_slot=5, target_slot=2)
+
+    assert summary.files_written == 2
+    assert summary.target_slots == [2]
+    assert summary.support_mod_adjustments == 1
+    assert not (broad / "sound" / "bank" / "fighter_voice" / "vc_sonic_c02.nus3audio").exists()
+    assert (mod_path / "sound" / "bank" / "fighter_voice" / "vc_sonic_c02.nus3audio").exists()
+    assert not (mod_path / "sound" / "bank" / "fighter_voice" / "vc_sonic_c05.nus3audio").exists()
+
+
+def test_apply_mod_voice_pack_scope_can_expand_character_wide(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_path = mods_path / "Sonic Skin"
+    (mod_path / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (mod_path / "sound" / "bank" / "fighter_voice" / "vc_sonic_c05.nus3audio").write_bytes(b"voice")
+
+    summary = apply_mod_voice_pack_scope(mod_path, mods_path, mode="character_wide", source_slot=5)
+
+    assert summary.files_written == 8
+    assert summary.target_slots == list(range(8))
+    for slot in range(8):
+        assert (mod_path / "sound" / "bank" / "fighter_voice" / f"vc_sonic_c{slot:02d}.nus3audio").exists()
 
 
 def test_choose_primary_skin_slot_prefers_name_hint_when_present() -> None:

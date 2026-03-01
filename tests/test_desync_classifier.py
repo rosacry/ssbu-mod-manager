@@ -21,6 +21,11 @@ def test_classify_mod_file_audio_strict_mode() -> None:
     assert strict == DesyncRiskLevel.CONDITIONALLY_SHARED
 
 
+def test_classify_mod_file_preview_and_effect_assets_are_safe_client_only() -> None:
+    assert classify_mod_file("preview.webp")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+    assert classify_mod_file("fighter/edge/ef_edge_c01.eff")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+
+
 def test_unknown_mod_file_is_review_and_gameplay_affecting() -> None:
     level = classify_mod_file("mystery/content/custom_blob.bin")[0]
     assert level == DesyncRiskLevel.UNKNOWN_NEEDS_REVIEW

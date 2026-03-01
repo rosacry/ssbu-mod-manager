@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.3.1**.
+Current release version: **1.3.2**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -14,6 +14,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: imports extracted mod folders or folders full of `.zip` / `.7z` / `.rar` downloads, unwraps common extra wrapper folders, auto-selects a single base/default skin from multi-variant packs, and skips/report unsupported complex multi-fighter packs.
   - Mods: detects actual skin-slot overlaps during import, can replace or auto-shift skins into open default slots, and no longer treats voice-only or effect-only slot packs as if they occupied the character's skin slot.
   - Mods: auto-prunes exact slot-scoped support-file conflicts from older support-only packs when a more specific imported skin/voice/effect override should win, and stores removed files under `_import_backups`.
+  - Mods: right-click voice-pack controls let you retarget a slot-scoped voice pack to another costume slot or duplicate it across the entire fighter without touching the visual skin files.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
 - Music page with PRC-backed stage slot discovery, Wi-Fi-safer existing-slot replacement overlays, a standalone library player queue, legacy stage-playlist editing, favorites list/filtering, preview playback, and an explicit `.nus3audio`-only track list.
@@ -54,7 +55,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.3.1-windows.zip`
+- `dist/SSBUModManager-1.3.2-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -85,6 +86,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Page navigation now uses a very short settle mask during tab switches to hide first-frame partial rendering on heavier pages.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
 - Mods can be right-click renamed with a choice to keep it app-only or rename the real folder.
+- Mods with slot-scoped voice files can be right-click configured so their voice pack stays on one slot, moves to another slot, or becomes fighter-wide.
 - Nested wrapper folders are auto-flattened on import and also surfaced as conflicts during scans.
 - Conflicts page initial state and empty states are centered in-view to keep the primary action visible.
 - Page switches pre-render target content before reveal to reduce mid-transition pop-in.

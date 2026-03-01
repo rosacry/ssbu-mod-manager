@@ -63,6 +63,26 @@ class ImportSummary:
 
 
 @dataclass
+class VoicePackScopeInfo:
+    fighter: str
+    source_slots: list[int] = field(default_factory=list)
+    recommended_source_slot: int = 0
+    visual_slots: list[int] = field(default_factory=list)
+
+
+@dataclass
+class VoicePackScopeSummary:
+    mod_name: str
+    fighter: str
+    source_slot: int
+    target_slots: list[int] = field(default_factory=list)
+    files_written: int = 0
+    support_mod_adjustments: int = 0
+    support_files_pruned: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SlotConflictInfo:
     """Information provided to a caller when an import hits a slot overlap."""
 
@@ -83,6 +103,119 @@ class _PreparedModImport:
 
 
 SlotConflictResolver = Callable[[SlotConflictInfo], str]
+
+
+def inspect_mod_voice_pack(mod_path: Path) -> VoicePackScopeInfo | None:
+    mod_path = Path(mod_path)
+    if not mod_path.exists() or not mod_path.is_dir():
+        return None
+
+    analysis = analyze_mod_directory(mod_path, [mod_path.name])
+    fighter_sound_slots = {
+        fighter: sorted(
+            slot
+            for slot in slots
+            if "sound" in analysis.categories_for_slot(fighter, slot)
+        )
+        for fighter, slots in analysis.fighter_slots.items()
+    }
+    fighter_sound_slots = {
+        fighter: slots
+        for fighter, slots in fighter_sound_slots.items()
+        if slots
+    }
+    if not fighter_sound_slots:
+        return None
+
+    if analysis.primary_fighter in fighter_sound_slots:
+        fighter = str(analysis.primary_fighter)
+    elif len(fighter_sound_slots) == 1:
+        fighter = next(iter(fighter_sound_slots))
+    else:
+        fighter = min(
+            fighter_sound_slots.keys(),
+            key=lambda key: (
+                len(fighter_sound_slots[key]),
+                min(fighter_sound_slots[key]),
+                key,
+            ),
+        )
+
+    source_slots = fighter_sound_slots[fighter]
+    recommended = source_slots[0]
+    if analysis.primary_slot in source_slots:
+        recommended = int(analysis.primary_slot)
+
+    return VoicePackScopeInfo(
+        fighter=fighter,
+        source_slots=source_slots,
+        recommended_source_slot=recommended,
+        visual_slots=list(analysis.visual_fighter_slots.get(fighter, [])),
+    )
+
+
+def apply_mod_voice_pack_scope(
+    mod_path: Path,
+    mods_path: Path,
+    mode: str,
+    source_slot: int | None = None,
+    target_slot: int | None = None,
+) -> VoicePackScopeSummary:
+    mod_path = Path(mod_path)
+    mods_path = Path(mods_path)
+    info = inspect_mod_voice_pack(mod_path)
+    if info is None:
+        raise ValueError("This mod does not contain any slot-scoped fighter voice files.")
+
+    fighter = str(info.fighter)
+    chosen_source_slot = int(source_slot if source_slot is not None else info.recommended_source_slot)
+    if chosen_source_slot not in info.source_slots:
+        raise ValueError(f"Voice source slot {fighter} c{chosen_source_slot:02d} was not found in this mod.")
+
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode == "single_slot":
+        if target_slot is None:
+            raise ValueError("Choose a target slot for single-slot voice assignment.")
+        target_slots = [int(target_slot)]
+    elif normalized_mode == "character_wide":
+        target_slots = list(range(8))
+    else:
+        raise ValueError("Unsupported voice pack mode.")
+
+    temp_dir = tempfile.TemporaryDirectory(prefix="ssbumm_voice_scope_")
+    summary = ImportSummary()
+    files_written = 0
+    try:
+        temp_root = Path(temp_dir.name) / mod_path.name
+        shutil.copytree(mod_path, temp_root)
+        _remove_voice_files_for_fighter(temp_root, fighter)
+        files_written = _copy_voice_files_from_source_slot(
+            mod_path,
+            temp_root,
+            fighter,
+            chosen_source_slot,
+            target_slots,
+        )
+        if files_written == 0:
+            raise ValueError(
+                f"No voice files for {fighter} c{chosen_source_slot:02d} were available to duplicate."
+            )
+
+        _resolve_support_path_conflicts(temp_root, mod_path.name, mods_path, summary)
+        _replace_directory_from_temp(mod_path, temp_root)
+    finally:
+        temp_dir.cleanup()
+
+    return VoicePackScopeSummary(
+        mod_name=mod_path.name,
+        fighter=fighter,
+        source_slot=chosen_source_slot,
+        target_slots=target_slots,
+        files_written=files_written,
+        support_mod_adjustments=summary.support_mod_adjustments,
+        support_files_pruned=summary.support_files_pruned,
+        warnings=list(summary.warnings),
+    )
 
 
 def import_mod_package(
@@ -745,6 +878,46 @@ def _resolve_support_path_conflicts(
         )
 
 
+def _remove_voice_files_for_fighter(mod_root: Path, fighter: str) -> None:
+    fighter = str(fighter).lower()
+    for file_path in list(mod_root.rglob("*")):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(mod_root)).replace("\\", "/")
+        if not _is_voice_file_for_fighter_slot(rel, fighter):
+            continue
+        file_path.unlink()
+        _prune_empty_parents(file_path.parent, mod_root)
+
+
+def _copy_voice_files_from_source_slot(
+    source_root: Path,
+    dest_root: Path,
+    fighter: str,
+    source_slot: int,
+    target_slots: list[int],
+) -> int:
+    fighter = str(fighter).lower()
+    written = 0
+    seen: set[str] = set()
+    for file_path in source_root.rglob("*"):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(source_root)).replace("\\", "/")
+        if not _is_voice_file_for_fighter_slot(rel, fighter, source_slot):
+            continue
+        for slot in target_slots:
+            new_rel = _retarget_voice_relative_path(rel, source_slot, int(slot))
+            if new_rel in seen:
+                continue
+            seen.add(new_rel)
+            out_path = dest_root / new_rel
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(file_path, out_path)
+            written += 1
+    return written
+
+
 def _flatten_nested_mod(mod_path: Path) -> bool:
     flattened = False
     while True:
@@ -887,6 +1060,31 @@ def _is_support_conflict_candidate(relative_path: str) -> bool:
     )
 
 
+def _is_voice_file_for_fighter_slot(relative_path: str, fighter: str, slot: int | None = None) -> bool:
+    rel = relative_path.replace("\\", "/").lower()
+    fighter = str(fighter).lower()
+    if not (
+        rel.startswith("sound/bank/fighter/")
+        or rel.startswith("sound/bank/fighter_voice/")
+    ):
+        return False
+    if f"_{fighter}_" not in rel:
+        return False
+    if slot is None:
+        return True
+    return f"_c{int(slot):02d}" in rel
+
+
+def _retarget_voice_relative_path(relative_path: str, source_slot: int, target_slot: int) -> str:
+    source_num = f"{int(source_slot):02d}"
+    target_num = f"{int(target_slot):02d}"
+    return re.sub(
+        rf"(?i)_c{source_num}(?=\.|_)",
+        f"_c{target_num}",
+        relative_path.replace("\\", "/"),
+    )
+
+
 def _prune_existing_support_files(
     mods_path: Path,
     mod_name: str,
@@ -939,6 +1137,24 @@ def _disable_support_only_mod(mods_path: Path, mod_name: str, summary: ImportSum
     summary.warnings.append(
         f"Disabled support mod '{mod_name}' after all effective conflicting files were pruned."
     )
+
+
+def _replace_directory_from_temp(dest: Path, replacement_root: Path) -> None:
+    dest = Path(dest)
+    replacement_root = Path(replacement_root)
+    backup = dest.parent / f"{dest.name}.ssbumm-backup"
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    dest.rename(backup)
+    try:
+        shutil.move(str(replacement_root), str(dest))
+        shutil.rmtree(backup, ignore_errors=True)
+    except Exception:
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        if backup.exists():
+            backup.rename(dest)
+        raise
 
 
 def _has_effective_mod_content(mod_root: Path) -> bool:

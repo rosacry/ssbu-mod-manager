@@ -6,7 +6,11 @@ from collections import defaultdict
 from pathlib import Path
 from src.ui.base_page import BasePage
 from src.models.mod import Mod, ModStatus
-from src.core.content_importer import import_mod_package
+from src.core.content_importer import (
+    apply_mod_voice_pack_scope,
+    import_mod_package,
+    inspect_mod_voice_pack,
+)
 from src.core.runtime_guard import ContentOperationBlockedError
 from src.utils.logger import logger
 from src.utils.action_history import action_history, Action
@@ -480,6 +484,13 @@ class ModsPage(BasePage):
             "Copy Online Risk Details",
             lambda m=mod: self._copy_mod_risk_details(m),
         )
+        voice_info = self._inspect_voice_pack_info(mod)
+        if voice_info is not None:
+            self._add_context_item(
+                frame,
+                "Configure Voice Pack...",
+                lambda m=mod: self._configure_voice_pack_scope(m),
+            )
         if self._has_custom_mod_name(mod):
             self._add_context_item(
                 frame,
@@ -738,6 +749,193 @@ class ModsPage(BasePage):
             messagebox.showinfo("Copied", "Online risk details copied to clipboard.")
         except Exception:
             messagebox.showerror("Error", "Failed to copy risk details.")
+
+    def _inspect_voice_pack_info(self, mod):
+        try:
+            return inspect_mod_voice_pack(mod.path)
+        except Exception:
+            return None
+
+    def _configure_voice_pack_scope(self, mod):
+        settings = self.app.config_manager.settings
+        mods_path = settings.mods_path
+        if not mods_path:
+            messagebox.showerror("Voice Pack", "Mods path is not configured in Settings.")
+            return
+
+        info = self._inspect_voice_pack_info(mod)
+        if info is None:
+            messagebox.showinfo("Voice Pack", "This mod does not contain a slot-scoped voice pack.")
+            return
+
+        result = self._show_voice_pack_scope_dialog(mod, info)
+        if result is None:
+            return
+
+        try:
+            summary = apply_mod_voice_pack_scope(
+                mod.path,
+                mods_path,
+                mode=result["mode"],
+                source_slot=result["source_slot"],
+                target_slot=result.get("target_slot"),
+            )
+            lines = [
+                f"Configured voice pack for {summary.fighter}.",
+                f"Source slot: c{summary.source_slot:02d}.",
+            ]
+            if len(summary.target_slots) == 8:
+                lines.append("Applied to all 8 default slots.")
+            else:
+                lines.append(f"Applied only to c{summary.target_slots[0]:02d}.")
+            lines.append(f"Wrote {summary.files_written} voice file(s).")
+            if summary.support_mod_adjustments:
+                lines.append(
+                    f"Adjusted {summary.support_mod_adjustments} support mod(s) and pruned "
+                    f"{summary.support_files_pruned} conflicting support file(s)."
+                )
+            if summary.warnings:
+                lines.append("")
+                lines.extend(summary.warnings[:5])
+                if len(summary.warnings) > 5:
+                    lines.append(f"...and {len(summary.warnings) - 5} more warning(s).")
+            messagebox.showinfo("Voice Pack Updated", "\n".join(lines))
+            self._force_refresh()
+        except Exception as e:
+            logger.error("Mods", f"Voice pack configuration failed: {e}")
+            messagebox.showerror("Voice Pack Failed", str(e))
+
+    def _show_voice_pack_scope_dialog(self, mod, info):
+        result = {"value": None}
+        dialog = ctk.CTkToplevel(self)
+        dialog.withdraw()
+        dialog.title("Configure Voice Pack")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#0f1327")
+
+        shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
+                             border_width=1, border_color="#304378")
+        shell.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            shell, text="Configure Voice Pack", anchor="w",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).pack(fill="x", padx=14, pady=(12, 6))
+
+        current_visual = ", ".join(f"c{slot:02d}" for slot in info.visual_slots) or "none"
+        current_voice = ", ".join(f"c{slot:02d}" for slot in info.source_slots)
+        ctk.CTkLabel(
+            shell,
+            text=(
+                f"Mod: {mod.original_name}\n"
+                f"Fighter: {info.fighter}\n"
+                f"Visual slots in this mod: {current_visual}\n"
+                f"Voice slots currently present: {current_voice}"
+            ),
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=12),
+            text_color="#b9bfd8",
+        ).pack(fill="x", padx=14)
+
+        form = ctk.CTkFrame(shell, fg_color="transparent")
+        form.pack(fill="x", padx=14, pady=(12, 10))
+
+        ctk.CTkLabel(form, text="Use Voice From", anchor="w").pack(fill="x")
+        source_var = tk.StringVar(value=f"c{info.recommended_source_slot:02d}")
+        source_menu = ctk.CTkOptionMenu(
+            form,
+            values=[f"c{slot:02d}" for slot in info.source_slots],
+            variable=source_var,
+            width=150,
+            corner_radius=8,
+            height=32,
+        )
+        source_menu.pack(anchor="w", pady=(4, 10))
+
+        ctk.CTkLabel(form, text="Scope", anchor="w").pack(fill="x")
+        mode_var = tk.StringVar(value="single_slot")
+        scope_row = ctk.CTkFrame(form, fg_color="transparent")
+        scope_row.pack(fill="x", pady=(4, 10))
+
+        ctk.CTkRadioButton(
+            scope_row,
+            text="Single Slot",
+            variable=mode_var,
+            value="single_slot",
+        ).pack(anchor="w")
+        ctk.CTkRadioButton(
+            scope_row,
+            text="Whole Character",
+            variable=mode_var,
+            value="character_wide",
+        ).pack(anchor="w", pady=(4, 0))
+
+        ctk.CTkLabel(form, text="Target Slot", anchor="w").pack(fill="x")
+        default_target = info.visual_slots[0] if info.visual_slots else info.recommended_source_slot
+        target_var = tk.StringVar(value=f"c{default_target:02d}")
+        target_menu = ctk.CTkOptionMenu(
+            form,
+            values=[f"c{slot:02d}" for slot in range(8)],
+            variable=target_var,
+            width=150,
+            corner_radius=8,
+            height=32,
+        )
+        target_menu.pack(anchor="w", pady=(4, 10))
+
+        note_label = ctk.CTkLabel(
+            form,
+            text=(
+                "Single Slot: apply the selected voice files only to one costume slot.\n"
+                "Whole Character: duplicate the selected voice files across c00-c07."
+            ),
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=11),
+            text_color="#8e97bc",
+        )
+        note_label.pack(fill="x")
+
+        btn_row = ctk.CTkFrame(shell, fg_color="transparent")
+        btn_row.pack(fill="x", padx=14, pady=(4, 12))
+
+        def close_with(value=None):
+            result["value"] = value
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        def on_apply():
+            mode = mode_var.get()
+            payload = {
+                "mode": mode,
+                "source_slot": int(source_var.get()[1:]),
+            }
+            if mode == "single_slot":
+                payload["target_slot"] = int(target_var.get()[1:])
+            close_with(payload)
+
+        ctk.CTkButton(
+            btn_row, text="Cancel", width=96, height=30,
+            fg_color="#2f3557", hover_color="#3f476f",
+            command=lambda: close_with(None),
+        ).pack(side="right")
+
+        ctk.CTkButton(
+            btn_row, text="Apply", width=96, height=30,
+            fg_color="#1f538d", hover_color="#163b6a",
+            command=on_apply,
+        ).pack(side="right", padx=(0, 8))
+
+        dialog.bind("<Escape>", lambda _e: close_with(None))
+        dialog.bind("<Return>", lambda _e: on_apply())
+        self._center_dialog(dialog, width=500, height=390)
+        self._present_modal_dialog(dialog, animate_open=False)
+        self.wait_window(dialog)
+        return result["value"]
 
     def _on_toggle(self, mod):
         try:
