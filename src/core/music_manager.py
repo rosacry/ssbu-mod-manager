@@ -5,10 +5,17 @@ import shutil
 import threading
 from pathlib import Path
 from typing import Optional
-from src.models.music import MusicTrack, StagePlaylist, StageInfo
+from src.models.music import (
+    MusicReplacementAssignment,
+    MusicTrack,
+    StageInfo,
+    StagePlaylist,
+    StageTrackSlot,
+)
 from src.constants import VANILLA_STAGES
 from src.utils.xmsbt_parser import parse_xmsbt, extract_entries_from_msbt
 from src.utils.file_utils import backup_file
+from src.utils.resource_path import resource_path
 from src.config import CONFIG_DIR
 from src.utils.logger import logger
 
@@ -137,12 +144,23 @@ MUSIC_CONFIG_MOD_DIRNAME = "_MusicConfig"
 MUSIC_CONFIG_FILENAME = "music_config.json"
 ASSIGNMENTS_FILENAME = "music_assignments.json"
 LIBRARY_FILENAME = "music_library.json"
+REPLACEMENTS_FILENAME = "music_replacements.json"
+REPLACEMENT_MANIFEST_FILENAME = "music_replacement_manifest.json"
+REPLACEMENT_METADATA_FILENAME = "wifi_safe_replacements.json"
+VANILLA_BGM_REFERENCE_PATH = "assets/vanilla_bgm_ids.txt"
+STREAM_PREFIX = "stream;"
+SOUND_BGM_PARTS = ("sound", "bgm")
 MOD_FOLDER_PREFIXES_TO_SKIP = (".", "_")
 TRACK_SCAN_CANCEL_LOG = "Track discovery cancelled"
 BGM_MESSAGE_MARKERS = ("bgm", "msg_bgm")
 BGM_LABEL_MARKERS = ("bgm_title", "bgm_menu")
 BGM_SUFFIX_SEPARATOR = "_"
 FINGERPRINT_ATTR_NAME = "_last_msbt_fingerprint"
+UI_BGM_PREFIX = "ui_bgm_"
+STREAM_SET_PREFIX = "set_"
+NUS3AUDIO_SUFFIX = ".nus3audio"
+STAGE_ID_TOKEN = "ui_stage_id_"
+LEGACY_STAGE_ID_TOKEN = "ui_stage_"
 
 
 def beautify_track_name(track_id: str) -> str:
@@ -201,13 +219,47 @@ def beautify_track_name(track_id: str) -> str:
     return song_name
 
 
+def infer_bgm_filename(ui_bgm_id: str, stream_set_id: str = "") -> str:
+    """Infer a concrete `bgm_*.nus3audio` filename for a stage slot."""
+    stream_value = (stream_set_id or "").strip()
+    if stream_value:
+        trimmed = stream_value
+        if trimmed.lower().startswith(STREAM_SET_PREFIX):
+            trimmed = trimmed[len(STREAM_SET_PREFIX):]
+        if trimmed.lower().startswith(TRACK_ID_PREFIX):
+            trimmed = trimmed[len(TRACK_ID_PREFIX):]
+        if trimmed:
+            return f"{TRACK_ID_PREFIX}{trimmed}{NUS3AUDIO_SUFFIX}"
+
+    bgm_value = (ui_bgm_id or "").strip()
+    if bgm_value.lower().startswith(UI_BGM_PREFIX):
+        bgm_value = bgm_value[len(UI_BGM_PREFIX):]
+    elif bgm_value.lower().startswith(TRACK_ID_PREFIX):
+        bgm_value = bgm_value[len(TRACK_ID_PREFIX):]
+
+    if not bgm_value:
+        return ""
+    return f"{TRACK_ID_PREFIX}{bgm_value}{NUS3AUDIO_SUFFIX}"
+
+
+def normalize_stage_id(stage_id: str) -> str:
+    cleaned = (stage_id or "").strip()
+    if cleaned.startswith(LEGACY_STAGE_ID_TOKEN):
+        cleaned = cleaned.replace(LEGACY_STAGE_ID_TOKEN, STAGE_ID_TOKEN, 1)
+    return cleaned
+
+
 class MusicManager:
     def __init__(self):
         self.tracks: list[MusicTrack] = []
         self.stage_playlists: dict[str, StagePlaylist] = {}
+        self.stage_slots: dict[str, list[StageTrackSlot]] = {}
+        self.replacement_assignments: dict[str, dict[str, MusicReplacementAssignment]] = {}
         self.exclude_vanilla = False
         self.favorite_track_ids: set[str] = set()
         self._library_loaded = False
+        self._vanilla_bgm_ids: set[str] | None = None
+        self._slot_source_mod: Path | None = None
 
     @staticmethod
     def _is_supported_track_file(file_path: Path) -> bool:
@@ -229,6 +281,55 @@ class MusicManager:
             return False
         logger.info("MusicManager", TRACK_SCAN_CANCEL_LOG)
         return True
+
+    def _load_vanilla_bgm_ids(self) -> set[str]:
+        if self._vanilla_bgm_ids is not None:
+            return self._vanilla_bgm_ids
+
+        ids: set[str] = set()
+        try:
+            ref_path = Path(resource_path(VANILLA_BGM_REFERENCE_PATH))
+            if ref_path.exists():
+                with open(ref_path, "r", encoding="utf-8") as handle:
+                    ids = {
+                        str(line).strip().lower()
+                        for line in handle
+                        if str(line).strip()
+                    }
+        except OSError as exc:
+            logger.warn("MusicManager", f"Failed to load vanilla BGM reference: {exc}")
+
+        self._vanilla_bgm_ids = ids
+        return ids
+
+    @staticmethod
+    def _safe_field_str(entry, field: str) -> str:
+        try:
+            return str(entry[field].value)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _safe_field_int(entry, field: str, default: int = 0) -> int:
+        try:
+            return int(entry[field].value)
+        except Exception:
+            return default
+
+    def _resolve_stage_id(self, raw_stage_id: str) -> str:
+        normalized = normalize_stage_id(raw_stage_id)
+        if normalized in VANILLA_STAGES:
+            return normalized
+
+        normalized_suffix = normalized.replace(STAGE_ID_TOKEN, "", 1)
+        for stage_id in VANILLA_STAGES:
+            if stage_id == normalized:
+                return stage_id
+            if normalized and (normalized in stage_id or stage_id in normalized):
+                return stage_id
+            if stage_id.replace(STAGE_ID_TOKEN, "", 1) == normalized_suffix:
+                return stage_id
+        return normalized
 
     def discover_tracks(
         self,
@@ -314,10 +415,14 @@ class MusicManager:
 
         if self._scan_should_abort(cancel_event):
             return self.tracks
+        self._discover_stage_slots(mods_root)
+        if self._scan_should_abort(cancel_event):
+            return self.tracks
         if self.stage_playlists:
             self._rebind_stage_playlists_to_current_tracks()
         else:
             self._load_saved_assignments()
+        self._load_saved_replacements()
 
         return self.tracks
 
@@ -452,6 +557,92 @@ class MusicManager:
             if best_match:
                 track.display_name = best_match
 
+    def _discover_stage_slots(self, mods_root: Path) -> None:
+        """Build per-stage slot metadata from discovered PRC databases."""
+        self.stage_slots = {}
+        self._slot_source_mod = None
+
+        source_mod = self._find_music_source_mod(mods_root)
+        if source_mod is None:
+            return
+
+        stage_db_path = source_mod / "ui" / "param" / "database" / "ui_stage_db.prc"
+        bgm_db_path = source_mod / "ui" / "param" / "database" / "ui_bgm_db.prc"
+        if not stage_db_path.exists() or not bgm_db_path.exists():
+            return
+
+        try:
+            import pyprc
+        except ImportError:
+            logger.warn("MusicManager", "pyprc not installed - stage slot discovery skipped")
+            return
+
+        try:
+            vanilla_ids = self._load_vanilla_bgm_ids()
+            bgm_prc = pyprc.param(str(bgm_db_path))
+            bgm_db = list(bgm_prc)[0][1]
+            bgm_lookup: dict[str, dict[str, str | int | bool]] = {}
+            for entry in bgm_db:
+                ui_bgm_id = self._safe_field_str(entry, "ui_bgm_id")
+                if not ui_bgm_id:
+                    continue
+                stream_set_id = self._safe_field_str(entry, "stream_set_id")
+                filename = infer_bgm_filename(ui_bgm_id, stream_set_id)
+                display_name = beautify_track_name(Path(filename).stem) if filename else beautify_track_name(ui_bgm_id)
+                bgm_lookup[ui_bgm_id] = {
+                    "stream_set_id": stream_set_id,
+                    "filename": filename,
+                    "display_name": display_name,
+                    "save_no": self._safe_field_int(entry, "save_no", -1),
+                    "menu_value": self._safe_field_int(entry, "menu_value", 0),
+                    "is_likely_vanilla": filename.lower() in vanilla_ids if filename else False,
+                }
+
+            stage_prc = pyprc.param(str(stage_db_path))
+            stage_db = list(stage_prc)[0][1]
+            discovered: dict[str, list[StageTrackSlot]] = {}
+            for stage_entry in stage_db:
+                raw_stage_id = self._safe_field_str(stage_entry, "ui_stage_id")
+                if not raw_stage_id:
+                    continue
+                stage_id = self._resolve_stage_id(raw_stage_id)
+                if stage_id not in VANILLA_STAGES:
+                    continue
+                try:
+                    bgm_set_list = stage_entry["bgm_set_list"]
+                except Exception:
+                    continue
+
+                slots: list[StageTrackSlot] = []
+                for order_number, bgm_ref in enumerate(list(bgm_set_list)):
+                    ui_bgm_id = self._safe_field_str(bgm_ref, "ui_bgm_id")
+                    if not ui_bgm_id:
+                        continue
+                    meta = bgm_lookup.get(ui_bgm_id, {})
+                    filename = str(meta.get("filename", "") or infer_bgm_filename(ui_bgm_id))
+                    slot_key = filename or ui_bgm_id
+                    slots.append(
+                        StageTrackSlot(
+                            stage_id=stage_id,
+                            stage_name=VANILLA_STAGES.get(stage_id, stage_id),
+                            slot_key=slot_key,
+                            ui_bgm_id=ui_bgm_id,
+                            filename=filename,
+                            display_name=str(meta.get("display_name", "") or beautify_track_name(Path(filename or ui_bgm_id).stem)),
+                            incidence=self._safe_field_int(bgm_ref, "incidence", DEFAULT_BGM_INCIDENCE),
+                            order_number=order_number,
+                            is_likely_vanilla=bool(meta.get("is_likely_vanilla", False)),
+                        )
+                    )
+
+                if slots:
+                    discovered[stage_id] = slots
+
+            self.stage_slots = discovered
+            self._slot_source_mod = source_mod
+        except Exception as exc:
+            logger.warn("MusicManager", f"Failed to discover stage slots: {exc}")
+
     def get_stage_list(self) -> list[StageInfo]:
         """Get list of all vanilla stages."""
         return [
@@ -547,10 +738,107 @@ class MusicManager:
             and self._is_supported_track_file(track.file_path)
         ]
 
+    def _replacement_config_path(self) -> Path:
+        return CONFIG_DIR / REPLACEMENTS_FILENAME
+
+    def get_stage_slots(self, stage_id: str) -> list[StageTrackSlot]:
+        return list(self.stage_slots.get(stage_id, []))
+
+    def get_stage_slot_source_name(self) -> str:
+        if self._slot_source_mod is None:
+            return ""
+        return self._slot_source_mod.name
+
+    def get_stage_slot_replacement(self, stage_id: str, slot_key: str) -> Optional[MusicReplacementAssignment]:
+        return self.replacement_assignments.get(stage_id, {}).get(slot_key)
+
+    def get_stage_slot_replacement_track(self, stage_id: str, slot_key: str) -> Optional[MusicTrack]:
+        assignment = self.get_stage_slot_replacement(stage_id, slot_key)
+        if assignment is None:
+            return None
+        for track in self.tracks:
+            if track.track_id == assignment.replacement_track_id:
+                return track
+        return None
+
+    def set_stage_slot_replacement(
+        self,
+        stage_id: str,
+        slot_key: str,
+        track: Optional[MusicTrack],
+    ) -> None:
+        if not stage_id or not slot_key:
+            return
+        if track is None:
+            stage_assignments = self.replacement_assignments.get(stage_id)
+            if stage_assignments is None:
+                return
+            stage_assignments.pop(slot_key, None)
+            if not stage_assignments:
+                self.replacement_assignments.pop(stage_id, None)
+            return
+
+        stage_assignments = self.replacement_assignments.setdefault(stage_id, {})
+        stage_assignments[slot_key] = MusicReplacementAssignment(
+            stage_id=stage_id,
+            slot_key=slot_key,
+            replacement_track_id=track.track_id,
+        )
+
+    def clear_stage_replacements(self, stage_id: str) -> None:
+        self.replacement_assignments.pop(stage_id, None)
+
+    def clear_all_replacements(self) -> None:
+        self.replacement_assignments.clear()
+
+    def _save_replacement_config(self) -> None:
+        config_dir = CONFIG_DIR
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = self._replacement_config_path()
+        data = {"assignments": {}}
+        for stage_id, stage_assignments in self.replacement_assignments.items():
+            if not stage_assignments:
+                continue
+            data["assignments"][stage_id] = {
+                slot_key: assignment.replacement_track_id
+                for slot_key, assignment in stage_assignments.items()
+                if assignment.replacement_track_id
+            }
+        try:
+            with open(config_file, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2)
+        except OSError as exc:
+            logger.error("Music", f"Failed to save replacement config: {exc}")
+
+    def _load_saved_replacements(self) -> None:
+        config_file = self._replacement_config_path()
+        self.replacement_assignments = {}
+        if not config_file.exists():
+            return
+
+        try:
+            with open(config_file, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            track_lookup = {track.track_id: track for track in self.tracks}
+            for stage_id, slot_map in (data.get("assignments", {}) or {}).items():
+                if not isinstance(slot_map, dict):
+                    continue
+                normalized_stage_id = self._resolve_stage_id(str(stage_id))
+                for slot_key, track_id in slot_map.items():
+                    track_id_str = str(track_id).strip()
+                    track = track_lookup.get(track_id_str)
+                    if not track_id_str or track is None:
+                        continue
+                    self.set_stage_slot_replacement(normalized_stage_id, str(slot_key), track)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            logger.warn("Music", f"Failed to load music replacements: {exc}")
+
     def reload_saved_assignments(self) -> None:
         self.stage_playlists = {}
         self.exclude_vanilla = False
+        self.replacement_assignments = {}
         self._load_saved_assignments()
+        self._load_saved_replacements()
 
     def get_tracks_for_stage(self, stage_id: str) -> list[MusicTrack]:
         """Get tracks assigned to a specific stage."""
@@ -642,10 +930,14 @@ class MusicManager:
             "prc_updated": False,
             "config_saved": False,
             "menu_music_set": False,
+            "replacement_stages": 0,
+            "replacement_files": 0,
+            "replacement_output_mod": "",
         }
 
         # Save the JSON config for persistence
         self._save_assignment_config(mods_root)
+        self._save_replacement_config()
         result["config_saved"] = True
 
         # Handle main menu music separately
@@ -657,6 +949,11 @@ class MusicManager:
             except Exception as e:
                 logger.error("MusicManager", f"Failed to apply menu music: {e}")
                 result["menu_music_set"] = False
+        else:
+            self._remove_managed_menu_music(mods_root)
+
+        replacement_result = self._apply_replacement_overlays(mods_root)
+        result.update(replacement_result)
 
         # Find the music source mod that has ui_bgm_db.prc and ui_stage_db.prc
         source_mod = self._find_music_source_mod(mods_root)
@@ -675,7 +972,111 @@ class MusicManager:
             if playlist.tracks:
                 result["stages_configured"] += 1
                 result["tracks_assigned"] += len(playlist.tracks)
+        for stage_id, slot_map in self.replacement_assignments.items():
+            if slot_map:
+                result["replacement_stages"] += 1
 
+        return result
+
+    @staticmethod
+    def _music_config_dir(mods_root: Path) -> Path:
+        return mods_root / MUSIC_CONFIG_MOD_DIRNAME
+
+    @classmethod
+    def _music_config_stream_dir(cls, mods_root: Path) -> Path:
+        return cls._music_config_dir(mods_root) / STREAM_PREFIX / SOUND_BGM_PARTS[0] / SOUND_BGM_PARTS[1]
+
+    @classmethod
+    def _replacement_manifest_path(cls, mods_root: Path) -> Path:
+        return cls._music_config_dir(mods_root) / REPLACEMENT_MANIFEST_FILENAME
+
+    @classmethod
+    def _replacement_metadata_path(cls, mods_root: Path) -> Path:
+        return cls._music_config_dir(mods_root) / REPLACEMENT_METADATA_FILENAME
+
+    def _load_previous_replacement_manifest(self, mods_root: Path) -> set[str]:
+        manifest_path = self._replacement_manifest_path(mods_root)
+        if not manifest_path.exists():
+            return set()
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            files = data.get("managed_filenames", [])
+            if not isinstance(files, list):
+                return set()
+            return {str(name).strip() for name in files if str(name).strip()}
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            return set()
+
+    def _write_replacement_manifest(self, mods_root: Path, filenames: set[str]) -> None:
+        manifest_path = self._replacement_manifest_path(mods_root)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"managed_filenames": sorted(filenames)}
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+
+    def _remove_managed_menu_music(self, mods_root: Path) -> None:
+        dest = self._music_config_stream_dir(mods_root) / MENU_BGM_FILENAME
+        if dest.exists():
+            try:
+                dest.unlink()
+            except OSError as exc:
+                logger.warn("MusicManager", f"Failed to clear managed menu music: {exc}")
+
+    def _apply_replacement_overlays(self, mods_root: Path) -> dict:
+        result = {
+            "replacement_files": 0,
+            "replacement_output_mod": "",
+        }
+        config_mod = self._music_config_dir(mods_root)
+        stream_dir = self._music_config_stream_dir(mods_root)
+        stream_dir.mkdir(parents=True, exist_ok=True)
+
+        previous_files = self._load_previous_replacement_manifest(mods_root)
+        current_files: set[str] = set()
+        metadata_rows: list[dict[str, str | int | bool]] = []
+
+        track_lookup = {track.track_id: track for track in self.tracks}
+        for stage_id, slot_map in self.replacement_assignments.items():
+            for slot_key, assignment in slot_map.items():
+                track = track_lookup.get(assignment.replacement_track_id)
+                if track is None:
+                    continue
+                filename = Path(slot_key).name if Path(slot_key).suffix else f"{slot_key}{NUS3AUDIO_SUFFIX}"
+                if not filename.lower().endswith(NUS3AUDIO_SUFFIX):
+                    filename = f"{Path(filename).stem}{NUS3AUDIO_SUFFIX}"
+                dest = stream_dir / filename
+                shutil.copy2(str(track.file_path), str(dest))
+                current_files.add(filename)
+                result["replacement_files"] += 1
+                metadata_rows.append(
+                    {
+                        "stage_id": stage_id,
+                        "stage_name": VANILLA_STAGES.get(stage_id, stage_id),
+                        "slot_key": slot_key,
+                        "filename": filename,
+                        "replacement_track_id": track.track_id,
+                        "replacement_display_name": track.display_name or track.track_id,
+                        "source_mod": track.source_mod,
+                    }
+                )
+
+        for stale_name in previous_files - current_files:
+            stale_path = stream_dir / stale_name
+            if stale_path.exists():
+                try:
+                    stale_path.unlink()
+                except OSError as exc:
+                    logger.warn("MusicManager", f"Failed to remove stale replacement '{stale_name}': {exc}")
+
+        self._write_replacement_manifest(mods_root, current_files)
+        metadata_path = self._replacement_metadata_path(mods_root)
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_path, "w", encoding="utf-8") as handle:
+            json.dump({"replacements": metadata_rows}, handle, indent=2)
+
+        if current_files:
+            result["replacement_output_mod"] = str(config_mod)
         return result
 
     def _apply_menu_music(self, track: MusicTrack, mods_root: Path) -> None:
@@ -687,8 +1088,8 @@ class MusicManager:
 
         The semicolon in the path is ARCropolis's stream-load syntax.
         """
-        config_mod = mods_root / MUSIC_CONFIG_MOD_DIRNAME
-        menu_bgm_dir = config_mod / "stream;" / "sound" / "bgm"
+        config_mod = self._music_config_dir(mods_root)
+        menu_bgm_dir = self._music_config_stream_dir(mods_root)
         menu_bgm_dir.mkdir(parents=True, exist_ok=True)
         dest = menu_bgm_dir / MENU_BGM_FILENAME
 
@@ -705,7 +1106,8 @@ class MusicManager:
             if self._is_skipped_mod_folder(mod_folder):
                 continue
             bgm_db = mod_folder / "ui" / "param" / "database" / "ui_bgm_db.prc"
-            if bgm_db.exists():
+            stage_db = mod_folder / "ui" / "param" / "database" / "ui_stage_db.prc"
+            if bgm_db.exists() and stage_db.exists():
                 return mod_folder
         return None
 
@@ -831,13 +1233,16 @@ class MusicManager:
 
     def _create_config_mod(self, mods_root: Path) -> Path:
         """Create a _MusicConfig mod folder with assignment metadata."""
-        config_mod = mods_root / MUSIC_CONFIG_MOD_DIRNAME
+        config_mod = self._music_config_dir(mods_root)
         config_mod.mkdir(exist_ok=True)
 
         config = {
             "description": "Auto-generated music configuration by SSBU Mod Manager",
             "exclude_vanilla": self.exclude_vanilla,
             "assignments": {},
+            "safe_replacement_slots": sum(
+                len(slot_map) for slot_map in self.replacement_assignments.values()
+            ),
         }
 
         for stage_id, playlist in self.stage_playlists.items():
@@ -908,6 +1313,8 @@ class MusicManager:
         total_stages = 0
         total_tracks = 0
         stages_with_music = []
+        replacement_stages = 0
+        replacement_slots = 0
 
         for stage_id, playlist in self.stage_playlists.items():
             if playlist.tracks:
@@ -915,11 +1322,20 @@ class MusicManager:
                 total_tracks += len(playlist.tracks)
                 stages_with_music.append(playlist.stage_name)
 
+        for stage_id, slot_map in self.replacement_assignments.items():
+            if slot_map:
+                replacement_stages += 1
+                replacement_slots += len(slot_map)
+
         return {
             "stages_configured": total_stages,
             "total_assignments": total_tracks,
             "stages_with_music": stages_with_music,
             "exclude_vanilla": self.exclude_vanilla,
             "favorite_tracks": len(self.favorite_track_ids),
+            "replacement_stages": replacement_stages,
+            "replacement_slots": replacement_slots,
+            "slot_source_mod": self.get_stage_slot_source_name(),
+            "slot_catalog_stages": len(self.stage_slots),
         }
 

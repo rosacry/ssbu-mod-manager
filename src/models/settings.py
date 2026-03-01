@@ -28,6 +28,7 @@ class AppSettings:
     # Online compatibility checker policy.
     online_strict_audio_sync: bool = False
     online_strict_environment_match: bool = False
+    experimental_spotify_enabled: bool = False
     spotify_client_id: str = ""
     spotify_access_token: str = ""
     spotify_refresh_token: str = ""

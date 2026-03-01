@@ -27,6 +27,26 @@ class StagePlaylist:
 
 
 @dataclass
+class StageTrackSlot:
+    stage_id: str
+    stage_name: str
+    slot_key: str
+    ui_bgm_id: str
+    filename: str
+    display_name: str = ""
+    incidence: int = 50
+    order_number: int = 0
+    is_likely_vanilla: bool = False
+
+
+@dataclass
+class MusicReplacementAssignment:
+    stage_id: str
+    slot_key: str
+    replacement_track_id: str
+
+
+@dataclass
 class MusicAssignment:
     track_id: str
     stage_id: str

@@ -176,6 +176,37 @@ class SettingsPage(BasePage):
         self.online_meta_status.pack(fill="x", padx=15, pady=(0, 10))
         self._refresh_online_metadata_status()
 
+        experimental_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        experimental_section.pack(fill="x", pady=(0, 15))
+
+        ctk.CTkLabel(
+            experimental_section,
+            text="Experimental",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            anchor="w",
+        ).pack(fill="x", padx=15, pady=(15, 5))
+        ctk.CTkLabel(
+            experimental_section,
+            text=(
+                "Spotify playlist export is optional and remains behind an explicit "
+                "experimental toggle."
+            ),
+            font=ctk.CTkFont(size=12),
+            text_color="#999999",
+            anchor="w",
+            wraplength=760,
+            justify="left",
+        ).pack(fill="x", padx=15, pady=(0, 8))
+
+        self.experimental_spotify_var = ctk.BooleanVar(
+            value=bool(getattr(settings, "experimental_spotify_enabled", False))
+        )
+        ctk.CTkCheckBox(
+            experimental_section,
+            text="Enable Spotify playlist export (experimental)",
+            variable=self.experimental_spotify_var,
+        ).pack(fill="x", padx=15, pady=(0, 15))
+
         # Reset button (auto-save replaces save button)
         btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(5, 20))
@@ -192,6 +223,7 @@ class SettingsPage(BasePage):
         self.backup_var.trace_add("write", lambda *_: self._auto_save())
         self.emu_version_var.trace_add("write", lambda *_: self._on_online_meta_change())
         self.game_version_var.trace_add("write", lambda *_: self._on_online_meta_change())
+        self.experimental_spotify_var.trace_add("write", lambda *_: self._auto_save())
 
     def _auto_save(self):
         """Auto-save settings whenever any value changes."""
@@ -337,6 +369,7 @@ class SettingsPage(BasePage):
         settings.backup_before_merge = self.backup_var.get()
         settings.emulator_version = (self.emu_version_var.get() or "").strip()
         settings.game_version = normalize_game_version(self.game_version_var.get())
+        settings.experimental_spotify_enabled = bool(self.experimental_spotify_var.get())
 
         self.app.config_manager.save(settings)
         self.app._update_managers()
@@ -356,6 +389,7 @@ class SettingsPage(BasePage):
         self.backup_var.set(True)
         self.emu_version_var.set("")
         self.game_version_var.set("")
+        self.experimental_spotify_var.set(False)
         self.sdmc_status.configure(text="Reset to defaults", text_color="#888888")
         # Sync logger state with the reset debug_mode (False)
         logger.enabled = False

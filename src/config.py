@@ -65,6 +65,9 @@ class ConfigManager:
                     online_strict_environment_match=bool(
                         data.get("online_strict_environment_match", False)
                     ),
+                    experimental_spotify_enabled=bool(
+                        data.get("experimental_spotify_enabled", False)
+                    ),
                     spotify_client_id=str(data.get("spotify_client_id", "") or ""),
                     spotify_access_token=str(data.get("spotify_access_token", "") or ""),
                     spotify_refresh_token=str(data.get("spotify_refresh_token", "") or ""),
@@ -117,6 +120,9 @@ class ConfigManager:
             "online_strict_audio_sync": bool(self.settings.online_strict_audio_sync),
             "online_strict_environment_match": bool(
                 self.settings.online_strict_environment_match
+            ),
+            "experimental_spotify_enabled": bool(
+                self.settings.experimental_spotify_enabled
             ),
             "spotify_client_id": str(self.settings.spotify_client_id or ""),
             "spotify_access_token": str(self.settings.spotify_access_token or ""),

@@ -34,6 +34,7 @@ class MusicPage(BasePage):
     _MENU_STAGE_PREFIX = "[Menu] "
     _ZERO_TIME_TEXT = "0:00"
     _SPINNER_FRAMES = ["|", "/", "-", "\\"]
+    _QUEUE_EMPTY_TEXT = "Library player idle"
 
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
@@ -59,6 +60,11 @@ class MusicPage(BasePage):
         self._track_data_revision = 0
         self._last_track_render_signature = None
         self._spotify_dialog = None
+        self._queue_track_ids = []
+        self._queue_index = -1
+        self._queue_name = ""
+        self._manual_stop_requested = False
+        self._suppress_track_selection_autoplay = False
         self._build_ui()
 
     def _build_ui(self):
@@ -142,13 +148,13 @@ class MusicPage(BasePage):
         bulk_frame = ctk.CTkFrame(left, fg_color="transparent")
         bulk_frame.pack(fill="x", padx=10, pady=(0, 5))
 
-        ctk.CTkButton(bulk_frame, text="All -> All Stages",
+        ctk.CTkButton(bulk_frame, text="All -> All Legacy Stages",
                       command=self._assign_all_to_all,
                       fg_color="#2fa572", hover_color="#106a43",
                       font=ctk.CTkFont(size=11), height=28, corner_radius=6,
                       ).pack(fill="x", pady=1)
 
-        ctk.CTkButton(bulk_frame, text="Clear All Stages",
+        ctk.CTkButton(bulk_frame, text="Clear All Legacy Stages",
                       command=self._clear_all_stages,
                       fg_color="#b02a2a", hover_color="#8a1f1f",
                       font=ctk.CTkFont(size=11), height=28, corner_radius=6,
@@ -161,7 +167,7 @@ class MusicPage(BasePage):
             command=self._on_exclude_change, font=ctk.CTkFont(size=11),
         ).pack(fill="x", padx=12, pady=(4, 10))
 
-        # === MIDDLE COLUMN: Stage playlist ===
+        # === MIDDLE COLUMN: Stage music workflows ===
         middle = ctk.CTkFrame(content, fg_color="#242438", corner_radius=10)
         content.add(middle, minsize=200, stretch="always", width=300)
 
@@ -176,10 +182,68 @@ class MusicPage(BasePage):
                                             font=ctk.CTkFont(size=11), text_color="#888888")
         self.playlist_count.pack(side="right")
 
-        self.playlist_frame = ctk.CTkScrollableFrame(middle, fg_color="transparent")
+        self.stage_tabs = ctk.CTkTabview(middle, fg_color="#242438")
+        self.stage_tabs.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        safe_tab = self.stage_tabs.add("Safe Slots")
+        playlist_tab = self.stage_tabs.add("Legacy Playlist")
+
+        self.safe_slot_note = ctk.CTkLabel(
+            safe_tab,
+            text=(
+                "Replace an existing discovered slot instead of adding a new one. "
+                "This is the safer community workflow for online play."
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color="#b9bfd8",
+            justify="left",
+            wraplength=320,
+            anchor="w",
+        )
+        self.safe_slot_note.pack(fill="x", padx=10, pady=(10, 6))
+
+        self.safe_slot_source = ctk.CTkLabel(
+            safe_tab,
+            text="",
+            font=ctk.CTkFont(size=10),
+            text_color="#777799",
+            anchor="w",
+        )
+        self.safe_slot_source.pack(fill="x", padx=10, pady=(0, 6))
+
+        self.safe_slot_frame = ctk.CTkScrollableFrame(safe_tab, fg_color="transparent")
+        self.safe_slot_frame.pack(fill="both", expand=True, padx=5, pady=(0, 5))
+
+        safe_btns = ctk.CTkFrame(safe_tab, fg_color="transparent")
+        safe_btns.pack(fill="x", padx=10, pady=(0, 8))
+        ctk.CTkButton(
+            safe_btns,
+            text="Clear Safe Replacements",
+            width=150,
+            fg_color="#b02a2a",
+            hover_color="#8a1f1f",
+            command=self._clear_stage_replacements,
+            height=28,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="right")
+
+        ctk.CTkLabel(
+            playlist_tab,
+            text=(
+                "Legacy playlist editing can append extra stage entries and modify the "
+                "stage database. Use this only when you intentionally want that behavior."
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color="#d0b071",
+            justify="left",
+            wraplength=320,
+            anchor="w",
+        ).pack(fill="x", padx=10, pady=(10, 6))
+
+        self.playlist_frame = ctk.CTkScrollableFrame(playlist_tab, fg_color="transparent")
         self.playlist_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        playlist_btns = ctk.CTkFrame(middle, fg_color="transparent")
+        playlist_btns = ctk.CTkFrame(playlist_tab, fg_color="transparent")
         playlist_btns.pack(fill="x", padx=10, pady=(0, 8))
 
         ctk.CTkButton(playlist_btns, text="Clear Stage", width=100,
@@ -267,6 +331,15 @@ class MusicPage(BasePage):
         )
         self.player_status.pack(fill="x", padx=8, pady=(5, 0))
 
+        self.queue_status = ctk.CTkLabel(
+            player_frame,
+            text=self._QUEUE_EMPTY_TEXT,
+            font=ctk.CTkFont(size=10),
+            text_color="#888888",
+            anchor="w",
+        )
+        self.queue_status.pack(fill="x", padx=8, pady=(2, 0))
+
         player_inner = ctk.CTkFrame(player_frame, fg_color="transparent")
         player_inner.pack(fill="x", padx=8, pady=5)
 
@@ -310,6 +383,50 @@ class MusicPage(BasePage):
                                                  font=ctk.CTkFont(size=10), text_color="#555555")
         self.seek_duration_label.pack(side="left", padx=(2, 6))
 
+        queue_controls = ctk.CTkFrame(player_frame, fg_color="transparent")
+        queue_controls.pack(fill="x", padx=8, pady=(0, 6))
+
+        ctk.CTkButton(
+            queue_controls,
+            text="Play Filtered",
+            width=110,
+            height=26,
+            fg_color="#1f538d",
+            hover_color="#163b6a",
+            font=ctk.CTkFont(size=11),
+            command=lambda: self._start_queue_from_source("filtered"),
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            queue_controls,
+            text="Play Favorites",
+            width=110,
+            height=26,
+            fg_color="#3f4f76",
+            hover_color="#4f6088",
+            font=ctk.CTkFont(size=11),
+            command=lambda: self._start_queue_from_source("favorites"),
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            queue_controls,
+            text="Prev",
+            width=60,
+            height=26,
+            fg_color="#2f3557",
+            hover_color="#3f476f",
+            font=ctk.CTkFont(size=11),
+            command=lambda: self._step_queue(-1),
+        ).pack(side="right")
+        ctk.CTkButton(
+            queue_controls,
+            text="Next",
+            width=60,
+            height=26,
+            fg_color="#2f3557",
+            hover_color="#3f476f",
+            font=ctk.CTkFont(size=11),
+            command=lambda: self._step_queue(1),
+        ).pack(side="right", padx=(0, 4))
+
         # Add track button
         add_btn_frame = ctk.CTkFrame(right, fg_color="transparent")
         add_btn_frame.pack(fill="x", padx=10, pady=(0, 10))
@@ -335,7 +452,7 @@ class MusicPage(BasePage):
 
         self.spotify_export_btn = ctk.CTkButton(
             add_btn_frame,
-            text="Export to Spotify...",
+            text="Spotify Export (Experimental)...",
             command=self._open_spotify_export_dialog,
             fg_color="#1f538d",
             hover_color="#163b6a",
@@ -359,7 +476,9 @@ class MusicPage(BasePage):
                 # Re-render the playlist if a stage was previously selected
                 if self._selected_stage:
                     self._render_playlist()
+                    self._render_stage_slots()
         # Sync play button state with actual audio player
+        self._refresh_spotify_button_state()
         self._sync_play_state()
 
     def on_hide(self):
@@ -381,6 +500,8 @@ class MusicPage(BasePage):
                 setattr(self, attr, None)
         for w in self.playlist_frame.winfo_children():
             w.destroy()
+        for w in self.safe_slot_frame.winfo_children():
+            w.destroy()
 
     def discard_changes(self):
         self.app.music_manager.reload_saved_assignments()
@@ -390,6 +511,7 @@ class MusicPage(BasePage):
             self._populate_stages()
             if self._selected_stage:
                 self._render_playlist()
+                self._render_stage_slots()
 
     def _schedule_auto_scan(self):
         self._cancel_auto_scan()
@@ -592,29 +714,55 @@ class MusicPage(BasePage):
         self._populate_stages()
         if self._selected_stage:
             self._render_playlist()
+            self._render_stage_slots()
         self._update_track_selection_state()
+        self._refresh_spotify_button_state()
 
     def _update_summary(self):
         summary = self.app.music_manager.get_assignment_summary()
         favorite_count = summary.get("favorite_tracks", 0)
-        if summary["stages_configured"] > 0:
+        if summary["stages_configured"] > 0 or summary.get("replacement_stages", 0) > 0:
             parts = [
-                f"{summary['stages_configured']} stages",
-                f"{summary['total_assignments']} assignments",
+                f"{summary.get('replacement_stages', 0)} safe stages",
+                f"{summary.get('replacement_slots', 0)} safe slots",
+                f"{summary['stages_configured']} legacy stages",
+                f"{summary['total_assignments']} legacy assignments",
                 "Vanilla excluded" if summary["exclude_vanilla"] else "Vanilla included",
             ]
+            if summary.get("slot_catalog_stages", 0):
+                parts.append(f"{summary['slot_catalog_stages']} stages with slot data")
             if favorite_count:
                 parts.append(f"{favorite_count} favorites")
             self.summary_label.configure(
                 text=" | ".join(parts),
                 text_color="#2fa572")
         else:
-            text = "Select a stage, then add tracks from the right panel."
+            text = "Select a stage to manage safe slots or legacy playlist entries."
             if favorite_count:
                 text += f" {favorite_count} favorite track(s) saved."
             self.summary_label.configure(
                 text=text,
                 text_color="#999999")
+
+    def _stage_list_suffix(self, stage_id: str) -> str:
+        legacy_count = len(self.app.music_manager.get_tracks_for_stage(stage_id))
+        safe_count = len(self.app.music_manager.replacement_assignments.get(stage_id, {}))
+        suffix_parts = []
+        if safe_count:
+            suffix_parts.append(f"S{safe_count}")
+        if legacy_count:
+            suffix_parts.append(f"L{legacy_count}")
+        if not suffix_parts:
+            return ""
+        return f" ({' '.join(suffix_parts)})"
+
+    def _update_stage_counts(self) -> None:
+        if not self._selected_stage:
+            self.playlist_count.configure(text="")
+            return
+        safe_count = len(self.app.music_manager.replacement_assignments.get(self._selected_stage, {}))
+        legacy_count = len(self.app.music_manager.get_tracks_for_stage(self._selected_stage))
+        self.playlist_count.configure(text=f"Safe {safe_count} | Legacy {legacy_count}")
 
     def _populate_stages(self):
         stages = self.app.music_manager.get_stage_list()
@@ -634,9 +782,8 @@ class MusicPage(BasePage):
         def _insert_stage(stage):
             if comp_only and stage.stage_id not in COMPETITIVE_STAGES and stage.stage_id != self._MENU_STAGE_ID:
                 return
-            count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
             prefix = self._MENU_STAGE_PREFIX if stage.stage_id == self._MENU_STAGE_ID else ""
-            suffix = f" ({count})" if count > 0 else ""
+            suffix = self._stage_list_suffix(stage.stage_id)
             self.stage_listbox.insert(tk.END, f"{prefix}{stage.stage_name}{suffix}")
             self._stage_ids.append(stage.stage_id)
 
@@ -683,9 +830,8 @@ class MusicPage(BasePage):
                 return
             if search and search not in stage.stage_name.lower():
                 return
-            count = len(self.app.music_manager.get_tracks_for_stage(stage.stage_id))
             prefix = self._MENU_STAGE_PREFIX if stage.stage_id == self._MENU_STAGE_ID else ""
-            suffix = f" ({count})" if count > 0 else ""
+            suffix = self._stage_list_suffix(stage.stage_id)
             self.stage_listbox.insert(tk.END, f"{prefix}{stage.stage_name}{suffix}")
             self._stage_ids.append(stage.stage_id)
 
@@ -700,22 +846,24 @@ class MusicPage(BasePage):
             return
         self._selected_stage = self._stage_ids[sel[0]]
         stage_name = VANILLA_STAGES.get(self._selected_stage, self._selected_stage)
-        self.playlist_label.configure(text=f"Playlist: {stage_name}")
+        self.playlist_label.configure(text=f"Stage: {stage_name}")
         self._render_playlist()
+        self._render_stage_slots()
 
     def _render_playlist(self):
         for w in self.playlist_frame.winfo_children():
             w.destroy()
 
         if not self._selected_stage:
+            self._update_stage_counts()
             return
 
         tracks = self.app.music_manager.get_tracks_for_stage(self._selected_stage)
-        self.playlist_count.configure(text=f"{len(tracks)} tracks")
+        self._update_stage_counts()
 
         if not tracks:
             ctk.CTkLabel(self.playlist_frame,
-                         text="No tracks assigned.\n\nSelect tracks from the right panel\nand click '+ Add Selected Track'.",
+                         text="No legacy playlist entries.\n\nSelect tracks from the right panel\nand click '+ Add Selected Tracks'.",
                          text_color="#666666", font=ctk.CTkFont(size=12),
                          justify="center").pack(pady=30)
             return
@@ -769,14 +917,117 @@ class MusicPage(BasePage):
         # Re-patch scroll speeds for the newly created playlist widgets
         self.after(self._PLAY_CLICK_DELAY_MS, self._patch_all_scroll_speeds)
 
+    def _render_stage_slots(self):
+        for widget in self.safe_slot_frame.winfo_children():
+            widget.destroy()
+
+        source_name = self.app.music_manager.get_stage_slot_source_name()
+        if source_name:
+            self.safe_slot_source.configure(text=f"Slot source: {source_name}")
+        else:
+            self.safe_slot_source.configure(text="Slot source: none discovered")
+
+        if not self._selected_stage:
+            self._update_stage_counts()
+            return
+
+        slots = self.app.music_manager.get_stage_slots(self._selected_stage)
+        safe_slots = [slot for slot in slots if slot.is_likely_vanilla]
+        self._update_stage_counts()
+
+        if not slots:
+            ctk.CTkLabel(
+                self.safe_slot_frame,
+                text=(
+                    "No stage-slot database was discovered.\n\n"
+                    "Add or point the app at a mod containing both "
+                    "ui_stage_db.prc and ui_bgm_db.prc to enable safe slot replacement."
+                ),
+                text_color="#666666",
+                font=ctk.CTkFont(size=12),
+                justify="center",
+                wraplength=320,
+            ).pack(pady=30)
+            return
+
+        if not safe_slots:
+            ctk.CTkLabel(
+                self.safe_slot_frame,
+                text="This stage has no likely-vanilla slots in the discovered database.",
+                text_color="#666666",
+                font=ctk.CTkFont(size=12),
+                justify="center",
+                wraplength=320,
+            ).pack(pady=30)
+            return
+
+        for slot in safe_slots:
+            assignment = self.app.music_manager.get_stage_slot_replacement_track(
+                self._selected_stage,
+                slot.slot_key,
+            )
+            row = ctk.CTkFrame(self.safe_slot_frame, fg_color="#1e1e38", corner_radius=6)
+            row.pack(fill="x", pady=2)
+
+            title = slot.display_name or slot.filename or slot.ui_bgm_id
+            meta = slot.filename or slot.ui_bgm_id
+            assigned_text = assignment.display_name if assignment else "No replacement assigned"
+            assigned_color = "#2fa572" if assignment else "#888888"
+
+            ctk.CTkLabel(
+                row,
+                text=title,
+                font=ctk.CTkFont(size=12, weight="bold"),
+                anchor="w",
+            ).pack(fill="x", padx=10, pady=(8, 0))
+            ctk.CTkLabel(
+                row,
+                text=f"{meta} | incidence {slot.incidence}",
+                font=ctk.CTkFont(size=10),
+                text_color="#777799",
+                anchor="w",
+            ).pack(fill="x", padx=10, pady=(0, 2))
+            ctk.CTkLabel(
+                row,
+                text=f"Replacement: {assigned_text}",
+                font=ctk.CTkFont(size=11),
+                text_color=assigned_color,
+                anchor="w",
+            ).pack(fill="x", padx=10, pady=(0, 6))
+
+            btns = ctk.CTkFrame(row, fg_color="transparent")
+            btns.pack(fill="x", padx=10, pady=(0, 8))
+            ctk.CTkButton(
+                btns,
+                text="Use Selected",
+                width=110,
+                height=26,
+                fg_color="#2fa572",
+                hover_color="#106a43",
+                font=ctk.CTkFont(size=11),
+                command=lambda s=slot: self._assign_selected_track_to_slot(s),
+            ).pack(side="left")
+            ctk.CTkButton(
+                btns,
+                text="Clear",
+                width=70,
+                height=26,
+                fg_color="#555570",
+                hover_color="#666688",
+                font=ctk.CTkFont(size=11),
+                command=lambda s=slot: self._clear_slot_replacement(s),
+            ).pack(side="left", padx=(6, 0))
+
+        self.after(self._PLAY_CLICK_DELAY_MS, self._patch_all_scroll_speeds)
+
     def _render_available_tracks(self):
         """Populate the listbox with available tracks."""
-        search = self.track_search_var.get().lower()
-        favorites_only = bool(self.favorites_only_var.get())
         selected_track_ids = {
             track.track_id
             for track in self._get_selected_tracks()
         }
+        search = self.track_search_var.get().lower()
+        favorites_only = bool(self.favorites_only_var.get())
         render_signature = (self._track_data_revision, search, favorites_only)
         if render_signature == self._last_track_render_signature:
             return
@@ -786,16 +1037,7 @@ class MusicPage(BasePage):
         self._track_id_map.clear()
 
         tracks = self._all_tracks or self.app.music_manager.get_all_available_tracks()
-
-        filtered = []
-        for track in tracks:
-            display = track.display_name if track.display_name else track.track_id
-            if search and search not in display.lower():
-                if not track.source_mod or search not in track.source_mod.lower():
-                    continue
-            if favorites_only and not track.is_favorite:
-                continue
-            filtered.append(track)
+        filtered = self._get_filtered_tracks()
 
         favorites_shown = sum(1 for track in filtered if track.is_favorite)
         total_favorites = len(self.app.music_manager.favorite_track_ids)
@@ -816,6 +1058,21 @@ class MusicPage(BasePage):
 
         logger.debug("Music", f"Populated {len(filtered)} tracks in listbox")
         self._update_track_selection_state()
+
+    def _get_filtered_tracks(self):
+        search = self.track_search_var.get().lower()
+        favorites_only = bool(self.favorites_only_var.get())
+        tracks = self._all_tracks or self.app.music_manager.get_all_available_tracks()
+        filtered = []
+        for track in tracks:
+            display = track.display_name if track.display_name else track.track_id
+            if search and search not in display.lower():
+                if not track.source_mod or search not in track.source_mod.lower():
+                    continue
+            if favorites_only and not track.is_favorite:
+                continue
+            filtered.append(track)
+        return filtered
 
     def _on_track_filter_input(self, *_args):
         self._schedule_track_filter()
@@ -898,6 +1155,96 @@ class MusicPage(BasePage):
             self._update_summary()
         else:
             self._update_track_selection_state()
+
+    def _assign_selected_track_to_slot(self, slot):
+        if not self._selected_stage:
+            messagebox.showwarning("Warning", "Select a stage first.")
+            return
+
+        track = self._get_selected_track()
+        if track is None:
+            messagebox.showwarning("Warning", "Select one track to assign to that slot.")
+            return
+
+        stage_id = self._selected_stage
+        previous_track = self.app.music_manager.get_stage_slot_replacement_track(stage_id, slot.slot_key)
+
+        def do_assign():
+            self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, track)
+
+        def undo_assign():
+            self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, previous_track)
+
+        action = Action(
+            description=f"Replace slot {slot.filename or slot.ui_bgm_id} on {VANILLA_STAGES.get(stage_id, stage_id)}",
+            do=do_assign,
+            undo=undo_assign,
+            page="music",
+        )
+        action_history.execute(action)
+
+        self._render_stage_slots()
+        self._populate_stages()
+        self._update_summary()
+        self.app.mark_unsaved()
+
+    def _clear_slot_replacement(self, slot):
+        if not self._selected_stage:
+            return
+
+        stage_id = self._selected_stage
+        previous_track = self.app.music_manager.get_stage_slot_replacement_track(stage_id, slot.slot_key)
+        if previous_track is None:
+            return
+
+        def do_clear():
+            self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, None)
+
+        def undo_clear():
+            self.app.music_manager.set_stage_slot_replacement(stage_id, slot.slot_key, previous_track)
+
+        action = Action(
+            description=f"Clear replacement for {slot.filename or slot.ui_bgm_id}",
+            do=do_clear,
+            undo=undo_clear,
+            page="music",
+        )
+        action_history.execute(action)
+
+        self._render_stage_slots()
+        self._populate_stages()
+        self._update_summary()
+        self.app.mark_unsaved()
+
+    def _clear_stage_replacements(self):
+        if not self._selected_stage:
+            messagebox.showwarning("Warning", "Select a stage first.")
+            return
+
+        existing = dict(self.app.music_manager.replacement_assignments.get(self._selected_stage, {}))
+        if not existing:
+            return
+
+        stage_id = self._selected_stage
+
+        def do_clear():
+            self.app.music_manager.clear_stage_replacements(stage_id)
+
+        def undo_clear():
+            self.app.music_manager.replacement_assignments[stage_id] = dict(existing)
+
+        action = Action(
+            description=f"Clear safe replacements for {VANILLA_STAGES.get(stage_id, stage_id)}",
+            do=do_clear,
+            undo=undo_clear,
+            page="music",
+        )
+        action_history.execute(action)
+
+        self._render_stage_slots()
+        self._populate_stages()
+        self._update_summary()
+        self.app.mark_unsaved()
 
     def _add_selected_track(self):
         """Add the selected track to the current stage."""
@@ -989,7 +1336,7 @@ class MusicPage(BasePage):
         self.app.mark_unsaved()
 
     def _clear_all_stages(self):
-        if messagebox.askyesno("Clear All", "Remove ALL assignments from ALL stages?"):
+        if messagebox.askyesno("Clear All", "Remove ALL legacy playlist assignments from ALL stages?"):
             self.app.music_manager.stage_playlists.clear()
             self._render_playlist()
             self._populate_stages()
@@ -997,7 +1344,7 @@ class MusicPage(BasePage):
             self.app.mark_unsaved()
 
     def _assign_all_to_all(self):
-        if messagebox.askyesno("Assign All", "Assign ALL tracks to ALL stages?"):
+        if messagebox.askyesno("Assign All", "Assign ALL tracks to ALL legacy stage playlists?"):
             self.app.music_manager.assign_all_tracks_to_all_stages()
             self._render_playlist()
             self._populate_stages()
@@ -1014,7 +1361,110 @@ class MusicPage(BasePage):
             return self.app.music_manager.get_favorite_tracks()
         return self._get_selected_tracks()
 
+    def _spotify_enabled(self) -> bool:
+        return bool(getattr(self.app.config_manager.settings, "experimental_spotify_enabled", False))
+
+    def _refresh_spotify_button_state(self):
+        if not hasattr(self, "spotify_export_btn"):
+            return
+        if self._spotify_enabled():
+            self.spotify_export_btn.configure(
+                text="Spotify Export (Experimental)...",
+                state="normal",
+                fg_color="#1f538d",
+                hover_color="#163b6a",
+            )
+        else:
+            self.spotify_export_btn.configure(
+                text="Spotify Export Disabled in Settings",
+                state="disabled",
+                fg_color="#2a2a38",
+                hover_color="#2a2a38",
+            )
+
+    def _resolve_track_by_id(self, track_id: str):
+        for track in self.app.music_manager.get_all_available_tracks():
+            if track.track_id == track_id:
+                return track
+        return None
+
+    def _update_queue_status(self):
+        if not self._queue_track_ids or self._queue_index < 0:
+            self.queue_status.configure(text=self._QUEUE_EMPTY_TEXT, text_color="#888888")
+            return
+        self.queue_status.configure(
+            text=f"Queue: {self._queue_name} {self._queue_index + 1}/{len(self._queue_track_ids)}",
+            text_color="#8fb2ff",
+        )
+
+    def _prime_queue(self, tracks, queue_name: str, preferred_track_id: str = ""):
+        self._queue_track_ids = [track.track_id for track in tracks]
+        self._queue_name = queue_name
+        self._queue_index = 0
+        if preferred_track_id:
+            for index, track_id in enumerate(self._queue_track_ids):
+                if track_id == preferred_track_id:
+                    self._queue_index = index
+                    break
+        self._update_queue_status()
+
+    def _select_visible_track(self, track_id: str):
+        for index, mapped_track in self._track_id_map.items():
+            if mapped_track.track_id != track_id:
+                continue
+            self._suppress_track_selection_autoplay = True
+            self.track_listbox.selection_clear(0, tk.END)
+            self.track_listbox.selection_set(index)
+            self.track_listbox.see(index)
+            self.after(self._ZERO_DELAY_MS, lambda: setattr(self, "_suppress_track_selection_autoplay", False))
+            self._update_track_selection_state()
+            return
+
+    def _start_queue_from_source(self, source: str):
+        if source == "favorites":
+            tracks = self.app.music_manager.get_favorite_tracks()
+            queue_name = "Favorites"
+        else:
+            tracks = self._get_filtered_tracks()
+            queue_name = "Filtered Tracks"
+
+        if not tracks:
+            self.player_status.configure(text="No tracks available for that queue.", text_color="#e94560")
+            return
+
+        selected = self._get_selected_track()
+        preferred_track_id = selected.track_id if selected and any(t.track_id == selected.track_id for t in tracks) else tracks[0].track_id
+        self._prime_queue(tracks, queue_name, preferred_track_id=preferred_track_id)
+        self._play_queue_index(self._queue_index)
+
+    def _play_queue_index(self, index: int):
+        if not self._queue_track_ids:
+            self._update_queue_status()
+            return
+        if index < 0 or index >= len(self._queue_track_ids):
+            self.player_status.configure(text="Reached the end of the queue.", text_color="#888888")
+            return
+        self._queue_index = index
+        track = self._resolve_track_by_id(self._queue_track_ids[index])
+        if track is None:
+            self.player_status.configure(text="Queued track is no longer available.", text_color="#e94560")
+            return
+        self._select_visible_track(track.track_id)
+        self._play_track(track)
+
+    def _step_queue(self, direction: int):
+        if not self._queue_track_ids:
+            self.player_status.configure(text="Start a queue first.", text_color="#888888")
+            return
+        self._play_queue_index(self._queue_index + direction)
+
     def _open_spotify_export_dialog(self):
+        if not self._spotify_enabled():
+            messagebox.showinfo(
+                "Spotify Export Disabled",
+                "Enable Spotify playlist export in Settings -> Experimental first.",
+            )
+            return
         existing = self._spotify_dialog
         if existing is not None:
             try:
@@ -1027,7 +1477,7 @@ class MusicPage(BasePage):
 
         dialog = ctk.CTkToplevel(self)
         dialog.withdraw()
-        dialog.title("Export to Spotify")
+        dialog.title("Spotify Export (Experimental)")
         dialog.resizable(False, False)
         dialog.configure(fg_color="#0f1327")
         self._spotify_dialog = dialog
@@ -1043,7 +1493,7 @@ class MusicPage(BasePage):
 
         ctk.CTkLabel(
             shell,
-            text="Export to Spotify",
+            text="Spotify Export (Experimental)",
             anchor="w",
             font=ctk.CTkFont(size=17, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
@@ -1497,6 +1947,8 @@ class MusicPage(BasePage):
     def _on_track_click(self, event):
         """When user clicks a track while music is already playing,
         auto-play the newly selected track."""
+        if self._suppress_track_selection_autoplay:
+            return
         if self._is_playing and len(self._get_selected_tracks()) == 1:
             # Short delay so the listbox selection updates first
             self.after(self._PLAY_CLICK_DELAY_MS, self._play_selected)
@@ -1509,7 +1961,6 @@ class MusicPage(BasePage):
             self._play_selected()
 
     def _play_selected(self):
-        """Play the selected track (in background thread to avoid UI freeze)."""
         track = self._get_selected_track()
         if not track:
             self.player_status.configure(text="Select a track first", text_color="#e94560")
@@ -1518,25 +1969,31 @@ class MusicPage(BasePage):
                 lambda: self.player_status.configure(text=""),
             )
             return
+        filtered_tracks = self._get_filtered_tracks()
+        if filtered_tracks:
+            self._prime_queue(filtered_tracks, "Filtered Tracks", preferred_track_id=track.track_id)
+        self._play_track(track)
+
+    def _cancel_playback_timers(self):
+        for attr in ("_poll_after_id", "_seek_after_id"):
+            aid = getattr(self, attr, None)
+            if aid:
+                try:
+                    self.after_cancel(aid)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+    def _play_track(self, track):
+        """Play a specific track in a background thread."""
+        self._manual_stop_requested = False
 
         # Stop any current playback first to prevent concurrent threads
         if self._is_playing:
             audio_player.stop()
             self._is_playing = False
 
-        # Cancel any stale poll / seek-bar loops from previous playback
-        if hasattr(self, '_poll_after_id') and self._poll_after_id:
-            try:
-                self.after_cancel(self._poll_after_id)
-            except Exception:
-                pass
-            self._poll_after_id = None
-        if hasattr(self, '_seek_after_id') and self._seek_after_id:
-            try:
-                self.after_cancel(self._seek_after_id)
-            except Exception:
-                pass
-            self._seek_after_id = None
+        self._cancel_playback_timers()
 
         # Cancel any in-flight play request by bumping the generation counter
         if not hasattr(self, '_play_generation'):
@@ -1570,6 +2027,7 @@ class MusicPage(BasePage):
             self._is_playing = True
             self.play_toggle_btn.configure(
                 text="Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+            self._update_queue_status()
             # Start polling for end-of-track to reset button state
             self._poll_playback_end()
             # Start seek bar updates
@@ -1589,6 +2047,16 @@ class MusicPage(BasePage):
         if not self._is_playing:
             return
         if not audio_player.is_playing:
+            if (
+                not self._manual_stop_requested
+                and self._queue_track_ids
+                and self._queue_index + 1 < len(self._queue_track_ids)
+            ):
+                self._is_playing = False
+                self.play_toggle_btn.configure(
+                    text="Play", fg_color="#2fa572", hover_color="#106a43")
+                self._play_queue_index(self._queue_index + 1)
+                return
             self._is_playing = False
             self.play_toggle_btn.configure(
                 text="Play", fg_color="#2fa572", hover_color="#106a43")
@@ -1597,17 +2065,10 @@ class MusicPage(BasePage):
         self._poll_after_id = self.after(self._PLAYBACK_POLL_MS, self._poll_playback_end)
 
     def _stop_playback(self):
+        self._manual_stop_requested = True
         audio_player.stop()
         self._is_playing = False
-        # Cancel stale timer loops
-        for attr in ('_poll_after_id', '_seek_after_id'):
-            aid = getattr(self, attr, None)
-            if aid:
-                try:
-                    self.after_cancel(aid)
-                except Exception:
-                    pass
-                setattr(self, attr, None)
+        self._cancel_playback_timers()
         self.play_toggle_btn.configure(
             text="Play", fg_color="#2fa572", hover_color="#106a43")
         self.player_status.configure(text="Stopped", text_color="#888888")
@@ -1668,20 +2129,30 @@ class MusicPage(BasePage):
             return
 
         summary = self.app.music_manager.get_assignment_summary()
-        if summary["stages_configured"] == 0:
-            messagebox.showwarning("Warning", "No tracks assigned to any stages yet.")
+        if summary["stages_configured"] == 0 and summary.get("replacement_slots", 0) == 0:
+            messagebox.showwarning("Warning", "No safe replacements or legacy playlist entries configured yet.")
             return
 
         try:
             result = self.app.music_manager.save_assignments(settings.mods_path)
             msg = f"Music configuration saved!\n\n"
-            msg += f"Stages: {result['stages_configured']}\n"
-            msg += f"Assignments: {result['tracks_assigned']}\n"
+            msg += f"Safe replacement stages: {result.get('replacement_stages', 0)}\n"
+            msg += f"Safe replacement files: {result.get('replacement_files', 0)}\n"
+            msg += f"Legacy playlist stages: {result['stages_configured']}\n"
+            msg += f"Legacy playlist assignments: {result['tracks_assigned']}\n"
             if result.get("menu_music_set"):
                 msg += f"\nMain menu music has been set!"
+            if result.get("replacement_output_mod"):
+                msg += f"\nReplacement overlay: {result['replacement_output_mod']}"
             if result.get("prc_updated"):
                 msg += f"\nPRC updated in: {result['output_mod']}"
-            logger.info("Music", f"Saved: {result['stages_configured']} stages, {result['tracks_assigned']} tracks")
+            logger.info(
+                "Music",
+                "Saved music config: "
+                f"{result.get('replacement_files', 0)} safe replacements, "
+                f"{result['stages_configured']} legacy stages, "
+                f"{result['tracks_assigned']} legacy tracks",
+            )
             self.app.mark_saved()
             messagebox.showinfo("Saved", msg)
         except Exception as e:

@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.2.1**.
+Current release version: **1.3.0**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -15,7 +15,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: detects actual skin-slot overlaps during import, can replace or auto-shift skins into open default slots, and no longer treats voice-only or effect-only slot packs as if they occupied the character's skin slot.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
-- Music page with stage playlists, multi-select track actions, favorites list/filtering, preview playback, save/discard-safe assignment export, Spotify playlist export for selected or favorite tracks, and an explicit `.nus3audio`-only track list.
+- Music page with PRC-backed stage slot discovery, Wi-Fi-safer existing-slot replacement overlays, a standalone library player queue, legacy stage-playlist editing, favorites list/filtering, preview playback, and an explicit `.nus3audio`-only track list.
 - Conflict detection and locale MSBT rename safety tools.
 - Emulator migration tools (copy, direct export/import, upgrade flow).
 - Online Compatibility checker and shareable profile support.
@@ -29,7 +29,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
 - Python 3.11+
 - Dependencies in `requirements.txt`
 - Optional: `ffmpeg`/`ffplay` in `PATH` for broader audio fallback support
-- Optional: Spotify account + Spotify app client ID if you want playlist export from the Music page
+- Optional: Spotify account + Spotify app client ID if you want to enable the experimental playlist export from the Music page
 
 ## Install (Dev)
 
@@ -53,7 +53,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.2.1-windows.zip`
+- `dist/SSBUModManager-1.3.0-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -64,7 +64,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 3. Confirm Mods/Plugins paths are populated.
 4. Go to **Mods** and **Plugins** to validate discovery.
 5. Open **Conflicts** and run an initial scan.
-6. Optional for Music -> Spotify export: create a Spotify app client ID and register the loopback redirect URI `http://127.0.0.1/callback`.
+6. Optional: if you want experimental Music -> Spotify export, enable it in **Settings -> Experimental**, then create a Spotify app client ID and register the loopback redirect URI `http://127.0.0.1/callback`.
 
 ## UX Notes
 
@@ -113,7 +113,8 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Scrollbar drag handling now accepts raw Tk callback argument variants under heavy drag load, preventing `_clicked_preserve_offset` event errors.
 - Full-page view containers now force square corners to prevent rare white corner-dot artifacts on some systems.
 - Music auto-scan is now deferred slightly on page show and cooperative-cancelled when leaving the Music tab, preventing heavy background track scans from stalling other pages.
-- Music now supports favorite tracks, a favorites-only filter, duplicate-safe multi-select add, and Spotify playlist export that skips tracks already present in the target playlist.
+- Music now separates safer existing-slot replacement overlays from legacy stage-playlist injection, surfaces discovered stage slots from `ui_stage_db.prc`/`ui_bgm_db.prc` when available, and adds a standalone filtered/favorites queue player for in-app listening.
+- Spotify playlist export is now explicitly gated behind **Settings -> Experimental** so the Music page can treat it as opt-in functionality.
 - `.nus3audio` preview now prefers direct cached Opus stream playback through `ffplay` when available, which reduces unnecessary preview transcoding and preserves higher-fidelity audio in the Music tab.
 - Dashboard startup conflict scans are deferred/idle-aware to avoid early launch stutter.
 - Dashboard quick stats refresh runs off the UI thread to reduce startup and tab-switch hitching.
@@ -141,6 +142,7 @@ build.py                 # PyInstaller build script
 ## Troubleshooting
 
 - If no mods/plugins are found, re-check SDMC path in **Settings**.
+- If the Music page shows no discovered safe slots, install or point the app at a mod containing both `ui_stage_db.prc` and `ui_bgm_db.prc`.
 - If audio preview fails on specific tracks, ensure `ffmpeg` is installed and in `PATH`.
 - For startup diagnostics, set `SSBUMM_HEARTBEAT=1` before launch to enable short heartbeat logging in `crash.log`.
 

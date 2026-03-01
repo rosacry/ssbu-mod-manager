@@ -17,6 +17,7 @@ def test_config_roundtrip_online_metadata(tmp_path, monkeypatch) -> None:
             game_version="13.0.1",
             online_strict_audio_sync=True,
             online_strict_environment_match=True,
+            experimental_spotify_enabled=True,
         )
     )
 
@@ -26,3 +27,4 @@ def test_config_roundtrip_online_metadata(tmp_path, monkeypatch) -> None:
     assert loaded.game_version == "13.0.1"
     assert loaded.online_strict_audio_sync is True
     assert loaded.online_strict_environment_match is True
+    assert loaded.experimental_spotify_enabled is True
