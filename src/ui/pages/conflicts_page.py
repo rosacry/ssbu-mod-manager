@@ -81,7 +81,10 @@ class ConflictsPage(BasePage):
         self._conflict_canvas = None
         self._conflict_scrollbar = None
         self._conflict_window_id = None
+        self.conflict_search_var = tk.StringVar()
+        self.conflict_view_var = ctk.StringVar(value="By Type")
         self._build_ui()
+        self.conflict_search_var.trace_add("write", lambda *_: self._on_conflict_view_changed())
 
     def _build_ui(self):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -132,6 +135,38 @@ class ConflictsPage(BasePage):
                                           font=ctk.CTkFont(size=13),
                                           text_color="#999999", anchor="w")
         self.summary_label.pack(fill="x", padx=30, pady=(0, 5))
+
+        self.view_controls_frame = ctk.CTkFrame(self, fg_color="transparent")
+        view_left = ctk.CTkFrame(self.view_controls_frame, fg_color="transparent")
+        view_left.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkLabel(
+            view_left,
+            text="View",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#8f97bb",
+            anchor="w",
+        ).pack(side="left", padx=(0, 8))
+
+        self.view_mode_menu = ctk.CTkOptionMenu(
+            view_left,
+            values=["By Type", "By Fighter/Form/Slot"],
+            variable=self.conflict_view_var,
+            command=lambda _value: self._on_conflict_view_changed(),
+            width=190,
+            height=34,
+            corner_radius=8,
+        )
+        self.view_mode_menu.pack(side="left")
+
+        self.search_entry = ctk.CTkEntry(
+            self.view_controls_frame,
+            textvariable=self.conflict_search_var,
+            placeholder_text="Filter by mod, file, fighter, or form...",
+            width=320,
+            height=34,
+        )
+        self.search_entry.pack(side="right")
 
         self.auto_btn_frame = ctk.CTkFrame(self, fg_color="transparent")
 
@@ -338,12 +373,25 @@ class ConflictsPage(BasePage):
             if visible:
                 if not self.summary_label.winfo_manager():
                     self.summary_label.pack(fill="x", padx=30, pady=(0, 5), before=self._results_stack)
+                self._set_view_controls_visible(True)
                 has_actions = bool(self.auto_resolve_btn.winfo_manager() or self.fix_locale_btn.winfo_manager())
                 self._set_auto_actions_visible(has_actions)
             else:
                 if self.summary_label.winfo_manager():
                     self.summary_label.pack_forget()
+                self._set_view_controls_visible(False)
                 self._set_auto_actions_visible(False)
+        except Exception:
+            pass
+
+    def _set_view_controls_visible(self, visible: bool):
+        try:
+            if visible:
+                if not self.view_controls_frame.winfo_manager():
+                    self.view_controls_frame.pack(fill="x", padx=30, pady=(0, 8), before=self._results_stack)
+            else:
+                if self.view_controls_frame.winfo_manager():
+                    self.view_controls_frame.pack_forget()
         except Exception:
             pass
 
@@ -357,6 +405,13 @@ class ConflictsPage(BasePage):
                     self.auto_btn_frame.pack_forget()
         except Exception:
             pass
+
+    def _on_conflict_view_changed(self):
+        if self._scanning or self._initial_prompt_visible:
+            return
+        if not self._scanned and not self._conflicts and not self._locale_msbts:
+            return
+        self._render()
 
     def _show_empty_state_host(self):
         try:
@@ -572,6 +627,158 @@ class ConflictsPage(BasePage):
             return f"{path} | {slot_summary}"
         return path
 
+    @staticmethod
+    def _normalize_filter_text(value: str) -> str:
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def _conflict_filter_blob(conflict) -> str:
+        parts = [
+            getattr(conflict, "relative_path", ""),
+            getattr(conflict, "display_path", ""),
+            getattr(conflict, "slot_summary", ""),
+            getattr(conflict, "slot_group_label", ""),
+            getattr(conflict, "file_type", ""),
+        ]
+        try:
+            parts.extend(getattr(conflict, "mods_involved", []) or [])
+        except Exception:
+            pass
+        try:
+            parts.extend((getattr(conflict, "mod_display_labels", {}) or {}).values())
+        except Exception:
+            pass
+        return " ".join(str(part or "") for part in parts).lower()
+
+    @staticmethod
+    def _locale_filter_blob(entry) -> str:
+        try:
+            mod_name = entry[0]
+            filename = entry[1]
+        except Exception:
+            return ""
+        return f"{mod_name} {filename}".lower()
+
+    def _filtered_conflicts(self) -> tuple[list, list, str]:
+        filter_text = self._normalize_filter_text(self.conflict_search_var.get())
+        conflicts = list(self._conflicts or [])
+        locale_entries = list(self._locale_msbts or [])
+        if not filter_text:
+            return conflicts, locale_entries, ""
+
+        filtered_conflicts = [
+            conflict for conflict in conflicts
+            if filter_text in self._conflict_filter_blob(conflict)
+        ]
+        filtered_locale = [
+            entry for entry in locale_entries
+            if filter_text in self._locale_filter_blob(entry)
+        ]
+        return filtered_conflicts, filtered_locale, filter_text
+
+    def _build_type_sections(self, conflicts: list, severity_rank: dict) -> list[dict]:
+        by_ext: dict[str, list] = {}
+        for conflict in conflicts:
+            ext = self._conflict_extension(conflict)
+            by_ext.setdefault(ext, []).append(conflict)
+
+        sections: list[dict] = []
+        for ext, group_conflicts in by_ext.items():
+            info = CONFLICT_EXPLANATIONS.get(ext)
+            if info:
+                title, description, can_merge = info
+            else:
+                title = f"{ext.upper()} Conflicts"
+                description = "Files of this type are modified by multiple mods."
+                can_merge = False
+            sections.append({
+                "key": ext,
+                "title": title,
+                "description": description,
+                "can_merge": can_merge,
+                "conflicts": group_conflicts,
+            })
+
+        sections.sort(key=lambda section: (
+            min(
+                (severity_rank.get(getattr(conflict, "severity", None), 99)
+                 for conflict in section["conflicts"]),
+                default=99,
+            ),
+            str(section["key"]).lower(),
+        ))
+        return sections
+
+    @staticmethod
+    def _summarize_group_types(conflicts: list) -> str:
+        counts: dict[str, int] = {}
+        for conflict in conflicts:
+            ext = ConflictsPage._conflict_extension(conflict)
+            counts[ext] = counts.get(ext, 0) + 1
+        return ", ".join(
+            f"{count} {ext}" for ext, count in sorted(counts.items(), key=lambda item: item[0])
+        )
+
+    @staticmethod
+    def _preferred_slot_group_label(conflicts: list) -> str:
+        labels = [
+            str(getattr(conflict, "slot_group_label", "") or "").strip()
+            for conflict in conflicts
+            if str(getattr(conflict, "slot_group_label", "") or "").strip()
+        ]
+        if not labels:
+            return ""
+        labels.sort(key=lambda value: (-len(value), value.lower()))
+        return labels[0]
+
+    def _build_slot_sections(self, conflicts: list, severity_rank: dict) -> list[dict]:
+        by_slot: dict[str, list] = {}
+        for conflict in conflicts:
+            slot_key = str(getattr(conflict, "slot_group_key", "") or "").strip()
+            by_slot.setdefault(slot_key or "__global__", []).append(conflict)
+
+        sections: list[dict] = []
+        for slot_key, group_conflicts in by_slot.items():
+            mods = {
+                mod_name
+                for conflict in group_conflicts
+                for mod_name in (getattr(conflict, "mods_involved", None) or [])
+                if mod_name
+            }
+            type_summary = self._summarize_group_types(group_conflicts)
+            if slot_key == "__global__":
+                title = "Global / Non-slot-specific"
+                description = (
+                    "These conflicts do not map cleanly to a single fighter slot. "
+                    f"{len(group_conflicts)} conflict(s) across {len(mods)} mod(s)"
+                )
+            else:
+                title = self._preferred_slot_group_label(group_conflicts) or "Fighter/Form/Slot Group"
+                description = (
+                    "All files in this group affect the same fighter/form/slot. "
+                    f"{len(group_conflicts)} conflict(s) across {len(mods)} mod(s)"
+                )
+            if type_summary:
+                description = f"{description} | {type_summary}"
+            sections.append({
+                "key": slot_key,
+                "title": title,
+                "description": description,
+                "can_merge": any(bool(getattr(conflict, "is_mergeable", False)) for conflict in group_conflicts),
+                "conflicts": group_conflicts,
+            })
+
+        sections.sort(key=lambda section: (
+            1 if section["key"] == "__global__" else 0,
+            min(
+                (severity_rank.get(getattr(conflict, "severity", None), 99)
+                 for conflict in section["conflicts"]),
+                default=99,
+            ),
+            str(section["title"]).lower(),
+        ))
+        return sections
+
     def _force_scan(self):
         self._scanned = True
         # Cancel any in-progress scan by bumping generation
@@ -725,6 +932,18 @@ class ConflictsPage(BasePage):
         self.fix_locale_btn.pack_forget()
         self._set_auto_actions_visible(False)
 
+        filtered_conflicts, filtered_locale_msbts, filter_text = self._filtered_conflicts()
+        overall_mergeable_pending = (
+            sum(
+                1
+                for c in self._conflicts
+                if bool(getattr(c, "is_mergeable", False)) and not bool(getattr(c, "resolved", False))
+            )
+            if self._conflicts
+            else 0
+        )
+        overall_locale_count = len(self._locale_msbts)
+
         if not self._conflicts and not self._locale_msbts:
             self.summary_label.configure(
                 text="No conflicts detected. All your mods are compatible.",
@@ -743,35 +962,58 @@ class ConflictsPage(BasePage):
             self.after(10, lambda: self._center_content_in_view(empty_frame))
             return
 
-        total = len(self._conflicts)
+        if not filtered_conflicts and not filtered_locale_msbts and filter_text:
+            self.summary_label.configure(
+                text=f"No conflicts match the current filter: {self.conflict_search_var.get().strip()}",
+                text_color="#d4a017",
+            )
+            empty_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
+            empty_frame.pack(fill="x", pady=(40, 24))
+            ctk.CTkLabel(
+                empty_frame,
+                text="No Matching Results",
+                font=ctk.CTkFont(size=18, weight="bold"),
+                text_color="#d4a017",
+            ).pack(pady=(0, 8))
+            ctk.CTkLabel(
+                empty_frame,
+                text="Adjust the filter text or switch back to the full conflict list.",
+                font=ctk.CTkFont(size=13),
+                text_color="#888888",
+                justify="center",
+            ).pack()
+            self.after(10, lambda: self._center_content_in_view(empty_frame))
+            return
+
+        total = len(filtered_conflicts)
         mergeable_pending = (
             sum(
                 1
-                for c in self._conflicts
+                for c in filtered_conflicts
                 if bool(getattr(c, "is_mergeable", False)) and not bool(getattr(c, "resolved", False))
             )
-            if self._conflicts
+            if filtered_conflicts
             else 0
         )
         already_merged = (
             sum(
                 1
-                for c in self._conflicts
+                for c in filtered_conflicts
                 if bool(getattr(c, "resolved", False))
                 and bool(getattr(c, "is_mergeable", False))
                 and getattr(c, "resolution", None) == ResolutionStrategy.MERGE
             )
-            if self._conflicts
+            if filtered_conflicts
             else 0
         )
         already_resolved = (
-            sum(1 for c in self._conflicts if bool(getattr(c, "resolved", False)))
-            if self._conflicts
+            sum(1 for c in filtered_conflicts if bool(getattr(c, "resolved", False)))
+            if filtered_conflicts
             else 0
         )
         already_resolved_other = max(0, already_resolved - already_merged)
         mods = set()
-        for c in self._conflicts:
+        for c in filtered_conflicts:
             try:
                 mods.update(m for m in (getattr(c, "mods_involved", None) or []) if m)
             except Exception:
@@ -779,44 +1021,47 @@ class ConflictsPage(BasePage):
 
         # Count by type
         type_counts = {}
-        for c in self._conflicts:
+        for c in filtered_conflicts:
             ext = self._conflict_extension(c)
             type_counts[ext] = type_counts.get(ext, 0) + 1
 
         type_info = ", ".join(f"{count} {ext}" for ext, count in sorted(type_counts.items()))
 
-        locale_count = len(self._locale_msbts)
+        locale_count = len(filtered_locale_msbts)
         summary_parts = []
         if total:
-            summary_parts.append(f"{total} conflicts across {len(mods)} mods")
-            summary_parts.append(type_info)
+            if filter_text:
+                summary_parts.append(f"Showing {total} of {len(self._conflicts)} conflicts")
+            else:
+                summary_parts.append(f"{total} conflicts across {len(mods)} mods")
+            if type_info:
+                summary_parts.append(type_info)
+            if self.conflict_view_var.get() == "By Fighter/Form/Slot":
+                summary_parts.append("grouped by fighter/form/slot")
             if mergeable_pending > 0:
                 summary_parts.append(f"{mergeable_pending} can be auto-fixed")
+            elif filter_text and overall_mergeable_pending > 0:
+                summary_parts.append(f"{overall_mergeable_pending} auto-fixable total")
             if already_merged > 0:
                 summary_parts.append(f"{already_merged} already merged")
             if already_resolved_other > 0:
                 summary_parts.append(f"{already_resolved_other} already resolved")
-        if locale_count:
-            summary_parts.append(f"{locale_count} locale MSBT file(s) to fix")
+        if overall_locale_count:
+            if filter_text:
+                summary_parts.append(f"{locale_count} of {overall_locale_count} locale MSBT file(s) shown")
+            else:
+                summary_parts.append(f"{locale_count} locale MSBT file(s) to fix")
         summary_text = " | ".join(summary_parts) if summary_parts else "No conflicts found."
         self.summary_label.configure(
             text=summary_text,
-            text_color="#e94560" if (mergeable_pending > 0 or locale_count > 0) else "#2fa572")
+            text_color="#e94560" if (overall_mergeable_pending > 0 or overall_locale_count > 0) else "#2fa572")
 
-        if mergeable_pending > 0 or locale_count > 0:
+        if overall_mergeable_pending > 0 or overall_locale_count > 0:
             self.auto_resolve_btn.pack(side="left")
 
-        if locale_count > 0:
+        if overall_locale_count > 0:
             self.fix_locale_btn.pack(side="left", padx=(10, 0))
-        self._set_auto_actions_visible(bool(mergeable_pending > 0 or locale_count > 0))
-
-        # Group conflicts by type and render with explanations
-        by_ext = {}
-        for c in self._conflicts:
-            ext = self._conflict_extension(c)
-            if ext not in by_ext:
-                by_ext[ext] = []
-            by_ext[ext].append(c)
+        self._set_auto_actions_visible(bool(overall_mergeable_pending > 0 or overall_locale_count > 0))
 
         severity_rank = {
             ConflictSeverity.CRITICAL: 0,
@@ -825,72 +1070,69 @@ class ConflictsPage(BasePage):
             ConflictSeverity.LOW: 3,
         }
 
-        sorted_groups = sorted(
-            by_ext.items(),
-            key=lambda item: (
-                min((severity_rank.get(getattr(c, "severity", None), 99) for c in item[1]), default=99),
-                item[0],
-            ),
-        )
+        if self.conflict_view_var.get() == "By Fighter/Form/Slot":
+            sections = self._build_slot_sections(filtered_conflicts, severity_rank)
+        else:
+            sections = self._build_type_sections(filtered_conflicts, severity_rank)
 
         rendered_conflict_rows = 0
         rendered_section_blocks = 0
-        for ext, conflicts in sorted_groups:
-            type_header = None
+        for section in sections:
+            section_header = None
+            section_title = str(section.get("title", "Conflicts"))
+            section_description = str(section.get("description", "") or "").strip()
+            conflicts = list(section.get("conflicts", []) or [])
             try:
-                conflicts.sort(key=lambda c: (
-                    severity_rank.get(getattr(c, "severity", None), 99),
-                    str(getattr(c, "relative_path", "")).lower(),
-                ))
-                # Type header with explanation
-                info = CONFLICT_EXPLANATIONS.get(ext)
-                if info:
-                    type_name, description, can_merge = info
+                if self.conflict_view_var.get() == "By Fighter/Form/Slot":
+                    conflicts.sort(key=lambda c: (
+                        self._conflict_extension(c),
+                        severity_rank.get(getattr(c, "severity", None), 99),
+                        self._conflict_display_path(c).lower(),
+                    ))
                 else:
-                    type_name = f"{ext.upper()} Conflicts"
-                    description = "Files of this type are modified by multiple mods."
-                    can_merge = False
+                    conflicts.sort(key=lambda c: (
+                        severity_rank.get(getattr(c, "severity", None), 99),
+                        self._conflict_display_path(c).lower(),
+                    ))
 
-                type_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
-                type_header.pack(fill="x", pady=(8, 4))
+                section_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+                section_header.pack(fill="x", pady=(8, 4))
                 rendered_section_blocks += 1
 
-                header_inner = ctk.CTkFrame(type_header, fg_color="transparent")
+                header_inner = ctk.CTkFrame(section_header, fg_color="transparent")
                 header_inner.pack(fill="x", padx=12, pady=8)
 
-                ctk.CTkLabel(header_inner, text=f"{type_name} ({len(conflicts)})",
+                ctk.CTkLabel(header_inner, text=f"{section_title} ({len(conflicts)})",
                              font=ctk.CTkFont(size=13, weight="bold"),
                              text_color="white", anchor="w").pack(anchor="w")
 
-                ctk.CTkLabel(header_inner, text=description,
-                             font=ctk.CTkFont(size=11), text_color="#888888",
-                             anchor="w", wraplength=800, justify="left").pack(anchor="w")
+                if section_description:
+                    ctk.CTkLabel(header_inner, text=section_description,
+                                 font=ctk.CTkFont(size=11), text_color="#888888",
+                                 anchor="w", wraplength=800, justify="left").pack(anchor="w")
 
-                if can_merge:
-                    pending_in_group = sum(
-                        1 for c in conflicts
-                        if bool(getattr(c, "is_mergeable", False)) and not bool(getattr(c, "resolved", False))
-                    )
-                    merged_in_group = sum(
-                        1 for c in conflicts
-                        if bool(getattr(c, "is_mergeable", False))
-                        and bool(getattr(c, "resolved", False))
-                        and getattr(c, "resolution", None) == ResolutionStrategy.MERGE
-                    )
-                    if pending_in_group > 0:
-                        merge_hint = (
-                            f"{pending_in_group} conflict(s) can be automatically merged."
-                        )
-                    elif merged_in_group > 0:
-                        merge_hint = "These conflicts are already merged."
-                    else:
-                        merge_hint = "These conflicts are already resolved."
+                pending_in_group = sum(
+                    1 for c in conflicts
+                    if bool(getattr(c, "is_mergeable", False)) and not bool(getattr(c, "resolved", False))
+                )
+                merged_in_group = sum(
+                    1 for c in conflicts
+                    if bool(getattr(c, "is_mergeable", False))
+                    and bool(getattr(c, "resolved", False))
+                    and getattr(c, "resolution", None) == ResolutionStrategy.MERGE
+                )
+                if pending_in_group > 0:
+                    merge_hint = f"{pending_in_group} conflict(s) can be automatically merged."
+                elif merged_in_group > 0:
+                    merge_hint = "These conflicts are already merged."
+                else:
+                    merge_hint = ""
+                if merge_hint:
                     ctk.CTkLabel(header_inner,
                                  text=merge_hint,
                                  font=ctk.CTkFont(size=11), text_color="#2fa572",
                                  anchor="w").pack(anchor="w")
 
-                # Conflict cards for this type
                 for conflict in conflicts:
                     try:
                         card = ConflictCard(
@@ -916,17 +1158,17 @@ class ConflictsPage(BasePage):
                             anchor="w",
                         ).pack(fill="x", padx=10, pady=8)
             except Exception as e:
-                logger.warn("Conflicts", f"Failed to render conflict section '{ext}': {e}")
+                logger.warn("Conflicts", f"Failed to render conflict section '{section_title}': {e}")
                 try:
-                    if type_header is not None and bool(type_header.winfo_exists()):
-                        type_header.destroy()
+                    if section_header is not None and bool(section_header.winfo_exists()):
+                        section_header.destroy()
                 except Exception:
                     pass
                 fallback_row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
                 fallback_row.pack(fill="x", pady=2)
                 ctk.CTkLabel(
                     fallback_row,
-                    text=f"Could not render section {ext}; falling back to minimal row(s).",
+                    text=f"Could not render section {section_title}; falling back to minimal row(s).",
                     font=ctk.CTkFont(size=12),
                     text_color="#d4a017",
                     anchor="w",
@@ -942,7 +1184,7 @@ class ConflictsPage(BasePage):
                 ctk.CTkFrame(fallback_row, height=4, fg_color="transparent").pack()
 
         # Render locale-specific MSBT section if any were found
-        if self._locale_msbts:
+        if filtered_locale_msbts:
             locale_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
             locale_header.pack(fill="x", pady=(12, 4))
             rendered_section_blocks += 1
@@ -951,7 +1193,7 @@ class ConflictsPage(BasePage):
             lh_inner.pack(fill="x", padx=12, pady=8)
 
             ctk.CTkLabel(lh_inner,
-                         text=f"Locale-Specific MSBT Files ({len(self._locale_msbts)})",
+                         text=f"Locale-Specific MSBT Files ({len(filtered_locale_msbts)})",
                          font=ctk.CTkFont(size=13, weight="bold"),
                          text_color="#d4a017", anchor="w").pack(anchor="w")
 
@@ -964,7 +1206,7 @@ class ConflictsPage(BasePage):
                          anchor="w", wraplength=800, justify="left").pack(anchor="w", pady=(4, 0))
 
             # List each locale MSBT file
-            for entry in self._locale_msbts:
+            for entry in filtered_locale_msbts:
                 try:
                     mod_name = entry[0]
                     filename = entry[1]
@@ -984,7 +1226,7 @@ class ConflictsPage(BasePage):
                              anchor="w").pack(side="left", padx=(10, 0))
                 rendered_conflict_rows += 1
 
-        if rendered_conflict_rows == 0 and rendered_section_blocks == 0 and (self._conflicts or self._locale_msbts):
+        if rendered_conflict_rows == 0 and rendered_section_blocks == 0 and (filtered_conflicts or filtered_locale_msbts):
             # Never leave the results area blank - show a resilient fallback.
             logger.warn("Conflicts", "No conflict rows rendered; displaying fallback list")
             fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
@@ -996,7 +1238,7 @@ class ConflictsPage(BasePage):
                 text_color="#d4a017",
                 anchor="w",
             ).pack(fill="x", padx=12, pady=(10, 6))
-            for conflict in self._conflicts[:20]:
+            for conflict in filtered_conflicts[:20]:
                 ctk.CTkLabel(
                     fallback_frame,
                     text=f"  - {self._conflict_display_line(conflict)}",

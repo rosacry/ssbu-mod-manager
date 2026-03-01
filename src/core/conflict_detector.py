@@ -191,6 +191,7 @@ class ConflictDetector:
 
         mod_display_labels: dict[str, str] = {}
         aggregate_labels: list[str] = []
+        slot_name_variants: dict[tuple[str, int], set[str]] = defaultdict(set)
         for mod_name, file_path in providers:
             mod_root = self._provider_mod_root(file_path, conflict.relative_path)
             if mod_root is None or not mod_root.exists():
@@ -201,6 +202,10 @@ class ConflictDetector:
                 analysis = analyze_mod_directory(mod_root, [mod_name, mod_root.name])
                 analysis_cache[cache_key] = analysis
             labels = resolve_mod_slot_labels(mod_root, slot_map, analysis=analysis)
+            for slot_key, display_name in labels.items():
+                clean_name = str(display_name or "").strip()
+                if clean_name:
+                    slot_name_variants[slot_key].add(clean_name)
             descriptions = self._build_slot_descriptions(slot_map, labels)
             if not descriptions:
                 continue
@@ -208,6 +213,11 @@ class ConflictDetector:
             mod_display_labels[mod_name] = compact
             aggregate_labels.extend(descriptions)
 
+        conflict.slot_group_key = self._build_slot_group_key(slot_map)
+        conflict.slot_group_label = self._format_limited_list(
+            self._build_slot_group_descriptions(slot_map, slot_name_variants),
+            max_items=2,
+        )
         aggregate_unique = self._dedupe_strings(aggregate_labels)
         if aggregate_unique:
             label = "Affected slot/form" if len(aggregate_unique) == 1 else "Affected slots/forms"
@@ -224,6 +234,36 @@ class ConflictDetector:
             for slot in sorted(slots):
                 display_name = labels.get((fighter, slot))
                 descriptions.append(ConflictDetector._format_slot_reference(fighter, slot, display_name))
+        return ConflictDetector._dedupe_strings(descriptions)
+
+    @staticmethod
+    def _build_slot_group_key(slot_map: dict[str, set[int]]) -> str:
+        tokens: list[str] = []
+        for fighter, slots in sorted(slot_map.items()):
+            for slot in sorted(slots):
+                tokens.append(f"{fighter}:c{int(slot):02d}")
+        return "|".join(tokens)
+
+    @staticmethod
+    def _build_slot_group_descriptions(
+        slot_map: dict[str, set[int]],
+        slot_name_variants: dict[tuple[str, int], set[str]],
+    ) -> list[str]:
+        descriptions: list[str] = []
+        for fighter, slots in sorted(slot_map.items()):
+            for slot in sorted(slots):
+                slot_key = (fighter, slot)
+                names = sorted(slot_name_variants.get(slot_key, set()), key=str.lower)
+                display_name = None
+                if len(names) == 1:
+                    display_name = names[0]
+                elif len(names) > 1:
+                    display_name = " / ".join(names[:2])
+                    if len(names) > 2:
+                        display_name = f"{display_name} +{len(names) - 2}"
+                descriptions.append(
+                    ConflictDetector._format_slot_reference(fighter, slot, display_name)
+                )
         return ConflictDetector._dedupe_strings(descriptions)
 
     @staticmethod

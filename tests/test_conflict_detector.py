@@ -44,5 +44,9 @@ def test_detect_conflicts_adds_friendly_slot_labels(tmp_path):
     assert "Affected slots/forms:" in conflict.slot_summary
     assert "Nazo (sonic c03)" in conflict.slot_summary
     assert "Dark Super Sonic (sonic c03)" in conflict.slot_summary
+    assert conflict.slot_group_key == "sonic:c03"
+    assert "sonic c03" in conflict.slot_group_label
+    assert "Nazo" in conflict.slot_group_label
+    assert "Dark Super Sonic" in conflict.slot_group_label
     assert conflict.mod_display_labels["Nazo Pack"] == "Nazo (sonic c03)"
     assert conflict.mod_display_labels["Dark Pack"] == "Dark Super Sonic (sonic c03)"

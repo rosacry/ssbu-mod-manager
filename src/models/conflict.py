@@ -24,6 +24,8 @@ class FileConflict:
     relative_path: str
     display_path: str = ""
     slot_summary: str = ""
+    slot_group_key: str = ""
+    slot_group_label: str = ""
     mods_involved: list[str] = field(default_factory=list)
     mod_display_labels: dict[str, str] = field(default_factory=dict)
     mod_paths: list[Path] = field(default_factory=list)
