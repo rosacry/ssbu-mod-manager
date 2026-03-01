@@ -1284,6 +1284,8 @@ class ModsPage(BasePage):
                 )
             if summary.manifest_repairs:
                 lines.append(f"Auto-repaired {summary.manifest_repairs} manifest/config issue(s).")
+            if summary.ui_portrait_repairs:
+                lines.append(f"Filled {summary.ui_portrait_repairs} missing required UI portrait file(s).")
             if summary.identical_files_pruned:
                 lines.append(
                     f"Deduped {summary.identical_files_pruned} byte-identical exact overlap file(s)."
@@ -1342,6 +1344,8 @@ class ModsPage(BasePage):
                 lines.append(f"Created {summary.configs_created} missing config.json manifest(s).")
             if summary.configs_updated:
                 lines.append(f"Updated {summary.configs_updated} existing config manifest(s).")
+            if summary.ui_portrait_repairs:
+                lines.append(f"Filled {summary.ui_portrait_repairs} missing required UI portrait file(s).")
             if summary.support_mod_adjustments:
                 lines.append(
                     f"Adjusted {summary.support_mod_adjustments} support mod(s) and pruned "

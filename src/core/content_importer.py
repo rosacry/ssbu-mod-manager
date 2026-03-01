@@ -76,6 +76,18 @@ _PRCXML_CHARACALL_PATTERN = re.compile(
     r'characall_label_c(?P<slot>\d{2})"\s*>\s*vc_narration_characall_(?P<identifier>[^<]+)<',
     re.IGNORECASE,
 )
+_UI_CHARA_PORTRAIT_RE = re.compile(
+    r"^ui/(?P<replace_kind>replace|replace_patch)/chara/chara_(?P<size>\d)/(?P<filename>[^/]+)_(?P<fighter>[^_/]+)_(?P<slot>\d{2})\.bntx$",
+    re.IGNORECASE,
+)
+_REQUIRED_UI_PORTRAIT_SIZES = (0, 1, 2, 3, 4)
+_UI_PORTRAIT_FALLBACK_ORDER = {
+    0: (1, 2, 3, 4),
+    1: (0, 2, 3, 4),
+    2: (1, 0, 4, 3),
+    3: (4, 1, 2, 0),
+    4: (3, 1, 2, 0),
+}
 
 
 @dataclass
@@ -92,6 +104,7 @@ class ImportSummary:
     support_mod_adjustments: int = 0
     support_files_pruned: int = 0
     manifest_repairs: int = 0
+    ui_portrait_repairs: int = 0
     identical_files_pruned: int = 0
     remaining_exact_overlaps: int = 0
     skipped_items: list[str] = field(default_factory=list)
@@ -106,6 +119,7 @@ class InstalledModsRepairSummary:
     configs_normalized: int = 0
     configs_created: int = 0
     configs_updated: int = 0
+    ui_portrait_repairs: int = 0
     support_mod_adjustments: int = 0
     support_files_pruned: int = 0
     identical_files_pruned: int = 0
@@ -589,6 +603,7 @@ def import_mod_package(
             + repair_summary.configs_created
             + repair_summary.configs_updated
         )
+        summary.ui_portrait_repairs += repair_summary.ui_portrait_repairs
         summary.identical_files_pruned += repair_summary.identical_files_pruned
         summary.remaining_exact_overlaps += repair_summary.remaining_exact_overlaps
         summary.warnings.extend(repair_summary.warnings)
@@ -657,6 +672,11 @@ def repair_installed_mods(
             changed_mods.add(mod_root.name)
         elif before_payload_text is None and before_json_exists and after_payload_text is not None:
             summary.configs_updated += 1
+            changed_mods.add(mod_root.name)
+
+        portrait_repairs = _repair_missing_ui_portraits(mod_root)
+        if portrait_repairs:
+            summary.ui_portrait_repairs += portrait_repairs
             changed_mods.add(mod_root.name)
 
     _resolve_installed_exact_overlaps(
@@ -1953,6 +1973,63 @@ def _backup_and_remove_installed_overlap_file(mods_path: Path, mod_name: str, re
     file_path.unlink()
     _prune_empty_parents(file_path.parent, mod_root)
     return True
+
+
+def _repair_missing_ui_portraits(mod_root: Path) -> int:
+    portrait_map = _collect_ui_portrait_paths(mod_root)
+    created = 0
+    for key, size_map in portrait_map.items():
+        for target_size in _REQUIRED_UI_PORTRAIT_SIZES:
+            if target_size in size_map:
+                continue
+            source_size = _choose_ui_portrait_fallback_size(size_map, target_size)
+            if source_size is None:
+                continue
+            source_path = size_map[source_size]
+            dest_path = _retarget_ui_portrait_path(source_path, source_size, target_size)
+            if dest_path.exists():
+                size_map[target_size] = dest_path
+                continue
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, dest_path)
+            size_map[target_size] = dest_path
+            created += 1
+    return created
+
+
+def _collect_ui_portrait_paths(mod_root: Path) -> dict[tuple[str, int, str], dict[int, Path]]:
+    portrait_map: dict[tuple[str, int, str], dict[int, Path]] = defaultdict(dict)
+    for file_path in mod_root.rglob("*.bntx"):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(mod_root)).replace("\\", "/")
+        match = _UI_CHARA_PORTRAIT_RE.match(rel)
+        if match is None:
+            continue
+        key = (
+            str(match.group("fighter")).lower(),
+            int(match.group("slot")),
+            str(match.group("replace_kind")).lower(),
+        )
+        portrait_map[key][int(match.group("size"))] = file_path
+    return portrait_map
+
+
+def _choose_ui_portrait_fallback_size(size_map: dict[int, Path], target_size: int) -> int | None:
+    for candidate in _UI_PORTRAIT_FALLBACK_ORDER.get(int(target_size), ()):
+        if candidate in size_map:
+            return candidate
+    available = sorted(size_map.keys())
+    return available[0] if available else None
+
+
+def _retarget_ui_portrait_path(source_path: Path, source_size: int, target_size: int) -> Path:
+    source_text = f"chara_{int(source_size)}"
+    target_text = f"chara_{int(target_size)}"
+    rel = str(source_path).replace("\\", "/")
+    rel = rel.replace(f"/{source_text}/", f"/{target_text}/")
+    rel = rel.replace(f"{source_text}_", f"{target_text}_")
+    return Path(rel)
 
 
 def _is_broad_support_only_mod(

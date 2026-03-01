@@ -1116,6 +1116,42 @@ def test_repair_installed_mods_ignores_merge_safe_text_overlap_paths(tmp_path: P
     assert summary.remaining_exact_overlaps == 0
 
 
+def test_repair_installed_mods_fills_missing_required_ui_portrait_sizes(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Nazo Sonic C02"
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"skin")
+    for size in (0, 1, 2, 4):
+        target = mod_root / "ui" / "replace" / "chara" / f"chara_{size}" / f"chara_{size}_sonic_02.bntx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(f"portrait-{size}".encode("utf-8"))
+
+    summary = repair_installed_mods(mods_path)
+
+    repaired = mod_root / "ui" / "replace" / "chara" / "chara_3" / "chara_3_sonic_02.bntx"
+    assert summary.ui_portrait_repairs == 1
+    assert repaired.exists()
+    assert repaired.read_bytes() == b"portrait-4"
+
+
+def test_import_mod_package_postflight_fills_missing_required_ui_portrait_sizes(tmp_path: Path):
+    source = tmp_path / "downloads" / "Nazo Sonic C02"
+    (source / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"skin")
+    for size in (0, 1, 2, 4):
+        target = source / "ui" / "replace" / "chara" / f"chara_{size}" / f"chara_{size}_sonic_02.bntx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(f"portrait-{size}".encode("utf-8"))
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    summary = import_mod_package(source, mods_path)
+
+    repaired = mods_path / "Nazo Sonic C02" / "ui" / "replace" / "chara" / "chara_3" / "chara_3_sonic_02.bntx"
+    assert summary.ui_portrait_repairs == 1
+    assert repaired.exists()
+    assert repaired.read_bytes() == b"portrait-4"
+
+
 def test_import_plugin_package_from_atmosphere_tree(tmp_path: Path):
     source = tmp_path / "plugin_pkg"
     plugin_src = source / "atmosphere" / "contents" / SSBU_TITLE_ID / "romfs" / "skyline" / "plugins"
