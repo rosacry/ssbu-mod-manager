@@ -435,6 +435,20 @@ def test_import_mod_package_prunes_exact_support_files_from_existing_support_mod
     (existing / "sound" / "bank" / "fighter").mkdir(parents=True)
     (existing / "sound" / "bank" / "fighter" / "se_sonic_c00.nus3audio").write_bytes(b"old-se00")
     (existing / "sound" / "bank" / "fighter" / "se_sonic_c01.nus3audio").write_bytes(b"old-se01")
+    (existing / "ui" / "message").mkdir(parents=True)
+    (existing / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_00_sonic">
+    <text>Modern Sonic</text>
+  </entry>
+  <entry label="nam_chr1_01_sonic">
+    <text>Dark Sonic</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
 
     source = tmp_path / "downloads" / "Sonic Skin"
     (source / "fighter" / "sonic" / "model" / "body" / "c00").mkdir(parents=True)
@@ -456,6 +470,10 @@ def test_import_mod_package_prunes_exact_support_files_from_existing_support_mod
     assert (mods_path / "Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c01.nus3audio").exists()
     assert (mods_path.parent / "_import_backups" / "Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").exists()
     assert (mods_path / "Sonic Skin" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").exists()
+    assert any(
+        "Modern Sonic (sonic c00)" in warning and "_import_backups/Sonic Voice Pack" in warning
+        for warning in summary.warnings
+    )
 
 
 def test_import_mod_package_prunes_support_files_after_reslotting(tmp_path: Path):
@@ -658,6 +676,48 @@ def test_apply_mod_voice_pack_scope_can_expand_character_wide(tmp_path: Path):
     assert summary.target_slots == list(range(8))
     for slot in range(8):
         assert (mod_path / "sound" / "bank" / "fighter_voice" / f"vc_sonic_c{slot:02d}.nus3audio").exists()
+
+
+def test_import_mod_package_disables_fully_pruned_support_mod_with_friendly_reporting(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Nazo Voice Pack"
+    (existing / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (existing / "sound" / "bank" / "fighter_voice" / "vc_sonic_c03.nus3audio").write_bytes(b"old-vc")
+    (existing / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (existing / "sound" / "bank" / "fighter" / "se_sonic_c03.nus3audio").write_bytes(b"old-se")
+    (existing / "ui" / "message").mkdir(parents=True)
+    (existing / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_03_sonic">
+    <text>Nazo</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
+
+    source = tmp_path / "downloads" / "Nazo Skin"
+    (source / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").write_bytes(b"skin")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"ui")
+    (source / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter_voice" / "vc_sonic_c03.nus3audio").write_bytes(b"new-vc")
+    (source / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter" / "se_sonic_c03.nus3audio").write_bytes(b"new-se")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.support_mod_adjustments == 1
+    assert summary.support_files_pruned == 2
+    assert not existing.exists()
+    assert (mods_path.parent / "disabled_mods" / "Nazo Voice Pack").exists()
+    assert any(
+        "Disabled support mod 'Nazo Voice Pack' (Nazo (sonic c03))" in warning
+        and "disabled_mods/Nazo Voice Pack" in warning
+        for warning in summary.warnings
+    )
 
 
 def test_inspect_mod_effect_pack_detects_slot_scoped_effects(tmp_path: Path):

@@ -17,6 +17,7 @@ from src.core.skin_slot_utils import (
     choose_open_target_slot,
     choose_primary_variant_root,
     copy_single_slot_variant,
+    iter_slot_matches,
     reslot_mod_directory,
 )
 from src.utils.xmsbt_parser import extract_entries_from_msbt, parse_xmsbt
@@ -43,6 +44,12 @@ _METADATA_FILENAMES = {
     "preview.jpeg",
     "readme.txt",
     "readme.md",
+}
+_NON_EFFECTIVE_SUPPORT_LEFTOVERS = {
+    "ui/message/msg_name.xmsbt",
+    "ui/message/msg_name.msbt",
+    "ui/param/database/ui_chara_db.prcxml",
+    "ui/param/database/ui_chara_db.prc",
 }
 _SUPPORT_KIND_TO_CATEGORY = {
     "voice": "sound",
@@ -953,6 +960,38 @@ def _describe_installed_visual_slot(mods_path: Path, mod_name: str, fighter: str
     return _format_visual_slot_reference(fighter, slot, display_name)
 
 
+def _describe_slot_targets_from_paths(mod_root: Path, relative_paths: list[str], fallback_name: str | None = None) -> list[str]:
+    slot_map: dict[str, set[int]] = defaultdict(set)
+    for rel in relative_paths:
+        for fighter, slot in iter_slot_matches(rel):
+            slot_map[str(fighter).lower()].add(int(slot))
+    if not slot_map:
+        return []
+
+    analysis = analyze_mod_directory(mod_root, [mod_root.name])
+    labels = resolve_mod_slot_labels(mod_root, slot_map, analysis=analysis)
+    descriptions: list[str] = []
+    single_target = sum(len(slots) for slots in slot_map.values()) == 1
+    for fighter, slots in sorted(slot_map.items()):
+        for slot in sorted(slots):
+            fallback = fallback_name if single_target else None
+            display_name = labels.get((fighter, slot))
+            if not display_name and fallback:
+                display_name = str(fallback).strip() or None
+            descriptions.append(_format_visual_slot_reference(fighter, slot, display_name))
+    return descriptions
+
+
+def _format_slot_description_list(descriptions: list[str], max_items: int = 3) -> str:
+    cleaned = [str(item).strip() for item in descriptions if str(item).strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) <= max_items:
+        return ", ".join(cleaned)
+    shown = ", ".join(cleaned[:max_items])
+    return f"{shown}, and {len(cleaned) - max_items} more"
+
+
 def _extract_multi_slot_names_from_msg_name(
     source_dir: Path,
     visual_slots: dict[str, set[int]],
@@ -1701,6 +1740,8 @@ def _prune_existing_support_files(
         return
 
     backup_root = mods_path.parent / _SUPPORT_BACKUP_DIR_NAME / mod_name
+    slot_descriptions = _describe_slot_targets_from_paths(mod_root, relative_paths, fallback_name=mod_name)
+    slot_text = _format_slot_description_list(slot_descriptions)
     removed = 0
     for rel in relative_paths:
         file_path = mod_root / rel
@@ -1719,15 +1760,23 @@ def _prune_existing_support_files(
 
     summary.support_mod_adjustments += 1
     summary.support_files_pruned += removed
-    summary.warnings.append(
-        f"Pruned {removed} exact support file(s) from '{mod_name}' so a more specific imported override can win cleanly."
+    warning = (
+        f"Pruned {removed} exact support file(s) from '{mod_name}'"
+        f"{f' affecting {slot_text}' if slot_text else ''} so a more specific imported override can win cleanly. "
+        f"Backups were saved under '{_SUPPORT_BACKUP_DIR_NAME}/{mod_name}'."
     )
+    summary.warnings.append(warning)
 
     if not _has_effective_mod_content(mod_root):
-        _disable_support_only_mod(mods_path, mod_name, summary)
+        _disable_support_only_mod(mods_path, mod_name, summary, slot_descriptions)
 
 
-def _disable_support_only_mod(mods_path: Path, mod_name: str, summary: ImportSummary) -> None:
+def _disable_support_only_mod(
+    mods_path: Path,
+    mod_name: str,
+    summary: ImportSummary,
+    slot_descriptions: list[str] | None = None,
+) -> None:
     src = mods_path / mod_name
     if not src.exists():
         return
@@ -1739,8 +1788,11 @@ def _disable_support_only_mod(mods_path: Path, mod_name: str, summary: ImportSum
         dest = disabled_dir / f"{mod_name} ({suffix})"
         suffix += 1
     src.rename(dest)
+    slot_text = _format_slot_description_list(list(slot_descriptions or []))
     summary.warnings.append(
-        f"Disabled support mod '{mod_name}' after all effective conflicting files were pruned."
+        f"Disabled support mod '{mod_name}'"
+        f"{f' ({slot_text})' if slot_text else ''} after all effective conflicting files were pruned. "
+        f"It was moved to 'disabled_mods/{dest.name}'."
     )
 
 
@@ -1769,6 +1821,8 @@ def _has_effective_mod_content(mod_root: Path) -> bool:
                 continue
             rel = str(file_path.relative_to(mod_root)).replace("\\", "/").lower()
             if rel in _METADATA_FILENAMES:
+                continue
+            if rel in _NON_EFFECTIVE_SUPPORT_LEFTOVERS:
                 continue
             return True
     except (PermissionError, OSError):

@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.4**.
+Current release version: **1.4.5**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -19,6 +19,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: one-click `Wi-Fi Safe` mode enables only mods classified as safe client-side content and disables the rest.
   - Mods: multi-slot skin packs can now be split during import, with a picker that lets you import the recommended base skin, select individual slot variants, or bring in every form separately, and it shows friendly form names from `msg_name` / `ui_chara_db` metadata when the pack provides them.
   - Mods: skin-slot conflict prompts and overlap warnings now use friendly form names when metadata is available, and they call out which installed skin currently owns the slot plus which default slots remain open.
+  - Mods: auto-pruned support-file and disabled-mod reporting now includes friendly form names plus the `_import_backups/...` or `disabled_mods/...` destination, and support-only metadata leftovers no longer keep an otherwise-pruned support pack enabled.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
 - Music page with PRC-backed stage slot discovery, Wi-Fi-safer existing-slot replacement overlays, a standalone library player queue, legacy stage-playlist editing, favorites list/filtering, preview playback, and an explicit `.nus3audio`-only track list.
@@ -59,7 +60,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.4-windows.zip`
+- `dist/SSBUModManager-1.4.5-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -88,6 +89,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Mods import now distinguishes skin slots from slot-scoped support packs, so voice/effect-only Sonic-style packs can coexist with a skin on the same costume slot, and re-importing the same mod folder replaces it in place without a false self-conflict.
 - Mods import now auto-prunes exact support-file overlaps out of older support-only packs when a more specific imported override needs those paths, and reslotted imports with a slot token in the folder name are renamed to match their final slot.
 - Skin-slot conflict prompts and overlap warnings now show metadata-backed form names where packs provide them, list the installed skin occupying the requested slot, and surface open default slots directly in the replace/move decision flow.
+- Auto-pruned support-pack warnings now call out the affected form names and backup folder path, and support-only packs that are reduced to metadata leftovers are moved into `disabled_mods` instead of staying falsely active.
 - Plugin disable now moves binaries into a sibling `disabled_plugins` folder, and legacy `.nro.disabled` files are auto-migrated.
 - Page navigation now uses a very short settle mask during tab switches to hide first-frame partial rendering on heavier pages.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.
