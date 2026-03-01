@@ -1292,11 +1292,23 @@ class ModsPage(BasePage):
             messagebox.showerror("Import Failed", str(e))
 
     def _resolve_import_slot_conflict(self, conflict):
-        slot_text = f"{conflict.fighter} c{conflict.requested_slot:02d}"
+        slot_text = str(getattr(conflict, "requested_label", "") or f"{conflict.fighter} c{conflict.requested_slot:02d}")
+        open_slot_text = ", ".join(
+            str(getattr(conflict, "open_slot_descriptions", {}).get(slot, f"Open default slot (c{slot:02d})"))
+            for slot in conflict.open_slots[:4]
+        )
+        if len(conflict.open_slots) > 4:
+            open_slot_text += f", and {len(conflict.open_slots) - 4} more"
+
         if conflict.open_slots and len(conflict.conflicting_mods) == 1:
+            existing_mod = conflict.conflicting_mods[0]
+            existing_text = str(
+                getattr(conflict, "conflicting_mod_descriptions", {}).get(existing_mod, slot_text)
+            )
             message = (
                 f"'{conflict.mod_name}' wants {slot_text}, but that slot is already used by "
-                f"'{conflict.conflicting_mods[0]}'.\n\n"
+                f"'{existing_mod}' on {existing_text}.\n"
+                f"Open default slots: {open_slot_text}.\n\n"
                 "Yes: replace the existing skin by disabling the current mod.\n"
                 "No: move the existing mod into an open default slot.\n"
                 "Cancel: skip importing this skin."
@@ -1309,11 +1321,26 @@ class ModsPage(BasePage):
             return "skip"
 
         if conflict.open_slots:
-            message = (
+            lines = [
                 f"'{conflict.mod_name}' wants {slot_text}, but that slot is already used by "
-                f"{len(conflict.conflicting_mods)} mod(s).\n\n"
-                "Yes: disable the existing mod(s) and replace that slot.\n"
-                "No/Cancel: skip importing this skin."
+                f"{len(conflict.conflicting_mods)} mod(s):",
+            ]
+            for mod_name in conflict.conflicting_mods[:4]:
+                existing_text = str(
+                    getattr(conflict, "conflicting_mod_descriptions", {}).get(mod_name, slot_text)
+                )
+                lines.append(f"- {mod_name}: {existing_text}")
+            if len(conflict.conflicting_mods) > 4:
+                lines.append(f"- ...and {len(conflict.conflicting_mods) - 4} more")
+            lines.extend([
+                "",
+                f"Open default slots: {open_slot_text}.",
+                "",
+                "Yes: disable the existing mod(s) and replace that slot.",
+                "No/Cancel: skip importing this skin.",
+            ])
+            message = (
+                "\n".join(lines)
             )
             choice = messagebox.askyesnocancel("Skin Slot Conflict", message)
             return "replace" if choice is True else "skip"

@@ -110,6 +110,9 @@ class SlotConflictInfo:
     requested_slot: int
     conflicting_mods: list[str]
     open_slots: list[int]
+    requested_label: str = ""
+    conflicting_mod_descriptions: dict[str, str] = field(default_factory=dict)
+    open_slot_descriptions: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -374,6 +377,14 @@ def import_mod_package(
                 fighter = str(analysis.primary_fighter)
                 source_slot = int(analysis.primary_slot)
                 target_slot = source_slot
+                source_display_name = _resolve_visual_slot_display_name(
+                    src,
+                    fighter,
+                    source_slot,
+                    analysis=analysis,
+                    fallback_name=target_name,
+                )
+                source_slot_text = _format_visual_slot_reference(fighter, source_slot, source_display_name)
                 conflicting_mods = [
                     mod_name
                     for mod_name in slot_index.get(fighter, {}).get(source_slot, [])
@@ -381,26 +392,42 @@ def import_mod_package(
                 ]
                 if conflicting_mods:
                     open_slots = _available_base_slots(slot_index, fighter)
+                    conflicting_mod_descriptions = {
+                        mod_name: _describe_installed_visual_slot(mods_path, mod_name, fighter, source_slot)
+                        for mod_name in conflicting_mods
+                    }
                     conflict = SlotConflictInfo(
                         mod_name=target_name,
                         fighter=fighter,
                         requested_slot=source_slot,
                         conflicting_mods=conflicting_mods,
                         open_slots=open_slots,
+                        requested_label=source_slot_text,
+                        conflicting_mod_descriptions=conflicting_mod_descriptions,
+                        open_slot_descriptions={
+                            slot: _format_open_visual_slot_reference(slot)
+                            for slot in open_slots
+                        },
                     )
                     action = _resolve_slot_conflict(conflict, slot_conflict_resolver)
 
                     if action == "replace":
                         for mod_name in conflicting_mods:
-                            _disable_conflicting_mod(mods_path, mod_name, summary, fighter, source_slot)
+                            _disable_conflicting_mod(
+                                mods_path,
+                                mod_name,
+                                summary,
+                                source_slot_text,
+                                conflicting_mod_descriptions.get(mod_name),
+                            )
                         slot_index.setdefault(fighter, {}).pop(source_slot, None)
                     elif action == "move_existing":
                         if len(conflicting_mods) != 1 or not open_slots:
                             summary.skipped_items.append(
-                                f"{target_name} ({fighter} c{source_slot:02d})"
+                                f"{target_name} ({source_slot_text})"
                             )
                             summary.warnings.append(
-                                f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                                f"Skipped '{target_name}' because {source_slot_text} "
                                 "was occupied and the existing mod could not be moved safely."
                             )
                             continue
@@ -408,15 +435,20 @@ def import_mod_package(
                         target_open_slot = choose_open_target_slot(fighter, source_slot, open_slots)
                         if target_open_slot is None:
                             summary.skipped_items.append(
-                                f"{target_name} ({fighter} c{source_slot:02d})"
+                                f"{target_name} ({source_slot_text})"
                             )
                             summary.warnings.append(
-                                f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                                f"Skipped '{target_name}' because {source_slot_text} "
                                 "was occupied and no open replacement slot was available."
                             )
                             continue
                         _move_installed_mod_to_open_slot(
-                            mods_path, existing_mod_name, fighter, source_slot, target_open_slot, summary
+                            mods_path,
+                            existing_mod_name,
+                            fighter,
+                            source_slot,
+                            target_open_slot,
+                            summary,
                         )
                         slot_index.setdefault(fighter, {}).pop(source_slot, None)
                         slot_index.setdefault(fighter, {}).setdefault(target_open_slot, []).append(existing_mod_name)
@@ -424,20 +456,20 @@ def import_mod_package(
                         target_open_slot = choose_open_target_slot(fighter, source_slot, open_slots)
                         if target_open_slot is None:
                             summary.skipped_items.append(
-                                f"{target_name} ({fighter} c{source_slot:02d})"
+                                f"{target_name} ({source_slot_text})"
                             )
                             summary.warnings.append(
-                                f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                                f"Skipped '{target_name}' because {source_slot_text} "
                                 "was occupied and no open base slot remained."
                             )
                             continue
                         target_slot = target_open_slot
                     else:
                         summary.skipped_items.append(
-                            f"{target_name} ({fighter} c{source_slot:02d})"
+                            f"{target_name} ({source_slot_text})"
                         )
                         summary.warnings.append(
-                            f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                            f"Skipped '{target_name}' because {source_slot_text} "
                             "was already occupied."
                         )
                         continue
@@ -450,9 +482,14 @@ def import_mod_package(
                     src = reslotted_path
                     target_name = _rename_target_name_for_slot(target_name, source_slot, target_slot)
                     summary.slot_reassignments += 1
+                    target_slot_text = _format_visual_slot_reference(
+                        fighter,
+                        target_slot,
+                        source_display_name,
+                    )
                     summary.warnings.append(
-                        f"Imported '{target_name}' as {fighter} c{target_slot:02d} "
-                        f"instead of c{source_slot:02d} to avoid a slot overlap."
+                        f"Imported '{target_name}' as {target_slot_text} "
+                        f"instead of {source_slot_text} to avoid a slot overlap."
                     )
 
             _resolve_support_path_conflicts(src, target_name, mods_path, summary)
@@ -865,6 +902,57 @@ def resolve_mod_slot_labels(
     return labels
 
 
+def _resolve_visual_slot_display_name(
+    mod_path: Path,
+    fighter: str,
+    slot: int,
+    analysis: SlotAnalysis | None = None,
+    fallback_name: str | None = None,
+) -> str | None:
+    fighter_name = str(fighter).lower()
+    resolved_analysis = analysis or analyze_mod_directory(Path(mod_path), [Path(mod_path).name])
+    labels = resolve_mod_slot_labels(
+        mod_path,
+        {fighter_name: [int(slot)]},
+        analysis=resolved_analysis,
+    )
+    display_name = labels.get((fighter_name, int(slot)))
+    if display_name:
+        return display_name
+
+    if fallback_name and len(resolved_analysis.visual_fighter_slots) == 1:
+        slots = resolved_analysis.visual_fighter_slots.get(fighter_name, [])
+        if len(slots) == 1 and int(slots[0]) == int(slot):
+            return str(fallback_name).strip() or None
+    return None
+
+
+def _format_visual_slot_reference(fighter: str, slot: int, display_name: str | None = None) -> str:
+    fighter_name = str(fighter).lower()
+    slot_token = f"{fighter_name} c{int(slot):02d}"
+    clean_name = str(display_name or "").strip()
+    if not clean_name:
+        return slot_token
+    return f"{clean_name} ({slot_token})"
+
+
+def _format_open_visual_slot_reference(slot: int) -> str:
+    return f"Open default slot (c{int(slot):02d})"
+
+
+def _describe_installed_visual_slot(mods_path: Path, mod_name: str, fighter: str, slot: int) -> str:
+    mod_path = Path(mods_path) / mod_name
+    if not mod_path.exists():
+        return _format_visual_slot_reference(fighter, slot)
+    display_name = _resolve_visual_slot_display_name(
+        mod_path,
+        fighter,
+        slot,
+        fallback_name=mod_name,
+    )
+    return _format_visual_slot_reference(fighter, slot, display_name)
+
+
 def _extract_multi_slot_names_from_msg_name(
     source_dir: Path,
     visual_slots: dict[str, set[int]],
@@ -1037,7 +1125,13 @@ def _available_base_slots(slot_index: dict[str, dict[int, list[str]]], fighter: 
     return [slot for slot in range(8) if slot not in used]
 
 
-def _disable_conflicting_mod(mods_path: Path, mod_name: str, summary: ImportSummary, fighter: str, slot: int) -> None:
+def _disable_conflicting_mod(
+    mods_path: Path,
+    mod_name: str,
+    summary: ImportSummary,
+    requested_slot_text: str,
+    existing_slot_text: str | None = None,
+) -> None:
     src = mods_path / mod_name
     if not src.exists():
         return
@@ -1049,8 +1143,12 @@ def _disable_conflicting_mod(mods_path: Path, mod_name: str, summary: ImportSumm
         dest = disabled_dir / f"{mod_name} ({suffix})"
         suffix += 1
     src.rename(dest)
+    if existing_slot_text and existing_slot_text != requested_slot_text:
+        detail = f"{existing_slot_text} so '{requested_slot_text}' could take that slot"
+    else:
+        detail = f"{requested_slot_text} could be replaced"
     summary.warnings.append(
-        f"Disabled existing mod '{mod_name}' so '{fighter} c{slot:02d}' could be replaced."
+        f"Disabled existing mod '{mod_name}' so {detail}."
     )
 
 
@@ -1065,6 +1163,12 @@ def _move_installed_mod_to_open_slot(
     src = mods_path / mod_name
     if not src.exists() or not src.is_dir():
         raise FileNotFoundError(f"Installed mod not found: {mod_name}")
+    slot_display_name = _resolve_visual_slot_display_name(
+        src,
+        fighter,
+        source_slot,
+        fallback_name=mod_name,
+    )
 
     temp_dir = tempfile.TemporaryDirectory(prefix="ssbumm_existing_reslot_")
     try:
@@ -1086,8 +1190,10 @@ def _move_installed_mod_to_open_slot(
         temp_dir.cleanup()
 
     summary.slot_reassignments += 1
+    source_slot_text = _format_visual_slot_reference(fighter, source_slot, slot_display_name)
+    target_slot_text = _format_visual_slot_reference(fighter, target_slot, slot_display_name)
     summary.warnings.append(
-        f"Moved existing mod '{mod_name}' from {fighter} c{source_slot:02d} to c{target_slot:02d}."
+        f"Moved existing mod '{mod_name}' from {source_slot_text} to {target_slot_text}."
     )
 
 

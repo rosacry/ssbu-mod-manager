@@ -282,6 +282,94 @@ def test_import_mod_package_can_move_existing_mod_to_open_slot(tmp_path: Path):
     assert (mods_path / "New Diddy" / "fighter" / "diddy" / "model" / "body" / "c01" / "new.bin").exists()
 
 
+def test_import_mod_package_conflict_info_uses_friendly_slot_labels(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Existing Sonic"
+    (existing / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (existing / "fighter" / "sonic" / "model" / "body" / "c03" / "existing.bin").write_bytes(b"old")
+    (existing / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (existing / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"old-ui")
+    (existing / "ui" / "message").mkdir(parents=True)
+    (existing / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_03_sonic">
+    <text>Dark Super Sonic</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
+
+    source = tmp_path / "downloads" / "Nazo Sonic"
+    (source / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c03" / "new.bin").write_bytes(b"new")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"new-ui")
+    (source / "ui" / "message").mkdir(parents=True)
+    (source / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_03_sonic">
+    <text>Nazo</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
+
+    seen = {}
+
+    def resolver(conflict):
+        seen["requested"] = conflict.requested_label
+        seen["existing"] = conflict.conflicting_mod_descriptions["Existing Sonic"]
+        seen["open"] = conflict.open_slot_descriptions[0]
+        return "skip"
+
+    try:
+        import_mod_package(source, mods_path, slot_conflict_resolver=resolver)
+    except ValueError:
+        pass
+
+    assert seen["requested"] == "Nazo (sonic c03)"
+    assert seen["existing"] == "Dark Super Sonic (sonic c03)"
+    assert seen["open"] == "Open default slot (c00)"
+
+
+def test_import_mod_package_move_incoming_warning_uses_friendly_slot_labels(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Existing Sonic"
+    (existing / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (existing / "fighter" / "sonic" / "model" / "body" / "c03" / "existing.bin").write_bytes(b"old")
+    (existing / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (existing / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"old-ui")
+
+    source = tmp_path / "downloads" / "Nazo Sonic"
+    (source / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c03" / "new.bin").write_bytes(b"new")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"new-ui")
+    (source / "ui" / "message").mkdir(parents=True)
+    (source / "ui" / "message" / "msg_name.xmsbt").write_text(
+        """<?xml version="1.0" encoding="utf-16"?>
+<xmsbt>
+  <entry label="nam_chr1_03_sonic">
+    <text>Nazo</text>
+  </entry>
+</xmsbt>
+""",
+        encoding="utf-16",
+    )
+
+    summary = import_mod_package(source, mods_path, slot_conflict_resolver=lambda _conflict: "move_incoming")
+
+    assert summary.slot_reassignments == 1
+    assert any(
+        "Nazo (sonic c02)" in warning and "instead of Nazo (sonic c03)" in warning
+        for warning in summary.warnings
+    )
+
+
 def test_import_mod_package_prunes_false_positive_motion_slots(tmp_path: Path):
     source = tmp_path / "downloads" / "VegetaLike"
     (source / "fighter" / "mario" / "model" / "body" / "c02").mkdir(parents=True)
