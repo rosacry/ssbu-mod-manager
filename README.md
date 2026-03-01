@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.16**.
+Current release version: **1.4.17**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -28,6 +28,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: repair/import postflight fills only the required `ui/replace[_patch]/chara/chara_0..4` portrait assets from the closest available portrait size in the same skin, and no longer fabricates advanced `chara_5..7` portrait files from mismatched BNTX sizes.
   - Mods: imports and installed repairs now invalidate ARCropolis `mod_cache` and stale `conflicts.json` automatically after content changes so new file layouts are not masked by cached loader state.
   - Mods: the new `Repair Installed` action on the Mods page audits enabled and disabled mod folders, fixes safe structural/config problems in place, prunes safe overlap cases with backups, and reports only the exact remaining conflicts that still require manual review.
+  - Mods: the new `Repair Runtime` action backs up and resets Smash's Yuzu-specific runtime state to a stable baseline by rewriting the game's renderer profile, clearing its shader/pipeline cache, and removing stale ARCropolis cache files.
   - Conflicts: scan results now surface friendly slot/form names inside conflict cards and fallback rows, and conflicting mod lists call out which form/slot each mod is touching instead of only showing raw file paths.
   - Conflicts: the Conflicts page now has a compact filter box plus a `By Type` / `By Fighter/Form/Slot` view switch, so large multi-form character setups can be reviewed by costume slot instead of only by file extension.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
@@ -71,7 +72,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.16-windows.zip`
+- `dist/SSBUModManager-1.4.17-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
@@ -115,6 +116,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - The `Wi-Fi Safe` button on the Mods page enables only mods classified as `SAFE` and disables anything that still requires a shared setup.
 - The `Repair Installed` button on the Mods page audits installed mods in-place, auto-fixes safe manifest/overlap issues, stores removed files under `_import_backups`, and reports only the remaining exact overlaps that differ and still need manual review.
 - `Repair Installed` also backfills missing required CSS/versus/battle portrait sizes for character skins when the pack shipped only a partial `chara_0..4` set.
+- The `Repair Runtime` button on the Mods page backs up Smash's Yuzu runtime state, writes a stable per-game renderer profile, clears Smash shader/pipeline cache files, and removes stale ARCropolis cache/conflict files that can keep bad runtime state alive after the mods themselves were fixed.
 - Online-risk classification now recognizes common costume-support assets such as slot-scoped fighter motion/update files and visual-only stage render/motion assets as client-side safe instead of flagging them as desync-prone by default.
 - Nested wrapper folders are auto-flattened on import and also surfaced as conflicts during scans.
 - Conflicts page initial state and empty states are centered in-view to keep the primary action visible.

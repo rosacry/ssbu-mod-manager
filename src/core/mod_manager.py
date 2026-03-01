@@ -10,6 +10,10 @@ from src.core.content_importer import (
     repair_installed_mods as repair_installed_mods_content,
 )
 from src.core.file_scanner import FileScanner
+from src.core.runtime_repair import (
+    RuntimeRepairSummary,
+    repair_yuzu_runtime_for_smash,
+)
 from src.core.desync_classifier import classify_mod_path
 from src.core.runtime_guard import (
     ensure_runtime_content_change_allowed,
@@ -387,6 +391,12 @@ class ModManager:
             )
             self.invalidate_cache()
             return summary
+
+    def repair_runtime_environment(self) -> RuntimeRepairSummary:
+        """Back up and reset the emulator runtime state for Smash where supported."""
+        with self._lock:
+            ensure_runtime_content_change_allowed("runtime", "repair")
+            return repair_yuzu_runtime_for_smash(self.mods_path)
 
     def detect_mod_type(self, mod: Mod) -> list[str]:
         if not mod.metadata.categories:

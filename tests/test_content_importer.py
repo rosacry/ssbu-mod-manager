@@ -902,9 +902,19 @@ def test_import_mod_package_synthesizes_config_for_generic_fighter_effect_files(
 
     source = tmp_path / "downloads" / "Super Sonic Over Cloud"
     (source / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
-    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numshb").write_bytes(b"skin")
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"mat",
+        "model.numdlb": b"d",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (source / "fighter" / "cloud" / "model" / "body" / "c00" / filename).write_bytes(payload)
     (source / "ui" / "replace" / "chara" / "chara_1").mkdir(parents=True)
     (source / "ui" / "replace" / "chara" / "chara_1" / "chara_1_cloud_00.bntx").write_bytes(b"ui")
+    (source / "fighter" / "cloud" / "model" / "fusionsword" / "c00").mkdir(parents=True)
+    (source / "fighter" / "cloud" / "model" / "fusionsword" / "c00" / "def_cloud_004_col.nutexb").write_bytes(b"sword")
     (source / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
     (source / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"effect")
     (source / "effect" / "fighter" / "cloud" / "trail" / "tex_cloud_sword1.nutexb").write_bytes(b"trail")
@@ -916,6 +926,7 @@ def test_import_mod_package_synthesizes_config_for_generic_fighter_effect_files(
     assert payload == {
         "new-dir-files": {
             "fighter/cloud/c02": [
+                "fighter/cloud/model/fusionsword/c02/def_cloud_004_col.nutexb",
                 "effect/fighter/cloud/ef_cloud.eff",
                 "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
             ]
@@ -937,6 +948,8 @@ def test_import_mod_package_synthesizes_config_for_slot_specific_fighter_files_w
         "model.nusktb": b"k",
     }.items():
         (source / "fighter" / "cloud" / "model" / "body" / "c00" / filename).write_bytes(payload)
+    (source / "fighter" / "cloud" / "model" / "fusionsword" / "c00").mkdir(parents=True)
+    (source / "fighter" / "cloud" / "model" / "fusionsword" / "c00" / "def_cloud_004_col.nutexb").write_bytes(b"sword")
     (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
     (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_00.bntx").write_bytes(b"ui")
 
@@ -947,6 +960,7 @@ def test_import_mod_package_synthesizes_config_for_slot_specific_fighter_files_w
         "new-dir-files": {
             "fighter/cloud/c00": [
                 "fighter/cloud/model/body/c00/egle001_body_col.nutexb",
+                "fighter/cloud/model/fusionsword/c00/def_cloud_004_col.nutexb",
             ]
         }
     }
@@ -1037,7 +1051,17 @@ def test_repair_installed_mods_normalizes_configs_and_synthesizes_missing_effect
 
     cloud = mods_path / "Super Sonic Over Cloud"
     (cloud / "fighter" / "cloud" / "model" / "body" / "c06").mkdir(parents=True)
-    (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / "model.numshb").write_bytes(b"skin")
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"mat",
+        "model.numdlb": b"d",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / filename).write_bytes(payload)
+    (cloud / "fighter" / "cloud" / "model" / "fusionsword" / "c06").mkdir(parents=True)
+    (cloud / "fighter" / "cloud" / "model" / "fusionsword" / "c06" / "def_cloud_004_col.nutexb").write_bytes(b"sword")
     (cloud / "ui" / "replace" / "chara" / "chara_1").mkdir(parents=True)
     (cloud / "ui" / "replace" / "chara" / "chara_1" / "chara_1_cloud_06.bntx").write_bytes(b"ui")
     (cloud / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
@@ -1054,6 +1078,7 @@ def test_repair_installed_mods_normalizes_configs_and_synthesizes_missing_effect
     assert json.loads((cloud / "config.json").read_text(encoding="utf-8")) == {
         "new-dir-files": {
             "fighter/cloud/c06": [
+                "fighter/cloud/model/fusionsword/c06/def_cloud_004_col.nutexb",
                 "effect/fighter/cloud/ef_cloud.eff",
                 "effect/fighter/cloud/trail/tex_cloud_sword1.nutexb",
             ]
@@ -1074,6 +1099,8 @@ def test_repair_installed_mods_merges_existing_slot_manifest_with_missing_fighte
         "model.nusktb": b"k",
     }.items():
         (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / filename).write_bytes(payload)
+    (cloud / "fighter" / "cloud" / "model" / "fusionsword" / "c06").mkdir(parents=True)
+    (cloud / "fighter" / "cloud" / "model" / "fusionsword" / "c06" / "def_cloud_004_col.nutexb").write_bytes(b"sword")
     (cloud / "effect" / "fighter" / "cloud").mkdir(parents=True)
     (cloud / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"effect")
     (cloud / "config.json").write_text(
@@ -1091,11 +1118,12 @@ def test_repair_installed_mods_merges_existing_slot_manifest_with_missing_fighte
 
     summary = repair_installed_mods(mods_path)
 
-    assert summary.configs_updated == 0
+    assert summary.configs_updated == 1
     assert json.loads((cloud / "config.json").read_text(encoding="utf-8")) == {
         "new-dir-files": {
             "fighter/cloud/c06": [
                 "effect/fighter/cloud/ef_cloud.eff",
+                "fighter/cloud/model/fusionsword/c06/def_cloud_004_col.nutexb",
             ]
         }
     }
@@ -1103,17 +1131,17 @@ def test_repair_installed_mods_merges_existing_slot_manifest_with_missing_fighte
 
 def test_repair_installed_mods_removes_unnecessary_visual_only_base_slot_config(tmp_path: Path):
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
-    cloud = mods_path / "Mihawk"
-    (cloud / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
-    (cloud / "fighter" / "cloud" / "model" / "body" / "c00" / "def_cloud_001_col.nutexb").write_bytes(b"tex")
-    (cloud / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numshb").write_bytes(b"mesh")
-    (cloud / "config.json").write_text(
+    mod_root = mods_path / "Marth Fancy"
+    (mod_root / "fighter" / "marth" / "model" / "body" / "c00").mkdir(parents=True)
+    (mod_root / "fighter" / "marth" / "model" / "body" / "c00" / "def_marth_001_col.nutexb").write_bytes(b"tex")
+    (mod_root / "fighter" / "marth" / "model" / "body" / "c00" / "model.numshb").write_bytes(b"mesh")
+    (mod_root / "config.json").write_text(
         json.dumps(
             {
                 "new-dir-files": {
-                    "fighter/cloud/c00": [
-                        "fighter/cloud/model/body/c00/def_cloud_001_col.nutexb",
-                        "fighter/cloud/model/body/c00/model.numshb",
+                    "fighter/marth/c00": [
+                        "fighter/marth/model/body/c00/def_marth_001_col.nutexb",
+                        "fighter/marth/model/body/c00/model.numshb",
                     ]
                 }
             }
@@ -1124,7 +1152,7 @@ def test_repair_installed_mods_removes_unnecessary_visual_only_base_slot_config(
     summary = repair_installed_mods(mods_path)
 
     assert summary.configs_updated == 1
-    assert not (cloud / "config.json").exists()
+    assert not (mod_root / "config.json").exists()
 
 
 def test_repair_installed_mods_prunes_support_overlap_when_visual_mod_should_win(tmp_path: Path):
@@ -1338,7 +1366,7 @@ def test_repair_installed_mods_disables_cloud_bundle_missing_weapon_support(tmp_
     assert summary.mods_changed == 1
     assert not mod_root.exists()
     assert disabled.exists()
-    assert any("references weapon assets but does not include matching weapon support files" in warning for warning in summary.warnings)
+    assert any("is missing required weapon model support files" in warning for warning in summary.warnings)
 
 
 def test_repair_installed_mods_keeps_cloud_bundle_with_matching_weapon_support(tmp_path: Path):
@@ -1356,6 +1384,9 @@ def test_repair_installed_mods_keeps_cloud_bundle_with_matching_weapon_support(t
     }.items():
         (body / filename).write_bytes(payload)
     (body / "def_cloud_004_col.nutexb").write_bytes(b"sword-tex")
+    sword_dir = mod_root / "fighter" / "cloud" / "model" / "fusionsword" / "c06"
+    sword_dir.mkdir(parents=True)
+    (sword_dir / "def_cloud_004_col.nutexb").write_bytes(b"sword")
     (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
     (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_06.bntx").write_bytes(b"ui")
 
@@ -1364,6 +1395,33 @@ def test_repair_installed_mods_keeps_cloud_bundle_with_matching_weapon_support(t
     assert mod_root.exists()
     assert not (mods_path.parent / "disabled_mods" / "Super Sonic Over Cloud").exists()
     assert not any("Super Sonic Over Cloud" in warning for warning in summary.warnings)
+
+
+def test_repair_installed_mods_disables_cloud_bundle_without_fusionsword_support_even_if_markers_absent(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "mihawk over cloud"
+    body = mod_root / "fighter" / "cloud" / "model" / "body" / "c00"
+    body.mkdir(parents=True)
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"LTAM def_cloud_001_col",
+        "model.numdlb": b"LDOM 5_body_1.0_0_0",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (body / filename).write_bytes(payload)
+    (body / "def_cloud_001_col.nutexb").write_bytes(b"tex")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_00.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    disabled = mods_path.parent / "disabled_mods" / "mihawk over cloud"
+    assert summary.mods_changed == 1
+    assert not mod_root.exists()
+    assert disabled.exists()
+    assert any("cloud c00 is missing required weapon model support files" in warning for warning in summary.warnings)
 
 
 def test_repair_installed_mods_keeps_partial_but_multi_core_model_bundle(tmp_path: Path):

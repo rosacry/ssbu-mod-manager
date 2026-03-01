@@ -104,11 +104,12 @@ _STANDARD_BODY_TEXTURE_PREFIXES = (
     "eye_{fighter}_",
     "eye_r_{fighter}_",
 )
-_FIGHTER_WEAPON_SUPPORT_RULES: dict[str, dict[str, tuple[str, ...] | tuple[bytes, ...]]] = {
+_FIGHTER_WEAPON_SUPPORT_RULES: dict[str, dict[str, object]] = {
     "cloud": {
         "model_markers": (b"bastar_sword_", b"def_cloud_004"),
         "weapon_dirs": ("fusionsword",),
         "body_prefixes": ("def_cloud_004",),
+        "require_weapon_dirs_for_visual_slots": True,
     },
 }
 
@@ -2930,9 +2931,15 @@ def _find_missing_weapon_support_issues(mod_root: Path, analysis: SlotAnalysis) 
             body_dir = mod_root / "fighter" / fighter / "model" / "body" / f"c{int(slot):02d}"
             if not body_dir.exists() or not body_dir.is_dir():
                 continue
+            has_weapon_support = _has_matching_weapon_support(mod_root, fighter, int(slot), body_dir, rule)
+            if bool(rule.get("require_weapon_dirs_for_visual_slots")) and not has_weapon_support:
+                issues.append(
+                    f"{fighter} c{int(slot):02d} is missing required weapon model support files"
+                )
+                continue
             if not _body_model_references_weapon_support(body_dir, rule):
                 continue
-            if _has_matching_weapon_support(mod_root, fighter, int(slot), body_dir, rule):
+            if has_weapon_support:
                 continue
             issues.append(
                 f"{fighter} c{int(slot):02d} references weapon assets but does not include matching weapon support files"
@@ -2942,7 +2949,7 @@ def _find_missing_weapon_support_issues(mod_root: Path, analysis: SlotAnalysis) 
 
 def _body_model_references_weapon_support(
     body_dir: Path,
-    rule: dict[str, tuple[str, ...] | tuple[bytes, ...]],
+    rule: dict[str, object],
 ) -> bool:
     markers = tuple(rule.get("model_markers", ()))
     if not markers:
@@ -2958,7 +2965,7 @@ def _has_matching_weapon_support(
     fighter: str,
     slot: int,
     body_dir: Path,
-    rule: dict[str, tuple[str, ...] | tuple[bytes, ...]],
+    rule: dict[str, object],
 ) -> bool:
     body_prefixes = tuple(
         str(prefix).lower()

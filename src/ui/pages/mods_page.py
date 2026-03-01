@@ -130,6 +130,12 @@ class ModsPage(BasePage):
                                    corner_radius=8, height=34)
         repair_btn.pack(side="right", padx=(5, 0))
 
+        runtime_btn = ctk.CTkButton(header_frame, text="Repair Runtime", width=126,
+                                    command=self._repair_runtime_environment,
+                                    fg_color="#38405d", hover_color="#495276",
+                                    corner_radius=8, height=34)
+        runtime_btn.pack(side="right", padx=(5, 0))
+
         # Search, filter, and group toggle
         filter_frame = ctk.CTkFrame(self, fg_color="transparent")
         filter_frame.pack(fill="x", padx=30, pady=(0, 6))
@@ -1376,6 +1382,56 @@ class ModsPage(BasePage):
         except Exception as e:
             logger.error("Mods", f"Repair failed: {e}")
             messagebox.showerror("Repair Failed", str(e))
+
+    def _repair_runtime_environment(self):
+        confirm = messagebox.askyesno(
+            "Repair Yuzu Runtime",
+            "Back up and reset Smash's Yuzu runtime state to a stable baseline?\n\n"
+            "This will:\n"
+            "- replace the Smash-specific Yuzu renderer profile with a stable profile\n"
+            "- clear Smash shader and per-game pipeline cache files\n"
+            "- clear stale ARCropolis cache/conflict files\n\n"
+            "A backup will be kept under the Yuzu data root.",
+        )
+        if not confirm:
+            return
+        try:
+            summary = self.app.mod_manager.repair_runtime_environment()
+            logger.info(
+                "Mods",
+                f"Repaired {summary.emulator_name} runtime: "
+                f"shader={summary.shader_files_cleared}, pipeline={summary.pipeline_files_cleared}, "
+                f"arcropolis={summary.arcropolis_cache_files_cleared}",
+            )
+            lines = [
+                f"Repaired {summary.emulator_name} runtime for Smash.",
+            ]
+            if summary.title_profile_backed_up:
+                lines.append("Backed up the previous Smash-specific Yuzu profile.")
+            if summary.title_profile_written:
+                lines.append("Wrote a stable Smash-specific Yuzu renderer profile.")
+            if summary.shader_files_cleared:
+                lines.append(f"Cleared {summary.shader_files_cleared} shader cache file(s).")
+            if summary.pipeline_files_cleared:
+                lines.append(f"Cleared {summary.pipeline_files_cleared} per-game pipeline cache file(s).")
+            if summary.arcropolis_cache_files_cleared:
+                lines.append(
+                    f"Cleared {summary.arcropolis_cache_files_cleared} ARCropolis/plugin cache file(s)."
+                )
+            if summary.backup_root is not None:
+                lines.append(f"Backup: {summary.backup_root}")
+            if summary.warnings:
+                lines.append("")
+                lines.extend(summary.warnings[:5])
+                if len(summary.warnings) > 5:
+                    lines.append(f"...and {len(summary.warnings) - 5} more warning(s).")
+            messagebox.showinfo("Runtime Repair Complete", "\n".join(lines))
+        except ContentOperationBlockedError as e:
+            logger.warn("Mods", f"Runtime repair blocked: {e}")
+            messagebox.showerror(e.info.title, e.info.message)
+        except Exception as e:
+            logger.error("Mods", f"Runtime repair failed: {e}")
+            messagebox.showerror("Runtime Repair Failed", str(e))
 
     def _resolve_import_slot_conflict(self, conflict):
         slot_text = str(getattr(conflict, "requested_label", "") or f"{conflict.fighter} c{conflict.requested_slot:02d}")
