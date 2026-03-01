@@ -105,6 +105,22 @@ class SlotConflictInfo:
     open_slots: list[int]
 
 
+@dataclass(frozen=True)
+class MultiSlotPackOption:
+    option_id: str
+    fighter: str
+    slot: int
+    label: str
+    recommended: bool = False
+
+
+@dataclass
+class MultiSlotPackSelectionInfo:
+    mod_name: str
+    package_name: str
+    options: list[MultiSlotPackOption] = field(default_factory=list)
+
+
 @dataclass
 class _PreparedModImport:
     source_dir: Path
@@ -115,6 +131,7 @@ class _PreparedModImport:
 
 
 SlotConflictResolver = Callable[[SlotConflictInfo], str]
+MultiSlotPackResolver = Callable[[MultiSlotPackSelectionInfo], list[str] | None]
 
 VoicePackScopeInfo = SupportPackScopeInfo
 VoicePackScopeSummary = SupportPackScopeSummary
@@ -310,6 +327,7 @@ def import_mod_package(
     source_dir: Path,
     mods_path: Path,
     slot_conflict_resolver: SlotConflictResolver | None = None,
+    multi_slot_pack_resolver: MultiSlotPackResolver | None = None,
 ) -> ImportSummary:
     """Import one or more mod folders from a chosen directory."""
     source_dir = Path(source_dir)
@@ -318,7 +336,11 @@ def import_mod_package(
         raise ValueError("Selected mod import path does not exist.")
 
     summary = ImportSummary()
-    prepared_sources = _prepare_mod_import_sources(source_dir, summary)
+    prepared_sources = _prepare_mod_import_sources(
+        source_dir,
+        summary,
+        multi_slot_pack_resolver=multi_slot_pack_resolver,
+    )
     if not prepared_sources:
         raise ValueError(
             "No importable mod folders or archives were found. "
@@ -571,7 +593,11 @@ def import_plugin_package(source_dir: Path, sdmc_path: Path, plugins_path: Path)
     return summary
 
 
-def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> list[_PreparedModImport]:
+def _prepare_mod_import_sources(
+    source_path: Path,
+    summary: ImportSummary,
+    multi_slot_pack_resolver: MultiSlotPackResolver | None = None,
+) -> list[_PreparedModImport]:
     source_path = Path(source_path)
     prepared: list[_PreparedModImport] = []
 
@@ -606,48 +632,18 @@ def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> li
                 f"{len(skipped_names)} other variant(s)."
             )
 
-        analysis = analyses[str(chosen_src)]
         temp_paths: list[tempfile.TemporaryDirectory] = []
         if owned_temp_dir is not None:
             temp_paths.append(owned_temp_dir)
-        final_src = chosen_src
-        final_name = chosen_name
-
-        if analysis.has_visual_skin_slot and analysis.slot_count > 1:
-            fighter = str(analysis.primary_fighter)
-            slot = int(analysis.primary_slot)
-            variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
-            temp_paths.append(variant_temp)
-            variant_root = Path(variant_temp.name) / final_name
-            copy_single_slot_variant(final_src, variant_root, fighter, slot)
-            if _count_files(variant_root) > 0:
-                final_src = variant_root
-                analysis = analyze_mod_directory(final_src, [package_name, final_name])
-                summary.warnings.append(
-                    f"Selected base skin {fighter} c{slot:02d} from '{package_name}' and omitted its other slots."
-                )
-
-        if analysis.visual_fighter_slots and analysis.visual_slot_count > 1:
-            summary.skipped_items.append(f"{chosen_name} (unsupported multi-slot package)")
-            summary.warnings.append(
-                f"Skipped '{chosen_name}' because it still contains multiple fighter/slot targets "
-                "after base-skin pruning."
-            )
-            for temp_dir in temp_paths:
-                try:
-                    temp_dir.cleanup()
-                except Exception:
-                    pass
-            return
-
-        prepared.append(
-            _PreparedModImport(
-                source_dir=final_src,
-                target_name=final_name,
-                package_name=package_name,
-                analysis=analysis,
-                temp_paths=temp_paths,
-            )
+        _append_prepared_visual_variants(
+            prepared,
+            chosen_src,
+            chosen_name,
+            package_name,
+            analyses[str(chosen_src)],
+            summary,
+            temp_paths,
+            multi_slot_pack_resolver=multi_slot_pack_resolver,
         )
 
     if source_path.is_file():
@@ -662,41 +658,15 @@ def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> li
         if direct_sources:
             for chosen_src, chosen_name in direct_sources:
                 chosen_analysis = analyze_mod_directory(chosen_src, [source_path.name, chosen_name, chosen_src.name])
-                temp_paths: list[tempfile.TemporaryDirectory] = []
-                final_src = chosen_src
-                if chosen_analysis.has_visual_skin_slot and chosen_analysis.slot_count > 1:
-                    fighter = str(chosen_analysis.primary_fighter)
-                    slot = int(chosen_analysis.primary_slot)
-                    variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
-                    temp_paths.append(variant_temp)
-                    variant_root = Path(variant_temp.name) / chosen_name
-                    copy_single_slot_variant(chosen_src, variant_root, fighter, slot)
-                    if _count_files(variant_root) > 0:
-                        final_src = variant_root
-                        chosen_analysis = analyze_mod_directory(final_src, [source_path.name, chosen_name])
-                        summary.warnings.append(
-                            f"Selected base skin {fighter} c{slot:02d} from '{chosen_name}' and omitted its other slots."
-                        )
-                if chosen_analysis.visual_fighter_slots and chosen_analysis.visual_slot_count > 1:
-                    summary.skipped_items.append(f"{chosen_name} (unsupported multi-slot package)")
-                    summary.warnings.append(
-                        f"Skipped '{chosen_name}' because it still contains multiple fighter/slot targets "
-                        "after base-skin pruning."
-                    )
-                    for temp_dir in temp_paths:
-                        try:
-                            temp_dir.cleanup()
-                        except Exception:
-                            pass
-                    continue
-                prepared.append(
-                    _PreparedModImport(
-                        source_dir=final_src,
-                        target_name=chosen_name,
-                        package_name=source_path.name,
-                        analysis=chosen_analysis,
-                        temp_paths=temp_paths,
-                    )
+                _append_prepared_visual_variants(
+                    prepared,
+                    chosen_src,
+                    chosen_name,
+                    source_path.name,
+                    chosen_analysis,
+                    summary,
+                    [],
+                    multi_slot_pack_resolver=multi_slot_pack_resolver,
                 )
         else:
             archives = sorted(
@@ -709,6 +679,182 @@ def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> li
                 summary.archives_processed += 1
                 add_from_mod_root(Path(temp_dir.name), archive.name, temp_dir)
     return prepared
+
+
+def _append_prepared_visual_variants(
+    prepared: list[_PreparedModImport],
+    source_dir: Path,
+    target_name: str,
+    package_name: str,
+    analysis: SlotAnalysis,
+    summary: ImportSummary,
+    base_temp_paths: list[tempfile.TemporaryDirectory],
+    multi_slot_pack_resolver: MultiSlotPackResolver | None = None,
+) -> None:
+    visual_options = _build_multi_slot_pack_options(target_name, package_name, analysis)
+    if len(visual_options) <= 1:
+        if analysis.has_visual_skin_slot and analysis.slot_count > 1:
+            fighter = str(analysis.primary_fighter)
+            slot = int(analysis.primary_slot)
+            variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
+            variant_root = Path(variant_temp.name) / target_name
+            copy_single_slot_variant(source_dir, variant_root, fighter, slot)
+            if _count_files(variant_root) > 0:
+                prepared.append(
+                    _PreparedModImport(
+                        source_dir=variant_root,
+                        target_name=target_name,
+                        package_name=package_name,
+                        analysis=analyze_mod_directory(variant_root, [package_name, target_name]),
+                        temp_paths=[*base_temp_paths, variant_temp],
+                    )
+                )
+                summary.warnings.append(
+                    f"Selected base skin {fighter} c{slot:02d} from '{target_name}' and omitted its other slots."
+                )
+                return
+            variant_temp.cleanup()
+        prepared.append(
+            _PreparedModImport(
+                source_dir=source_dir,
+                target_name=target_name,
+                package_name=package_name,
+                analysis=analysis,
+                temp_paths=list(base_temp_paths),
+            )
+        )
+        return
+
+    selection_info = MultiSlotPackSelectionInfo(
+        mod_name=target_name,
+        package_name=package_name,
+        options=visual_options,
+    )
+    selected_options = _resolve_multi_slot_pack_selection(selection_info, multi_slot_pack_resolver)
+    if not selected_options:
+        summary.skipped_items.append(f"{target_name} (multi-slot package)")
+        summary.warnings.append(
+            f"Skipped '{target_name}' because no skins were selected from its multi-slot pack."
+        )
+        for temp_dir in base_temp_paths:
+            try:
+                temp_dir.cleanup()
+            except Exception:
+                pass
+        return
+
+    if multi_slot_pack_resolver is None and len(selected_options) == 1:
+        option = selected_options[0]
+        summary.warnings.append(
+            f"Selected base skin {option.fighter} c{option.slot:02d} from '{target_name}' and omitted its other slots."
+        )
+    else:
+        summary.warnings.append(
+            f"Selected {len(selected_options)} skin(s) from '{target_name}' and omitted "
+            f"{len(visual_options) - len(selected_options)} other slot(s)."
+        )
+
+    for option in selected_options:
+        variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
+        variant_root_name = _build_multi_slot_variant_name(target_name, option.fighter, option.slot)
+        variant_root = Path(variant_temp.name) / variant_root_name
+        copy_single_slot_variant(source_dir, variant_root, option.fighter, option.slot)
+        if _count_files(variant_root) == 0:
+            variant_temp.cleanup()
+            summary.skipped_items.append(f"{variant_root_name} (empty variant)")
+            summary.warnings.append(
+                f"Skipped '{variant_root_name}' because no files remained after splitting "
+                f"{option.fighter} c{option.slot:02d}."
+            )
+            continue
+
+        variant_analysis = analyze_mod_directory(
+            variant_root,
+            [package_name, target_name, variant_root_name],
+        )
+        if variant_analysis.visual_fighter_slots and variant_analysis.visual_slot_count > 1:
+            variant_temp.cleanup()
+            summary.skipped_items.append(f"{variant_root_name} (unsupported multi-slot package)")
+            summary.warnings.append(
+                f"Skipped '{variant_root_name}' because it still contains multiple fighter/slot targets "
+                "after slot splitting."
+            )
+            continue
+
+        prepared.append(
+            _PreparedModImport(
+                source_dir=variant_root,
+                target_name=variant_root_name,
+                package_name=package_name,
+                analysis=variant_analysis,
+                temp_paths=[*base_temp_paths, variant_temp],
+            )
+        )
+
+
+def _build_multi_slot_pack_options(
+    target_name: str,
+    package_name: str,
+    analysis: SlotAnalysis,
+) -> list[MultiSlotPackOption]:
+    options: list[MultiSlotPackOption] = []
+    recommended_id = None
+    if analysis.primary_fighter is not None and analysis.primary_slot is not None:
+        recommended_id = f"{analysis.primary_fighter.lower()}:c{int(analysis.primary_slot):02d}"
+
+    for fighter, slots in sorted(analysis.visual_fighter_slots.items()):
+        for slot in slots:
+            option_id = f"{fighter.lower()}:c{int(slot):02d}"
+            options.append(
+                MultiSlotPackOption(
+                    option_id=option_id,
+                    fighter=str(fighter).lower(),
+                    slot=int(slot),
+                    label=f"{fighter} c{int(slot):02d}",
+                    recommended=(option_id == recommended_id),
+                )
+            )
+    return options
+
+
+def _resolve_multi_slot_pack_selection(
+    info: MultiSlotPackSelectionInfo,
+    resolver: MultiSlotPackResolver | None,
+) -> list[MultiSlotPackOption]:
+    if not info.options:
+        return []
+
+    selected_ids: list[str] = []
+    if resolver is not None:
+        try:
+            response = resolver(info)
+        except Exception:
+            response = None
+        if response:
+            selected_ids = [str(item).strip().lower() for item in response if str(item).strip()]
+        elif response == []:
+            return []
+
+    if not selected_ids:
+        recommended = next((option for option in info.options if option.recommended), None)
+        return [recommended or info.options[0]]
+
+    selected = [option for option in info.options if option.option_id.lower() in set(selected_ids)]
+    if selected:
+        return selected
+
+    recommended = next((option for option in info.options if option.recommended), None)
+    return [recommended or info.options[0]]
+
+
+def _build_multi_slot_variant_name(base_name: str, fighter: str, slot: int) -> str:
+    slot_token = f"c{int(slot):02d}"
+    lowered = base_name.lower()
+    has_fighter = re.search(rf"(?i)(?<![a-z0-9]){re.escape(fighter)}(?![a-z0-9])", lowered) is not None
+    has_slot = re.search(rf"(?i)(?<![a-z0-9]){re.escape(slot_token)}(?!\d)", lowered) is not None
+    if has_fighter and has_slot:
+        return _sanitize_name(base_name)
+    return _sanitize_name(f"{base_name} [{fighter} {slot_token}]")
 
 
 def _resolve_slot_conflict(

@@ -7,6 +7,7 @@ from pathlib import Path
 from src.ui.base_page import BasePage
 from src.models.mod import Mod, ModStatus
 from src.core.content_importer import (
+    MultiSlotPackSelectionInfo,
     apply_mod_camera_pack_scope,
     apply_mod_effect_pack_scope,
     apply_mod_voice_pack_scope,
@@ -1147,6 +1148,7 @@ class ModsPage(BasePage):
                 Path(folder),
                 mods_path,
                 slot_conflict_resolver=self._resolve_import_slot_conflict,
+                multi_slot_pack_resolver=self._resolve_multi_slot_pack_selection,
             )
             logger.info(
                 "Mods",
@@ -1216,3 +1218,137 @@ class ModsPage(BasePage):
             f"{conflict.fighter}. This skin will be skipped.",
         )
         return "skip"
+
+    def _resolve_multi_slot_pack_selection(self, info: MultiSlotPackSelectionInfo):
+        return self._show_multi_slot_pack_dialog(info)
+
+    def _show_multi_slot_pack_dialog(self, info: MultiSlotPackSelectionInfo):
+        result = {"value": None}
+        dialog = ctk.CTkToplevel(self)
+        dialog.withdraw()
+        dialog.title("Select Skins to Import")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#0f1327")
+
+        shell = ctk.CTkFrame(
+            dialog,
+            fg_color="#151b36",
+            corner_radius=10,
+            border_width=1,
+            border_color="#304378",
+        )
+        shell.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            shell,
+            text="Select Skins to Import",
+            anchor="w",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).pack(fill="x", padx=14, pady=(12, 6))
+
+        ctk.CTkLabel(
+            shell,
+            text=(
+                f"Pack: {info.mod_name}\n"
+                f"Source: {info.package_name}\n"
+                "This pack contains multiple costume-slot skins. Choose exactly which ones to import."
+            ),
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=12),
+            text_color="#b9bfd8",
+        ).pack(fill="x", padx=14)
+
+        options_frame = ctk.CTkFrame(shell, fg_color="#10162c", corner_radius=8)
+        options_frame.pack(fill="x", padx=14, pady=(12, 10))
+
+        option_vars: dict[str, tk.BooleanVar] = {}
+        for option in info.options:
+            default_checked = bool(option.recommended)
+            var = tk.BooleanVar(value=default_checked)
+            option_vars[option.option_id] = var
+            label = option.label + (" (Recommended)" if option.recommended else "")
+            ctk.CTkCheckBox(
+                options_frame,
+                text=label,
+                variable=var,
+                font=ctk.CTkFont(size=12),
+            ).pack(anchor="w", padx=12, pady=6)
+
+        quick_row = ctk.CTkFrame(shell, fg_color="transparent")
+        quick_row.pack(fill="x", padx=14, pady=(0, 6))
+
+        def select_only_recommended():
+            for option in info.options:
+                option_vars[option.option_id].set(bool(option.recommended))
+
+        def select_all():
+            for option in info.options:
+                option_vars[option.option_id].set(True)
+
+        ctk.CTkButton(
+            quick_row,
+            text="Base Only",
+            width=96,
+            height=30,
+            fg_color="#2f3557",
+            hover_color="#3f476f",
+            command=select_only_recommended,
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            quick_row,
+            text="Select All",
+            width=96,
+            height=30,
+            fg_color="#2f3557",
+            hover_color="#3f476f",
+            command=select_all,
+        ).pack(side="left", padx=(8, 0))
+
+        btn_row = ctk.CTkFrame(shell, fg_color="transparent")
+        btn_row.pack(fill="x", padx=14, pady=(4, 12))
+
+        def close_with(value=None):
+            result["value"] = value
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        def on_import_selected():
+            chosen = [
+                option.option_id
+                for option in info.options
+                if bool(option_vars[option.option_id].get())
+            ]
+            close_with(chosen)
+
+        ctk.CTkButton(
+            btn_row,
+            text="Skip Pack",
+            width=96,
+            height=30,
+            fg_color="#2f3557",
+            hover_color="#3f476f",
+            command=lambda: close_with([]),
+        ).pack(side="right")
+
+        ctk.CTkButton(
+            btn_row,
+            text="Import Selected",
+            width=124,
+            height=30,
+            fg_color="#1f538d",
+            hover_color="#163b6a",
+            command=on_import_selected,
+        ).pack(side="right", padx=(0, 8))
+
+        dialog.bind("<Escape>", lambda _e: close_with([]))
+        dialog.bind("<Return>", lambda _e: on_import_selected())
+        dialog.bind("<Control-a>", lambda _e: (select_all(), "break"))
+        self._center_dialog(dialog, width=520, height=max(320, 230 + len(info.options) * 36))
+        self._present_modal_dialog(dialog, animate_open=False)
+        self.wait_window(dialog)
+        return result["value"]

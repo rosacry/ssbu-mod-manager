@@ -77,6 +77,51 @@ def test_import_mod_package_selects_single_base_variant_from_archive(tmp_path: P
     assert any("Selected base variant" in warning for warning in summary.warnings)
 
 
+def test_import_mod_package_defaults_to_base_slot_for_multi_slot_pack(tmp_path: Path):
+    source = tmp_path / "downloads" / "Sonic Forms"
+    (source / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"c02")
+    (source / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").write_bytes(b"c03")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_02.bntx").write_bytes(b"ui2")
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"ui3")
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert (mods_path / "Sonic Forms [sonic c02]" / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").exists()
+    assert not (mods_path / "Sonic Forms [sonic c02]" / "fighter" / "sonic" / "model" / "body" / "c03").exists()
+    assert any("Selected base skin sonic c02" in warning for warning in summary.warnings)
+
+
+def test_import_mod_package_can_split_multi_slot_pack_with_selector(tmp_path: Path):
+    source = tmp_path / "downloads" / "Nazo Pack"
+    (source / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"c02")
+    (source / "fighter" / "sonic" / "model" / "body" / "c03").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").write_bytes(b"c03")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_02.bntx").write_bytes(b"ui2")
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_03.bntx").write_bytes(b"ui3")
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    seen_options = []
+
+    def resolver(info):
+        seen_options.extend(option.option_id for option in info.options)
+        return ["sonic:c02", "sonic:c03"]
+
+    summary = import_mod_package(source, mods_path, multi_slot_pack_resolver=resolver)
+
+    assert summary.items_imported == 2
+    assert seen_options == ["sonic:c02", "sonic:c03"]
+    assert (mods_path / "Nazo Pack [sonic c02]" / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").exists()
+    assert (mods_path / "Nazo Pack [sonic c03]" / "fighter" / "sonic" / "model" / "body" / "c03" / "model.bin").exists()
+    assert any("Selected 2 skin(s)" in warning for warning in summary.warnings)
+
+
 def test_import_mod_package_moves_incoming_skin_to_open_slot_by_default(tmp_path: Path):
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     existing = mods_path / "Existing Mario"
