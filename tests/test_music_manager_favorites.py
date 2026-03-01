@@ -2,6 +2,7 @@ from pathlib import Path
 
 import src.core.music_manager as music_manager_module
 from src.core.music_manager import MusicManager
+from src.models.music import MusicTrack
 
 
 def _make_track(path: Path) -> None:
@@ -40,3 +41,32 @@ def test_music_manager_persists_favorite_tracks(tmp_path, monkeypatch):
     assert by_id["bgm_alpha"].is_favorite is True
     assert by_id["bgm_beta"].is_favorite is False
     assert reloaded_manager.favorite_track_ids == {"bgm_alpha"}
+
+
+def test_music_manager_only_exposes_nus3audio_tracks(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(music_manager_module, "CONFIG_DIR", config_dir)
+
+    mods_root = tmp_path / "mods"
+    _make_track(mods_root / "PackA" / "sound" / "bgm" / "bgm_alpha.nus3audio")
+    _make_track(mods_root / "PackA" / "sound" / "bgm" / "bgm_beta.wav")
+    _make_track(mods_root / "PackA" / "sound" / "bgm" / "bgm_gamma.mp3")
+
+    manager = MusicManager()
+    tracks = manager.discover_tracks(
+        mods_root,
+        parse_binary_msbt=False,
+        generate_msbt_overlays=False,
+    )
+
+    assert [track.track_id for track in tracks] == ["bgm_alpha"]
+
+    manager.tracks.append(
+        MusicTrack(
+            track_id="bgm_injected_wav",
+            file_path=tmp_path / "bgm_injected_wav.wav",
+            display_name="Injected Wav",
+        )
+    )
+
+    assert [track.track_id for track in manager.get_all_available_tracks()] == ["bgm_alpha"]

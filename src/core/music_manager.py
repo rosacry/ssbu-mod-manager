@@ -210,6 +210,10 @@ class MusicManager:
         self._library_loaded = False
 
     @staticmethod
+    def _is_supported_track_file(file_path: Path) -> bool:
+        return file_path.suffix.lower() == ".nus3audio"
+
+    @staticmethod
     def _scan_cancelled(cancel_event: Optional[threading.Event]) -> bool:
         try:
             return cancel_event is not None and bool(cancel_event.is_set())
@@ -254,6 +258,8 @@ class MusicManager:
             for audio_file in mod_folder.rglob(NUS3AUDIO_GLOB):
                 if self._scan_should_abort(cancel_event):
                     return self.tracks
+                if not self._is_supported_track_file(audio_file):
+                    continue
                 track_id = audio_file.stem
                 if track_id in seen_ids:
                     continue
@@ -299,6 +305,12 @@ class MusicManager:
             if not track.display_name:
                 track.display_name = beautify_track_name(track.track_id)
             track.is_favorite = track.track_id in self.favorite_track_ids
+
+        self.tracks = [
+            track
+            for track in self.tracks
+            if self._is_supported_track_file(track.file_path)
+        ]
 
         if self._scan_should_abort(cancel_event):
             return self.tracks
@@ -528,7 +540,12 @@ class MusicManager:
 
     def get_favorite_tracks(self) -> list[MusicTrack]:
         self._load_library_preferences()
-        return [track for track in self.tracks if track.track_id in self.favorite_track_ids]
+        return [
+            track
+            for track in self.tracks
+            if track.track_id in self.favorite_track_ids
+            and self._is_supported_track_file(track.file_path)
+        ]
 
     def reload_saved_assignments(self) -> None:
         self.stage_playlists = {}
@@ -601,7 +618,11 @@ class MusicManager:
 
     def get_all_available_tracks(self) -> list[MusicTrack]:
         """Get all discovered tracks."""
-        return self.tracks
+        return [
+            track
+            for track in self.tracks
+            if self._is_supported_track_file(track.file_path)
+        ]
 
     # === Save / Apply Methods ===
 

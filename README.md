@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.1.0**.
+Current release version: **1.1.1**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -14,7 +14,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: unwraps common extra wrapper folders before install.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
-- Music page with stage playlists, multi-select track actions, favorites list/filtering, preview playback, save/discard-safe assignment export, and Spotify playlist export for selected or favorite tracks.
+- Music page with stage playlists, multi-select track actions, favorites list/filtering, preview playback, save/discard-safe assignment export, Spotify playlist export for selected or favorite tracks, and an explicit `.nus3audio`-only track list.
 - Conflict detection and locale MSBT rename safety tools.
 - Emulator migration tools (copy, direct export/import, upgrade flow).
 - Online Compatibility checker and shareable profile support.
@@ -52,7 +52,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.1.0-windows.zip`
+- `dist/SSBUModManager-1.1.1-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 
