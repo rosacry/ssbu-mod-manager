@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Optional
 from src.models.mod import ModFile, ModMetadata
+from src.core.skin_slot_utils import analyze_relative_paths
 
 _CATEGORY_PATTERNS = {
     "character": ["fighter/", "ui/replace/chara/", "sound/bank/narration/"],
@@ -67,6 +68,8 @@ class FileScanner:
         """Extract metadata about a mod from its files."""
         metadata = ModMetadata()
         categories = set()
+        rel_paths = [f.relative_path for f in files]
+        slot_analysis = analyze_relative_paths(rel_paths, [mod_path.name])
 
         for f in files:
             rel = f.relative_path.lower()
@@ -90,25 +93,15 @@ class FileScanner:
                     categories.add(cat)
 
         metadata.categories = sorted(categories)
-
-        config_path = mod_path / "config.json"
-        if config_path.exists():
-            try:
-                import json
-                import re
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                dir_infos = config.get("new-dir-infos", [])
-                for dir_path in dir_infos:
-                    match = re.search(r'fighter/([^/]+)/c(\d{2,3})', dir_path)
-                    if match:
-                        if not metadata.fighter_kind:
-                            metadata.fighter_kind = match.group(1)
-                        metadata.costume_slots.append(int(match.group(2)))
-                metadata.costume_slots = sorted(set(metadata.costume_slots))
-            except Exception as e:
-                from src.utils.logger import logger
-                logger.warn("FileScanner", f"Failed to parse config.json in {mod_path.name}: {e}")
+        if slot_analysis.primary_fighter:
+            metadata.fighter_kind = slot_analysis.primary_fighter
+        if slot_analysis.fighter_slots:
+            slot_values = sorted({
+                slot
+                for slots in slot_analysis.fighter_slots.values()
+                for slot in slots
+            })
+            metadata.costume_slots = slot_values
 
         return metadata
 

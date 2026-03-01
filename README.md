@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.1.2**.
+Current release version: **1.2.0**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -11,7 +11,8 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
 - Plugin management with required-plugin safety checks, optional plugin-name display, custom right-click plugin name/description overrides, description visibility toggle, and folder-based disable storage (`disabled_plugins`).
 - Right-click mod renaming with app-only alias support or optional on-disk folder rename.
 - One-click folder import on Mods/Plugins pages with automatic path mapping:
-  - Mods: unwraps common extra wrapper folders before install.
+  - Mods: imports extracted mod folders or folders full of `.zip` / `.7z` / `.rar` downloads, unwraps common extra wrapper folders, auto-selects a single base/default skin from multi-variant packs, and skips/report unsupported complex multi-fighter packs.
+  - Mods: detects costume-slot overlaps during import and can replace or auto-shift skins into open default slots instead of silently stacking conflicting slot mods.
   - Plugins: imports `.nro` files and package payloads (`romfs` / `exefs` / `atmosphere/contents`) into the correct SDMC locations.
 - CSS Editor for `ui_chara_db.prc` + `msg_name.msbt` workflows.
 - Music page with stage playlists, multi-select track actions, favorites list/filtering, preview playback, save/discard-safe assignment export, Spotify playlist export for selected or favorite tracks, and an explicit `.nus3audio`-only track list.
@@ -76,6 +77,7 @@ If you explicitly need onefile packaging, build with PyInstaller manually using 
 - Mods and Plugins now share consistent wheel behavior.
 - Mod enable/disable toggles now update in-place immediately (including re-enable) without requiring manual Refresh.
 - Mod/plugin enable and disable actions now stop early with a clear "close the game or emulator first" error when files are in use by a running emulator.
+- Mods import now understands archive download folders, picks one base skin from multi-slot/variant packs, auto-reassigns incoming skins into open default slots when possible, and reports anything that could not be placed cleanly.
 - Plugin disable now moves binaries into a sibling `disabled_plugins` folder, and legacy `.nro.disabled` files are auto-migrated.
 - Page navigation now uses a very short settle mask during tab switches to hide first-frame partial rendering on heavier pages.
 - Custom plugin names/descriptions can be edited via right-click in Plugins and reset to defaults.

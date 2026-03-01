@@ -4,8 +4,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
+import tempfile
+from typing import Callable
 
 from src.paths import SSBU_TITLE_ID
+from src.core.archive_utils import extract_archive, is_archive_path
+from src.core.skin_slot_utils import (
+    SlotAnalysis,
+    analyze_mod_directory,
+    choose_open_target_slot,
+    choose_primary_variant_root,
+    copy_single_slot_variant,
+    reslot_mod_directory,
+)
 
 _MOD_CONTENT_DIRS = {
     "fighter", "sound", "stage", "ui", "effect", "camera",
@@ -30,39 +41,172 @@ class ImportSummary:
     replaced_paths: int = 0
     flattened_mods: int = 0
     plugin_files: int = 0
+    archives_processed: int = 0
+    slot_reassignments: int = 0
+    skipped_items: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
-def import_mod_package(source_dir: Path, mods_path: Path) -> ImportSummary:
+@dataclass
+class SlotConflictInfo:
+    """Information provided to a caller when an import hits a slot overlap."""
+
+    mod_name: str
+    fighter: str
+    requested_slot: int
+    conflicting_mods: list[str]
+    open_slots: list[int]
+
+
+@dataclass
+class _PreparedModImport:
+    source_dir: Path
+    target_name: str
+    package_name: str
+    analysis: SlotAnalysis
+    temp_paths: list[tempfile.TemporaryDirectory] = field(default_factory=list)
+
+
+SlotConflictResolver = Callable[[SlotConflictInfo], str]
+
+
+def import_mod_package(
+    source_dir: Path,
+    mods_path: Path,
+    slot_conflict_resolver: SlotConflictResolver | None = None,
+) -> ImportSummary:
     """Import one or more mod folders from a chosen directory."""
     source_dir = Path(source_dir)
     mods_path = Path(mods_path)
-    if not source_dir.exists() or not source_dir.is_dir():
-        raise ValueError("Selected mod import path is not a valid folder.")
+    if not source_dir.exists():
+        raise ValueError("Selected mod import path does not exist.")
 
-    sources = _collect_mod_sources(source_dir)
-    if not sources:
+    summary = ImportSummary()
+    prepared_sources = _prepare_mod_import_sources(source_dir, summary)
+    if not prepared_sources:
         raise ValueError(
-            "No importable mod folders were found. "
-            "Select a folder that contains SSBU mod content."
+            "No importable mod folders or archives were found. "
+            "Select a folder/archive that contains SSBU mod content."
         )
 
     mods_path.mkdir(parents=True, exist_ok=True)
-    summary = ImportSummary()
-    for src, target_name in sources:
-        dest = mods_path / target_name
-        if _same_path(src, dest):
-            summary.warnings.append(f"Skipped '{target_name}' (already in mods folder).")
-            continue
+    slot_index = _build_slot_index(mods_path)
 
-        _copy_dir_replace(src, dest, summary)
-        summary.items_imported += 1
-        summary.files_copied += _count_files(dest)
+    try:
+        for prepared in prepared_sources:
+            src = prepared.source_dir
+            target_name = prepared.target_name
+            analysis = prepared.analysis
 
-        if _flatten_nested_mod(dest):
-            summary.flattened_mods += 1
+            if analysis.has_detected_skin_slot:
+                fighter = str(analysis.primary_fighter)
+                source_slot = int(analysis.primary_slot)
+                target_slot = source_slot
+                conflicting_mods = list(slot_index.get(fighter, {}).get(source_slot, []))
+                if conflicting_mods:
+                    open_slots = _available_base_slots(slot_index, fighter)
+                    conflict = SlotConflictInfo(
+                        mod_name=target_name,
+                        fighter=fighter,
+                        requested_slot=source_slot,
+                        conflicting_mods=conflicting_mods,
+                        open_slots=open_slots,
+                    )
+                    action = _resolve_slot_conflict(conflict, slot_conflict_resolver)
+
+                    if action == "replace":
+                        for mod_name in conflicting_mods:
+                            _disable_conflicting_mod(mods_path, mod_name, summary, fighter, source_slot)
+                        slot_index.setdefault(fighter, {}).pop(source_slot, None)
+                    elif action == "move_existing":
+                        if len(conflicting_mods) != 1 or not open_slots:
+                            summary.skipped_items.append(
+                                f"{target_name} ({fighter} c{source_slot:02d})"
+                            )
+                            summary.warnings.append(
+                                f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                                "was occupied and the existing mod could not be moved safely."
+                            )
+                            continue
+                        existing_mod_name = conflicting_mods[0]
+                        target_open_slot = choose_open_target_slot(fighter, source_slot, open_slots)
+                        if target_open_slot is None:
+                            summary.skipped_items.append(
+                                f"{target_name} ({fighter} c{source_slot:02d})"
+                            )
+                            summary.warnings.append(
+                                f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                                "was occupied and no open replacement slot was available."
+                            )
+                            continue
+                        _move_installed_mod_to_open_slot(
+                            mods_path, existing_mod_name, fighter, source_slot, target_open_slot, summary
+                        )
+                        slot_index.setdefault(fighter, {}).pop(source_slot, None)
+                        slot_index.setdefault(fighter, {}).setdefault(target_open_slot, []).append(existing_mod_name)
+                    elif action == "move_incoming":
+                        target_open_slot = choose_open_target_slot(fighter, source_slot, open_slots)
+                        if target_open_slot is None:
+                            summary.skipped_items.append(
+                                f"{target_name} ({fighter} c{source_slot:02d})"
+                            )
+                            summary.warnings.append(
+                                f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                                "was occupied and no open base slot remained."
+                            )
+                            continue
+                        target_slot = target_open_slot
+                    else:
+                        summary.skipped_items.append(
+                            f"{target_name} ({fighter} c{source_slot:02d})"
+                        )
+                        summary.warnings.append(
+                            f"Skipped '{target_name}' because slot {fighter} c{source_slot:02d} "
+                            "was already occupied."
+                        )
+                        continue
+
+                if target_slot != source_slot:
+                    temp_dir = tempfile.TemporaryDirectory(prefix="ssbumm_reslot_")
+                    prepared.temp_paths.append(temp_dir)
+                    reslotted_path = Path(temp_dir.name) / target_name
+                    reslot_mod_directory(src, reslotted_path, fighter, source_slot, target_slot)
+                    src = reslotted_path
+                    summary.slot_reassignments += 1
+                    summary.warnings.append(
+                        f"Imported '{target_name}' as {fighter} c{target_slot:02d} "
+                        f"instead of c{source_slot:02d} to avoid a slot overlap."
+                    )
+
+            dest = mods_path / target_name
+            if _same_path(src, dest):
+                summary.warnings.append(f"Skipped '{target_name}' (already in mods folder).")
+                continue
+
+            _copy_dir_replace(src, dest, summary)
+            summary.items_imported += 1
+            summary.files_copied += _count_files(dest)
+
+            if analysis.has_detected_skin_slot:
+                fighter = str(analysis.primary_fighter)
+                slot = _detect_installed_primary_slot(dest, analysis)
+                if slot is not None:
+                    slot_index.setdefault(fighter, {}).setdefault(slot, []).append(target_name)
+
+            if _flatten_nested_mod(dest):
+                summary.flattened_mods += 1
+    finally:
+        for prepared in prepared_sources:
+            for temp_dir in prepared.temp_paths:
+                try:
+                    temp_dir.cleanup()
+                except Exception:
+                    pass
 
     if summary.items_imported == 0:
+        skipped = ", ".join(summary.skipped_items[:5]) if summary.skipped_items else ""
+        if skipped:
+            raise ValueError(f"Nothing was imported. Skipped items: {skipped}")
         raise ValueError("Nothing was imported. The selected folder may already be in use.")
     return summary
 
@@ -182,6 +326,243 @@ def import_plugin_package(source_dir: Path, sdmc_path: Path, plugins_path: Path)
             "No importable plugin files or package payloads were found in that folder."
         )
     return summary
+
+
+def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> list[_PreparedModImport]:
+    source_path = Path(source_path)
+    prepared: list[_PreparedModImport] = []
+
+    def add_from_mod_root(
+        root: Path,
+        package_name: str,
+        owned_temp_dir: tempfile.TemporaryDirectory | None = None,
+    ) -> None:
+        sources = _collect_mod_sources(root)
+        if not sources:
+            if owned_temp_dir is not None:
+                try:
+                    owned_temp_dir.cleanup()
+                except Exception:
+                    pass
+            return
+
+        analyses = {
+            str(src): analyze_mod_directory(src, [package_name, target_name, src.name])
+            for src, target_name in sources
+        }
+        chosen_src, chosen_name = choose_primary_variant_root(sources, analyses, package_name)
+        if owned_temp_dir is not None and (
+            chosen_name.startswith("ssbumm_archive_")
+            or chosen_name.lower() in _GENERIC_FOLDER_NAMES
+        ):
+            chosen_name = _sanitize_name(Path(package_name).stem)
+        if len(sources) > 1:
+            skipped_names = [name for src, name in sources if src != chosen_src]
+            summary.warnings.append(
+                f"Selected base variant '{chosen_name}' from '{package_name}' and skipped "
+                f"{len(skipped_names)} other variant(s)."
+            )
+
+        analysis = analyses[str(chosen_src)]
+        temp_paths: list[tempfile.TemporaryDirectory] = []
+        if owned_temp_dir is not None:
+            temp_paths.append(owned_temp_dir)
+        final_src = chosen_src
+        final_name = chosen_name
+
+        if analysis.has_detected_skin_slot and analysis.slot_count > 1:
+            fighter = str(analysis.primary_fighter)
+            slot = int(analysis.primary_slot)
+            variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
+            temp_paths.append(variant_temp)
+            variant_root = Path(variant_temp.name) / final_name
+            copy_single_slot_variant(final_src, variant_root, fighter, slot)
+            if _count_files(variant_root) > 0:
+                final_src = variant_root
+                analysis = analyze_mod_directory(final_src, [package_name, final_name])
+                summary.warnings.append(
+                    f"Selected base skin {fighter} c{slot:02d} from '{package_name}' and omitted its other slots."
+                )
+
+        if analysis.fighter_slots and analysis.slot_count > 1:
+            summary.skipped_items.append(f"{chosen_name} (unsupported multi-slot package)")
+            summary.warnings.append(
+                f"Skipped '{chosen_name}' because it still contains multiple fighter/slot targets "
+                "after base-skin pruning."
+            )
+            for temp_dir in temp_paths:
+                try:
+                    temp_dir.cleanup()
+                except Exception:
+                    pass
+            return
+
+        prepared.append(
+            _PreparedModImport(
+                source_dir=final_src,
+                target_name=final_name,
+                package_name=package_name,
+                analysis=analysis,
+                temp_paths=temp_paths,
+            )
+        )
+
+    if source_path.is_file():
+        if not is_archive_path(source_path):
+            raise ValueError("Selected mod import path is not a supported archive or folder.")
+        temp_dir = tempfile.TemporaryDirectory(prefix="ssbumm_archive_")
+        extract_archive(source_path, Path(temp_dir.name))
+        summary.archives_processed += 1
+        add_from_mod_root(Path(temp_dir.name), source_path.name, temp_dir)
+    elif source_path.is_dir():
+        direct_sources = _collect_mod_sources(source_path)
+        if direct_sources:
+            for chosen_src, chosen_name in direct_sources:
+                chosen_analysis = analyze_mod_directory(chosen_src, [source_path.name, chosen_name, chosen_src.name])
+                temp_paths: list[tempfile.TemporaryDirectory] = []
+                final_src = chosen_src
+                if chosen_analysis.has_detected_skin_slot and chosen_analysis.slot_count > 1:
+                    fighter = str(chosen_analysis.primary_fighter)
+                    slot = int(chosen_analysis.primary_slot)
+                    variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
+                    temp_paths.append(variant_temp)
+                    variant_root = Path(variant_temp.name) / chosen_name
+                    copy_single_slot_variant(chosen_src, variant_root, fighter, slot)
+                    if _count_files(variant_root) > 0:
+                        final_src = variant_root
+                        chosen_analysis = analyze_mod_directory(final_src, [source_path.name, chosen_name])
+                        summary.warnings.append(
+                            f"Selected base skin {fighter} c{slot:02d} from '{chosen_name}' and omitted its other slots."
+                        )
+                if chosen_analysis.fighter_slots and chosen_analysis.slot_count > 1:
+                    summary.skipped_items.append(f"{chosen_name} (unsupported multi-slot package)")
+                    summary.warnings.append(
+                        f"Skipped '{chosen_name}' because it still contains multiple fighter/slot targets "
+                        "after base-skin pruning."
+                    )
+                    for temp_dir in temp_paths:
+                        try:
+                            temp_dir.cleanup()
+                        except Exception:
+                            pass
+                    continue
+                prepared.append(
+                    _PreparedModImport(
+                        source_dir=final_src,
+                        target_name=chosen_name,
+                        package_name=source_path.name,
+                        analysis=chosen_analysis,
+                        temp_paths=temp_paths,
+                    )
+                )
+        else:
+            archives = sorted(
+                child for child in source_path.iterdir()
+                if child.is_file() and is_archive_path(child)
+            )
+            for archive in archives:
+                temp_dir = tempfile.TemporaryDirectory(prefix="ssbumm_archive_")
+                extract_archive(archive, Path(temp_dir.name))
+                summary.archives_processed += 1
+                add_from_mod_root(Path(temp_dir.name), archive.name, temp_dir)
+    return prepared
+
+
+def _resolve_slot_conflict(
+    conflict: SlotConflictInfo,
+    resolver: SlotConflictResolver | None,
+) -> str:
+    if resolver is not None:
+        action = str(resolver(conflict) or "").strip().lower()
+        if action in {"replace", "move_existing", "move_incoming", "skip"}:
+            return action
+    if conflict.open_slots:
+        return "move_incoming"
+    return "skip"
+
+
+def _build_slot_index(mods_path: Path) -> dict[str, dict[int, list[str]]]:
+    index: dict[str, dict[int, list[str]]] = {}
+    if not mods_path.exists() or not mods_path.is_dir():
+        return index
+    for folder in sorted(mods_path.iterdir(), key=lambda p: p.name.lower()):
+        if not folder.is_dir() or folder.name.startswith(".") or folder.name.startswith("_"):
+            continue
+        analysis = analyze_mod_directory(folder, [folder.name])
+        if not analysis.fighter_slots:
+            continue
+        for fighter, slots in analysis.fighter_slots.items():
+            for slot in slots:
+                index.setdefault(str(fighter), {}).setdefault(int(slot), []).append(folder.name)
+    return index
+
+
+def _available_base_slots(slot_index: dict[str, dict[int, list[str]]], fighter: str) -> list[int]:
+    used = set(slot_index.get(fighter, {}).keys())
+    return [slot for slot in range(8) if slot not in used]
+
+
+def _disable_conflicting_mod(mods_path: Path, mod_name: str, summary: ImportSummary, fighter: str, slot: int) -> None:
+    src = mods_path / mod_name
+    if not src.exists():
+        return
+    disabled_dir = mods_path.parent / "disabled_mods"
+    disabled_dir.mkdir(parents=True, exist_ok=True)
+    dest = disabled_dir / mod_name
+    suffix = 1
+    while dest.exists():
+        dest = disabled_dir / f"{mod_name} ({suffix})"
+        suffix += 1
+    src.rename(dest)
+    summary.warnings.append(
+        f"Disabled existing mod '{mod_name}' so '{fighter} c{slot:02d}' could be replaced."
+    )
+
+
+def _move_installed_mod_to_open_slot(
+    mods_path: Path,
+    mod_name: str,
+    fighter: str,
+    source_slot: int,
+    target_slot: int,
+    summary: ImportSummary,
+) -> None:
+    src = mods_path / mod_name
+    if not src.exists() or not src.is_dir():
+        raise FileNotFoundError(f"Installed mod not found: {mod_name}")
+
+    temp_dir = tempfile.TemporaryDirectory(prefix="ssbumm_existing_reslot_")
+    try:
+        reslotted_root = Path(temp_dir.name) / mod_name
+        reslot_mod_directory(src, reslotted_root, fighter, source_slot, target_slot)
+        backup = src.parent / f"{mod_name}.ssbumm-backup"
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        src.rename(backup)
+        try:
+            shutil.move(str(reslotted_root), str(src))
+            shutil.rmtree(backup, ignore_errors=True)
+        except Exception:
+            if src.exists():
+                shutil.rmtree(src, ignore_errors=True)
+            backup.rename(src)
+            raise
+    finally:
+        temp_dir.cleanup()
+
+    summary.slot_reassignments += 1
+    summary.warnings.append(
+        f"Moved existing mod '{mod_name}' from {fighter} c{source_slot:02d} to c{target_slot:02d}."
+    )
+
+
+def _detect_installed_primary_slot(dest: Path, previous_analysis: SlotAnalysis) -> int | None:
+    analysis = analyze_mod_directory(dest, [dest.name])
+    if analysis.has_detected_skin_slot:
+        return int(analysis.primary_slot)
+    if previous_analysis.has_detected_skin_slot:
+        return int(previous_analysis.primary_slot)
+    return None
 
 
 def _collect_mod_sources(source_dir: Path) -> list[tuple[Path, str]]:

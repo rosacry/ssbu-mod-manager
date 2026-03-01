@@ -848,7 +848,11 @@ class ModsPage(BasePage):
             return
 
         try:
-            summary = import_mod_package(Path(folder), mods_path)
+            summary = import_mod_package(
+                Path(folder),
+                mods_path,
+                slot_conflict_resolver=self._resolve_import_slot_conflict,
+            )
             logger.info(
                 "Mods",
                 f"Imported {summary.items_imported} mod(s), "
@@ -858,10 +862,16 @@ class ModsPage(BasePage):
                 f"Imported {summary.items_imported} mod(s).",
                 f"Copied {summary.files_copied} file(s).",
             ]
+            if summary.archives_processed:
+                lines.append(f"Processed {summary.archives_processed} archive(s).")
             if summary.flattened_mods:
                 lines.append(f"Auto-flattened {summary.flattened_mods} nested mod folder(s).")
+            if summary.slot_reassignments:
+                lines.append(f"Adjusted {summary.slot_reassignments} slot assignment(s).")
             if summary.replaced_paths:
                 lines.append(f"Replaced {summary.replaced_paths} existing mod folder(s).")
+            if summary.skipped_items:
+                lines.append(f"Skipped {len(summary.skipped_items)} item(s) that could not be placed cleanly.")
             if summary.warnings:
                 lines.append("")
                 lines.extend(summary.warnings[:5])
@@ -872,3 +882,37 @@ class ModsPage(BasePage):
         except Exception as e:
             logger.error("Mods", f"Import failed: {e}")
             messagebox.showerror("Import Failed", str(e))
+
+    def _resolve_import_slot_conflict(self, conflict):
+        slot_text = f"{conflict.fighter} c{conflict.requested_slot:02d}"
+        if conflict.open_slots and len(conflict.conflicting_mods) == 1:
+            message = (
+                f"'{conflict.mod_name}' wants {slot_text}, but that slot is already used by "
+                f"'{conflict.conflicting_mods[0]}'.\n\n"
+                "Yes: replace the existing skin by disabling the current mod.\n"
+                "No: move the existing mod into an open default slot.\n"
+                "Cancel: skip importing this skin."
+            )
+            choice = messagebox.askyesnocancel("Slot Conflict", message)
+            if choice is True:
+                return "replace"
+            if choice is False:
+                return "move_existing"
+            return "skip"
+
+        if conflict.open_slots:
+            message = (
+                f"'{conflict.mod_name}' wants {slot_text}, but that slot is already used by "
+                f"{len(conflict.conflicting_mods)} mod(s).\n\n"
+                "Yes: disable the existing mod(s) and replace that slot.\n"
+                "No/Cancel: skip importing this skin."
+            )
+            choice = messagebox.askyesnocancel("Slot Conflict", message)
+            return "replace" if choice is True else "skip"
+
+        messagebox.showwarning(
+            "No Open Slot",
+            f"'{conflict.mod_name}' wants {slot_text}, but there are no open default slots left for "
+            f"{conflict.fighter}. This skin will be skipped.",
+        )
+        return "skip"
