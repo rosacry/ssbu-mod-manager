@@ -90,6 +90,14 @@ _UI_PORTRAIT_FALLBACK_ORDER = {
 }
 _SUSPECT_GENERATED_UI_STOCK_ICON_SIZE = 5
 _SUSPECT_GENERATED_UI_STOCK_ICON_SOURCES = (4, 3)
+_MODEL_CORE_FILENAMES = frozenset({
+    "model.nuhlpb",
+    "model.numatb",
+    "model.numdlb",
+    "model.numshb",
+    "model.numshexb",
+    "model.nusktb",
+})
 
 
 @dataclass
@@ -656,6 +664,9 @@ def repair_installed_mods(
             changed_mods.add(mod_root.name)
 
         analysis = analyze_mod_directory(mod_root, [mod_root.name])
+        if _quarantine_suspicious_partial_fighter_pack(mods_path, mod_root, analysis, summary):
+            changed_mods.add(mod_root.name)
+            continue
         fighter = str(analysis.primary_fighter) if analysis.has_visual_skin_slot and analysis.primary_fighter else None
         slot = int(analysis.primary_slot) if analysis.has_visual_skin_slot and analysis.primary_slot is not None else None
         _repair_imported_mod_metadata(
@@ -2751,9 +2762,21 @@ def _disable_support_only_mod(
     summary: ImportSummary | InstalledModsRepairSummary,
     slot_descriptions: list[str] | None = None,
 ) -> None:
+    dest = _move_mod_to_disabled_dir(mods_path, mod_name)
+    if dest is None:
+        return
+    slot_text = _format_slot_description_list(list(slot_descriptions or []))
+    summary.warnings.append(
+        f"Disabled support mod '{mod_name}'"
+        f"{f' ({slot_text})' if slot_text else ''} after all effective conflicting files were pruned. "
+        f"It was moved to 'disabled_mods/{dest.name}'."
+    )
+
+
+def _move_mod_to_disabled_dir(mods_path: Path, mod_name: str) -> Path | None:
     src = mods_path / mod_name
     if not src.exists():
-        return
+        return None
     disabled_dir = mods_path.parent / "disabled_mods"
     disabled_dir.mkdir(parents=True, exist_ok=True)
     dest = disabled_dir / mod_name
@@ -2762,12 +2785,69 @@ def _disable_support_only_mod(
         dest = disabled_dir / f"{mod_name} ({suffix})"
         suffix += 1
     src.rename(dest)
-    slot_text = _format_slot_description_list(list(slot_descriptions or []))
+    return dest
+
+
+def _quarantine_suspicious_partial_fighter_pack(
+    mods_path: Path,
+    mod_root: Path,
+    analysis: SlotAnalysis,
+    summary: InstalledModsRepairSummary,
+) -> bool:
+    issues = _find_suspicious_partial_fighter_bundle_issues(mod_root, analysis)
+    if not issues:
+        return False
+    dest = _move_mod_to_disabled_dir(mods_path, mod_root.name)
+    if dest is None:
+        return False
     summary.warnings.append(
-        f"Disabled support mod '{mod_name}'"
-        f"{f' ({slot_text})' if slot_text else ''} after all effective conflicting files were pruned. "
-        f"It was moved to 'disabled_mods/{dest.name}'."
+        f"Disabled suspicious partial fighter mod '{mod_root.name}' because it contains an incomplete model bundle: "
+        f"{'; '.join(issues)}. It was moved to 'disabled_mods/{dest.name}'."
     )
+    return True
+
+
+def _find_suspicious_partial_fighter_bundle_issues(mod_root: Path, analysis: SlotAnalysis) -> list[str]:
+    issues: list[str] = []
+    for fighter, slots in analysis.visual_fighter_slots.items():
+        for slot in slots:
+            body_dir = mod_root / "fighter" / fighter / "model" / "body" / f"c{int(slot):02d}"
+            if not body_dir.exists() or not body_dir.is_dir():
+                continue
+            filenames = {
+                child.name.lower()
+                for child in body_dir.iterdir()
+                if child.is_file()
+            }
+            present_core = sorted(filenames & _MODEL_CORE_FILENAMES)
+            if not present_core:
+                continue
+            if len(present_core) == len(_MODEL_CORE_FILENAMES):
+                continue
+            if len(present_core) > 1:
+                continue
+            if not _has_non_body_fighter_model_content(mod_root, fighter, int(slot)):
+                continue
+            missing_core = sorted(_MODEL_CORE_FILENAMES - filenames)
+            issues.append(
+                f"{fighter} c{int(slot):02d} is missing {', '.join(missing_core)}"
+            )
+    return issues
+
+
+def _has_non_body_fighter_model_content(mod_root: Path, fighter: str, slot: int) -> bool:
+    model_root = mod_root / "fighter" / fighter / "model"
+    if not model_root.exists() or not model_root.is_dir():
+        return False
+    body_prefix = f"body/c{int(slot):02d}/"
+    for file_path in model_root.rglob("*"):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(model_root)).replace("\\", "/").lower()
+        if rel.startswith(body_prefix):
+            continue
+        return True
+    return False
 
 
 def _replace_directory_from_temp(dest: Path, replacement_root: Path) -> None:

@@ -929,7 +929,15 @@ def test_import_mod_package_synthesizes_config_for_slot_specific_fighter_files_w
     source = tmp_path / "downloads" / "Cloud Pack"
     (source / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
     (source / "fighter" / "cloud" / "model" / "body" / "c00" / "egle001_body_col.nutexb").write_bytes(b"tex")
-    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numatb").write_bytes(b"mat")
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"mat",
+        "model.numdlb": b"d",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (source / "fighter" / "cloud" / "model" / "body" / "c00" / filename).write_bytes(payload)
     (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
     (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_00.bntx").write_bytes(b"ui")
 
@@ -940,7 +948,12 @@ def test_import_mod_package_synthesizes_config_for_slot_specific_fighter_files_w
         "new-dir-files": {
             "fighter/cloud/c00": [
                 "fighter/cloud/model/body/c00/egle001_body_col.nutexb",
+                "fighter/cloud/model/body/c00/model.nuhlpb",
                 "fighter/cloud/model/body/c00/model.numatb",
+                "fighter/cloud/model/body/c00/model.numdlb",
+                "fighter/cloud/model/body/c00/model.numshb",
+                "fighter/cloud/model/body/c00/model.numshexb",
+                "fighter/cloud/model/body/c00/model.nusktb",
             ]
         }
     }
@@ -1069,7 +1082,15 @@ def test_repair_installed_mods_merges_existing_slot_manifest_with_missing_fighte
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     cloud = mods_path / "Super Sonic Over Cloud"
     (cloud / "fighter" / "cloud" / "model" / "body" / "c06").mkdir(parents=True)
-    (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / "model.numatb").write_bytes(b"mat")
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"mat",
+        "model.numdlb": b"d",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (cloud / "fighter" / "cloud" / "model" / "body" / "c06" / filename).write_bytes(payload)
     (cloud / "effect" / "fighter" / "cloud").mkdir(parents=True)
     (cloud / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"effect")
     (cloud / "config.json").write_text(
@@ -1092,7 +1113,12 @@ def test_repair_installed_mods_merges_existing_slot_manifest_with_missing_fighte
         "new-dir-files": {
             "fighter/cloud/c06": [
                 "effect/fighter/cloud/ef_cloud.eff",
+                "fighter/cloud/model/body/c06/model.nuhlpb",
                 "fighter/cloud/model/body/c06/model.numatb",
+                "fighter/cloud/model/body/c06/model.numdlb",
+                "fighter/cloud/model/body/c06/model.numshb",
+                "fighter/cloud/model/body/c06/model.numshexb",
+                "fighter/cloud/model/body/c06/model.nusktb",
             ]
         }
     }
@@ -1263,6 +1289,66 @@ def test_repair_installed_mods_removes_suspect_generated_stock_icon_clone(tmp_pa
         / "chara_5_sonic_00.bntx"
     )
     assert backup.exists()
+
+
+def test_repair_installed_mods_disables_suspicious_partial_fighter_bundle(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Cloud Shadow"
+    (mod_root / "fighter" / "cloud" / "model" / "body" / "c03").mkdir(parents=True)
+    (mod_root / "fighter" / "cloud" / "model" / "body" / "c03" / "model.numatb").write_bytes(b"mat")
+    (mod_root / "fighter" / "cloud" / "model" / "body" / "c03" / "def_cloud_001_col.nutexb").write_bytes(b"tex")
+    (mod_root / "fighter" / "cloud" / "model" / "fusionsword" / "c03").mkdir(parents=True)
+    (mod_root / "fighter" / "cloud" / "model" / "fusionsword" / "c03" / "def_cloud_004_col.nutexb").write_bytes(b"sword")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_03.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    disabled = mods_path.parent / "disabled_mods" / "Cloud Shadow"
+    assert summary.mods_changed == 1
+    assert not mod_root.exists()
+    assert disabled.exists()
+    assert any("Disabled suspicious partial fighter mod 'Cloud Shadow'" in warning for warning in summary.warnings)
+
+
+def test_repair_installed_mods_keeps_partial_but_multi_core_model_bundle(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Modern Sonic"
+    body = mod_root / "fighter" / "sonic" / "model" / "body" / "c00"
+    body.mkdir(parents=True)
+    for filename, payload in {
+        "model.numatb": b"mat",
+        "model.numdlb": b"d",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+    }.items():
+        (body / filename).write_bytes(payload)
+    (body / "def_sonic_001_col.nutexb").write_bytes(b"tex")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_sonic_00.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert mod_root.exists()
+    assert not (mods_path.parent / "disabled_mods" / "Modern Sonic").exists()
+    assert not any("Modern Sonic" in warning for warning in summary.warnings)
+
+
+def test_repair_installed_mods_keeps_single_core_body_only_bundle(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Skadi Byleth"
+    body = mod_root / "fighter" / "master" / "model" / "body" / "c03"
+    body.mkdir(parents=True)
+    (body / "model.numatb").write_bytes(b"mat")
+    (body / "def_master_001_col.nutexb").write_bytes(b"tex")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_master_03.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert mod_root.exists()
+    assert not (mods_path.parent / "disabled_mods" / "Skadi Byleth").exists()
+    assert not any("Skadi Byleth" in warning for warning in summary.warnings)
 
 
 def test_import_mod_package_postflight_fills_missing_required_ui_portrait_sizes(tmp_path: Path):
