@@ -80,13 +80,16 @@ _UI_CHARA_PORTRAIT_RE = re.compile(
     r"^ui/(?P<replace_kind>replace|replace_patch)/chara/chara_(?P<size>\d)/(?P<filename>[^/]+)_(?P<fighter>[^_/]+)_(?P<slot>\d{2})\.bntx$",
     re.IGNORECASE,
 )
-_REQUIRED_UI_PORTRAIT_SIZES = (0, 1, 2, 3, 4)
+_REQUIRED_UI_PORTRAIT_SIZES = (0, 1, 2, 3, 4, 5, 6, 7)
 _UI_PORTRAIT_FALLBACK_ORDER = {
-    0: (1, 2, 3, 4),
-    1: (0, 2, 3, 4),
-    2: (1, 0, 4, 3),
-    3: (4, 1, 2, 0),
-    4: (3, 1, 2, 0),
+    0: (1, 2, 3, 4, 5, 6, 7),
+    1: (0, 2, 3, 4, 5, 6, 7),
+    2: (1, 0, 3, 4, 5, 6, 7),
+    3: (4, 2, 1, 5, 0, 6, 7),
+    4: (3, 5, 2, 1, 6, 0, 7),
+    5: (4, 6, 3, 7, 2, 1, 0),
+    6: (7, 5, 4, 3, 2, 1, 0),
+    7: (6, 5, 4, 3, 2, 1, 0),
 }
 
 
@@ -608,6 +611,9 @@ def import_mod_package(
         summary.remaining_exact_overlaps += repair_summary.remaining_exact_overlaps
         summary.warnings.extend(repair_summary.warnings)
 
+    if summary.items_imported > 0:
+        _invalidate_arcropolis_mod_cache(mods_path)
+
     if summary.items_imported == 0:
         skipped = ", ".join(summary.skipped_items[:5]) if summary.skipped_items else ""
         if skipped:
@@ -685,6 +691,8 @@ def repair_installed_mods(
         focus_mod_names=focus_names or None,
     )
     summary.mods_changed = len(changed_mods)
+    if summary.mods_changed or summary.resolved_exact_overlaps or summary.support_files_pruned:
+        _invalidate_arcropolis_mod_cache(mods_path)
     return summary
 
 
@@ -1995,6 +2003,24 @@ def _repair_missing_ui_portraits(mod_root: Path) -> int:
             size_map[target_size] = dest_path
             created += 1
     return created
+
+
+def _invalidate_arcropolis_mod_cache(mods_path: Path) -> None:
+    arcropolis_root = Path(mods_path).parent / "arcropolis"
+    if not arcropolis_root.exists() or not arcropolis_root.is_dir():
+        return
+    conflicts_path = arcropolis_root / "conflicts.json"
+    if conflicts_path.exists():
+        try:
+            conflicts_path.unlink()
+        except OSError:
+            pass
+    for cache_path in arcropolis_root.rglob("mod_cache"):
+        try:
+            if cache_path.is_file():
+                cache_path.unlink()
+        except OSError:
+            continue
 
 
 def _collect_ui_portrait_paths(mod_root: Path) -> dict[tuple[str, int, str], dict[int, Path]]:

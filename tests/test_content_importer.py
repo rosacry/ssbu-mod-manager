@@ -1129,9 +1129,38 @@ def test_repair_installed_mods_fills_missing_required_ui_portrait_sizes(tmp_path
     summary = repair_installed_mods(mods_path)
 
     repaired = mod_root / "ui" / "replace" / "chara" / "chara_3" / "chara_3_sonic_02.bntx"
-    assert summary.ui_portrait_repairs == 1
+    repaired_stock = mod_root / "ui" / "replace" / "chara" / "chara_5" / "chara_5_sonic_02.bntx"
+    repaired_small = mod_root / "ui" / "replace" / "chara" / "chara_7" / "chara_7_sonic_02.bntx"
+    assert summary.ui_portrait_repairs == 4
     assert repaired.exists()
     assert repaired.read_bytes() == b"portrait-4"
+    assert repaired_stock.exists()
+    assert repaired_stock.read_bytes() == b"portrait-4"
+    assert repaired_small.exists()
+    assert repaired_small.read_bytes() == b"portrait-4"
+
+
+def test_repair_installed_mods_invalidates_arcropolis_mod_cache_on_change(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Nazo Sonic C02"
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (mod_root / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"skin")
+    portrait = mod_root / "ui" / "replace" / "chara" / "chara_4" / "chara_4_sonic_02.bntx"
+    portrait.parent.mkdir(parents=True, exist_ok=True)
+    portrait.write_bytes(b"portrait-4")
+
+    arcropolis_root = mods_path.parent / "arcropolis"
+    mod_cache = arcropolis_root / "config" / "workspace" / "preset" / "mod_cache"
+    mod_cache.parent.mkdir(parents=True, exist_ok=True)
+    mod_cache.write_text("cached", encoding="utf-8")
+    conflicts = arcropolis_root / "conflicts.json"
+    conflicts.write_text("{}", encoding="utf-8")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.ui_portrait_repairs == 7
+    assert not mod_cache.exists()
+    assert not conflicts.exists()
 
 
 def test_import_mod_package_postflight_fills_missing_required_ui_portrait_sizes(tmp_path: Path):
@@ -1147,9 +1176,35 @@ def test_import_mod_package_postflight_fills_missing_required_ui_portrait_sizes(
     summary = import_mod_package(source, mods_path)
 
     repaired = mods_path / "Nazo Sonic C02" / "ui" / "replace" / "chara" / "chara_3" / "chara_3_sonic_02.bntx"
-    assert summary.ui_portrait_repairs == 1
+    repaired_stock = mods_path / "Nazo Sonic C02" / "ui" / "replace" / "chara" / "chara_5" / "chara_5_sonic_02.bntx"
+    repaired_small = mods_path / "Nazo Sonic C02" / "ui" / "replace" / "chara" / "chara_7" / "chara_7_sonic_02.bntx"
+    assert summary.ui_portrait_repairs == 4
     assert repaired.exists()
     assert repaired.read_bytes() == b"portrait-4"
+    assert repaired_stock.exists()
+    assert repaired_stock.read_bytes() == b"portrait-4"
+    assert repaired_small.exists()
+    assert repaired_small.read_bytes() == b"portrait-4"
+
+
+def test_import_mod_package_invalidates_arcropolis_mod_cache(tmp_path: Path):
+    source = tmp_path / "downloads" / "Nazo Sonic C02"
+    (source / "fighter" / "sonic" / "model" / "body" / "c02").mkdir(parents=True)
+    (source / "fighter" / "sonic" / "model" / "body" / "c02" / "model.bin").write_bytes(b"skin")
+    portrait = source / "ui" / "replace" / "chara" / "chara_4" / "chara_4_sonic_02.bntx"
+    portrait.parent.mkdir(parents=True, exist_ok=True)
+    portrait.write_bytes(b"portrait-4")
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    arcropolis_root = mods_path.parent / "arcropolis"
+    mod_cache = arcropolis_root / "config" / "workspace" / "preset" / "mod_cache"
+    mod_cache.parent.mkdir(parents=True, exist_ok=True)
+    mod_cache.write_text("cached", encoding="utf-8")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert not mod_cache.exists()
 
 
 def test_import_plugin_package_from_atmosphere_tree(tmp_path: Path):
