@@ -35,6 +35,21 @@ def test_import_mod_package_can_import_archives_from_directory(tmp_path: Path):
     assert (mods_path / "Mario Base" / "fighter" / "mario" / "model" / "body" / "c00" / "model.bin").exists()
 
 
+def test_import_mod_package_discovers_deeply_nested_mod_folder(tmp_path: Path):
+    source = tmp_path / "downloads" / "Collection"
+    deep_mod = source / "Extras" / "Playable Forms" / "Mario Form"
+    (deep_mod / "fighter" / "mario" / "model" / "body" / "c00").mkdir(parents=True)
+    (deep_mod / "fighter" / "mario" / "model" / "body" / "c00" / "model.bin").write_bytes(b"abc")
+    (deep_mod / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (deep_mod / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_00.bntx").write_bytes(b"ui")
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert (mods_path / "Mario Form" / "fighter" / "mario" / "model" / "body" / "c00" / "model.bin").exists()
+
+
 def test_import_mod_package_selects_single_base_variant_from_archive(tmp_path: Path):
     downloads = tmp_path / "downloads"
     downloads.mkdir()
@@ -67,6 +82,10 @@ def test_import_mod_package_moves_incoming_skin_to_open_slot_by_default(tmp_path
     (source / "fighter" / "mario" / "model" / "body" / "c00" / "new.bin").write_bytes(b"new")
     (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
     (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_00.bntx").write_bytes(b"new-ui")
+    (source / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter_voice" / "vc_mario_c00.nus3audio").write_bytes(b"voice")
+    (source / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter" / "se_mario_c00.nus3audio").write_bytes(b"sfx")
 
     summary = import_mod_package(source, mods_path)
 
@@ -75,6 +94,8 @@ def test_import_mod_package_moves_incoming_skin_to_open_slot_by_default(tmp_path
     assert (mods_path / "Existing Mario" / "fighter" / "mario" / "model" / "body" / "c00" / "existing.bin").exists()
     assert (mods_path / "New Mario" / "fighter" / "mario" / "model" / "body" / "c01" / "new.bin").exists()
     assert (mods_path / "New Mario" / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_01.bntx").exists()
+    assert (mods_path / "New Mario" / "sound" / "bank" / "fighter_voice" / "vc_mario_c01.nus3audio").exists()
+    assert (mods_path / "New Mario" / "sound" / "bank" / "fighter" / "se_mario_c01.nus3audio").exists()
 
 
 def test_import_mod_package_can_move_existing_mod_to_open_slot(tmp_path: Path):
@@ -119,6 +140,70 @@ def test_import_mod_package_prunes_false_positive_motion_slots(tmp_path: Path):
     assert not (mods_path / "VegetaLike" / "fighter" / "mario" / "motion" / "body" / "c00").exists()
 
 
+def test_import_mod_package_allows_voice_pack_to_share_skin_slot(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    voice_mod = mods_path / "Mario Voice Pack"
+    (voice_mod / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (voice_mod / "sound" / "bank" / "fighter_voice" / "vc_mario_c00.nus3audio").write_bytes(b"voice")
+    (voice_mod / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (voice_mod / "sound" / "bank" / "fighter" / "se_mario_c00.nus3audio").write_bytes(b"sfx")
+
+    source = tmp_path / "downloads" / "Mario Skin"
+    (source / "fighter" / "mario" / "model" / "body" / "c00").mkdir(parents=True)
+    (source / "fighter" / "mario" / "model" / "body" / "c00" / "model.bin").write_bytes(b"skin")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_00.bntx").write_bytes(b"ui")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert summary.slot_reassignments == 0
+    assert (mods_path / "Mario Skin" / "fighter" / "mario" / "model" / "body" / "c00" / "model.bin").exists()
+    assert not (mods_path / "Mario Skin" / "fighter" / "mario" / "model" / "body" / "c01").exists()
+
+
+def test_import_mod_package_preserves_multi_slot_voice_pack(tmp_path: Path):
+    source = tmp_path / "downloads" / "Sonic Voice Pack"
+    (source / "sound" / "bank" / "fighter_voice").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").write_bytes(b"vc00")
+    (source / "sound" / "bank" / "fighter_voice" / "vc_sonic_c01.nus3audio").write_bytes(b"vc01")
+    (source / "sound" / "bank" / "fighter").mkdir(parents=True)
+    (source / "sound" / "bank" / "fighter" / "se_sonic_c00.nus3audio").write_bytes(b"se00")
+    (source / "sound" / "bank" / "fighter" / "se_sonic_c01.nus3audio").write_bytes(b"se01")
+
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert summary.slot_reassignments == 0
+    assert (mods_path / "Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c00.nus3audio").exists()
+    assert (mods_path / "Sonic Voice Pack" / "sound" / "bank" / "fighter_voice" / "vc_sonic_c01.nus3audio").exists()
+    assert not any("Selected base skin" in warning for warning in summary.warnings)
+
+
+def test_import_mod_package_can_replace_existing_mod_without_self_conflict(tmp_path: Path):
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    existing = mods_path / "Mario Skin"
+    (existing / "fighter" / "mario" / "model" / "body" / "c00").mkdir(parents=True)
+    (existing / "fighter" / "mario" / "model" / "body" / "c00" / "old.bin").write_bytes(b"old")
+    (existing / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (existing / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_00.bntx").write_bytes(b"old-ui")
+
+    source = tmp_path / "downloads" / "Mario Skin"
+    (source / "fighter" / "mario" / "model" / "body" / "c00").mkdir(parents=True)
+    (source / "fighter" / "mario" / "model" / "body" / "c00" / "new.bin").write_bytes(b"new")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_mario_00.bntx").write_bytes(b"new-ui")
+
+    summary = import_mod_package(source, mods_path)
+
+    assert summary.items_imported == 1
+    assert summary.slot_reassignments == 0
+    assert summary.replaced_paths == 1
+    assert (mods_path / "Mario Skin" / "fighter" / "mario" / "model" / "body" / "c00" / "new.bin").exists()
+    assert not (mods_path / "Mario Skin" / "fighter" / "mario" / "model" / "body" / "c00" / "old.bin").exists()
+
+
 def test_choose_primary_skin_slot_prefers_name_hint_when_present() -> None:
     fighter, slot = choose_primary_skin_slot({"donkey": [0, 6]}, ["Sonic the Werehog over DK C06"])
     assert fighter == "donkey"
@@ -136,6 +221,21 @@ def test_slot_analysis_prefers_model_slot_over_generic_motion_slot() -> None:
     )
     assert analysis.primary_fighter == "mario"
     assert analysis.primary_slot == 2
+
+
+def test_slot_analysis_detects_effect_only_slot_without_marking_visual() -> None:
+    analysis = analyze_relative_paths(
+        [
+            "effect/fighter/sonic/ef_sonic_c07.eff",
+            "effect/fighter/sonic/ef_sonic_c07oldold.eff",
+        ],
+        ["True Hyper Sonic Effects (c07)"],
+    )
+    assert analysis.primary_fighter == "sonic"
+    assert analysis.primary_slot == 7
+    assert analysis.fighter_slots == {"sonic": [7]}
+    assert analysis.visual_fighter_slots == {}
+    assert not analysis.has_visual_skin_slot
 
 
 def test_import_plugin_package_from_atmosphere_tree(tmp_path: Path):

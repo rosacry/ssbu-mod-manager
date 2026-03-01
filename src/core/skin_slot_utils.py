@@ -23,6 +23,10 @@ _UI_PATH_RE = re.compile(
     r"(?:^|/)ui/(?:replace|replace_patch)/chara/[^/]+/[^/]+_([^_/]+)_(\d{2,3})\.bntx$",
     re.IGNORECASE,
 )
+_EFFECT_PATH_RE = re.compile(
+    r"(?:^|/)effect/fighter/([^/]+)/.*?c(\d{2,3})(?:\b|(?=/)|(?=\.))",
+    re.IGNORECASE,
+)
 _SLOT_HINT_RE = re.compile(r"(?:^|[^a-z0-9])c(\d{2,3})(?:[^a-z0-9]|$)", re.IGNORECASE)
 
 _VARIANT_NAME_PRIORITY = (
@@ -52,6 +56,7 @@ _AEGIS = {"element", "eflame", "elight"}
 class SlotAnalysis:
     fighter_slots: dict[str, list[int]] = field(default_factory=dict)
     slot_scores: dict[str, dict[int, int]] = field(default_factory=dict)
+    slot_categories: dict[str, dict[int, frozenset[str]]] = field(default_factory=dict)
     primary_fighter: str | None = None
     primary_slot: int | None = None
 
@@ -63,6 +68,35 @@ class SlotAnalysis:
     def slot_count(self) -> int:
         return sum(len(slots) for slots in self.fighter_slots.values())
 
+    @property
+    def visual_fighter_slots(self) -> dict[str, list[int]]:
+        visual: dict[str, list[int]] = {}
+        for fighter, per_slot in self.slot_categories.items():
+            slots = sorted(
+                slot
+                for slot, categories in per_slot.items()
+                if _is_visual_slot_categories(categories)
+            )
+            if slots:
+                visual[fighter] = slots
+        return visual
+
+    @property
+    def visual_slot_count(self) -> int:
+        return sum(len(slots) for slots in self.visual_fighter_slots.values())
+
+    @property
+    def has_visual_skin_slot(self) -> bool:
+        if self.primary_fighter is None or self.primary_slot is None:
+            return False
+        return self.has_visual_content_for_slot(self.primary_fighter, self.primary_slot)
+
+    def categories_for_slot(self, fighter: str, slot: int) -> frozenset[str]:
+        return self.slot_categories.get(str(fighter), {}).get(int(slot), frozenset())
+
+    def has_visual_content_for_slot(self, fighter: str, slot: int) -> bool:
+        return _is_visual_slot_categories(self.categories_for_slot(fighter, slot))
+
 
 def normalize_rel_path(path: str | Path) -> str:
     return str(path).replace("\\", "/")
@@ -72,7 +106,7 @@ def iter_slot_matches(relative_path: str | Path) -> list[tuple[str, int]]:
     rel = normalize_rel_path(relative_path)
     matches: list[tuple[str, int]] = []
     seen: set[tuple[str, int]] = set()
-    for pattern in (_FIGHTER_PATH_RE, _CAMERA_PATH_RE, _SOUND_PATH_RE, _UI_PATH_RE):
+    for pattern in (_FIGHTER_PATH_RE, _CAMERA_PATH_RE, _SOUND_PATH_RE, _UI_PATH_RE, _EFFECT_PATH_RE):
         match = pattern.search(rel)
         if match is None:
             continue
@@ -104,6 +138,13 @@ def analyze_relative_paths(paths: list[str], name_hints: list[str] | None = None
         }
         for fighter, per_slot in slot_categories.items()
     }
+    normalized_categories = {
+        fighter: {
+            slot: frozenset(sorted(categories))
+            for slot, categories in per_slot.items()
+        }
+        for fighter, per_slot in slot_categories.items()
+    }
     primary_fighter, primary_slot = choose_primary_skin_slot(
         normalized,
         name_hints or [],
@@ -112,6 +153,7 @@ def analyze_relative_paths(paths: list[str], name_hints: list[str] | None = None
     return SlotAnalysis(
         fighter_slots=normalized,
         slot_scores=scores,
+        slot_categories=normalized_categories,
         primary_fighter=primary_fighter,
         primary_slot=primary_slot,
     )
@@ -425,3 +467,10 @@ def _replace_segment_token(path: str, old: str, new: str) -> str:
     parts = normalize_rel_path(path).split("/")
     replaced = [new if part.lower() == old.lower() else part for part in parts]
     return "/".join(replaced)
+
+
+_VISUAL_SLOT_CATEGORIES = frozenset({"model", "ui"})
+
+
+def _is_visual_slot_categories(categories: frozenset[str] | set[str]) -> bool:
+    return bool(set(categories) & _VISUAL_SLOT_CATEGORIES)

@@ -98,11 +98,15 @@ def import_mod_package(
             target_name = prepared.target_name
             analysis = prepared.analysis
 
-            if analysis.has_detected_skin_slot:
+            if analysis.has_visual_skin_slot:
                 fighter = str(analysis.primary_fighter)
                 source_slot = int(analysis.primary_slot)
                 target_slot = source_slot
-                conflicting_mods = list(slot_index.get(fighter, {}).get(source_slot, []))
+                conflicting_mods = [
+                    mod_name
+                    for mod_name in slot_index.get(fighter, {}).get(source_slot, [])
+                    if mod_name != target_name
+                ]
                 if conflicting_mods:
                     open_slots = _available_base_slots(slot_index, fighter)
                     conflict = SlotConflictInfo(
@@ -187,7 +191,7 @@ def import_mod_package(
             summary.items_imported += 1
             summary.files_copied += _count_files(dest)
 
-            if analysis.has_detected_skin_slot:
+            if analysis.has_visual_skin_slot:
                 fighter = str(analysis.primary_fighter)
                 slot = _detect_installed_primary_slot(dest, analysis)
                 if slot is not None:
@@ -370,7 +374,7 @@ def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> li
         final_src = chosen_src
         final_name = chosen_name
 
-        if analysis.has_detected_skin_slot and analysis.slot_count > 1:
+        if analysis.has_visual_skin_slot and analysis.slot_count > 1:
             fighter = str(analysis.primary_fighter)
             slot = int(analysis.primary_slot)
             variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
@@ -384,7 +388,7 @@ def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> li
                     f"Selected base skin {fighter} c{slot:02d} from '{package_name}' and omitted its other slots."
                 )
 
-        if analysis.fighter_slots and analysis.slot_count > 1:
+        if analysis.visual_fighter_slots and analysis.visual_slot_count > 1:
             summary.skipped_items.append(f"{chosen_name} (unsupported multi-slot package)")
             summary.warnings.append(
                 f"Skipped '{chosen_name}' because it still contains multiple fighter/slot targets "
@@ -421,7 +425,7 @@ def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> li
                 chosen_analysis = analyze_mod_directory(chosen_src, [source_path.name, chosen_name, chosen_src.name])
                 temp_paths: list[tempfile.TemporaryDirectory] = []
                 final_src = chosen_src
-                if chosen_analysis.has_detected_skin_slot and chosen_analysis.slot_count > 1:
+                if chosen_analysis.has_visual_skin_slot and chosen_analysis.slot_count > 1:
                     fighter = str(chosen_analysis.primary_fighter)
                     slot = int(chosen_analysis.primary_slot)
                     variant_temp = tempfile.TemporaryDirectory(prefix="ssbumm_variant_")
@@ -434,7 +438,7 @@ def _prepare_mod_import_sources(source_path: Path, summary: ImportSummary) -> li
                         summary.warnings.append(
                             f"Selected base skin {fighter} c{slot:02d} from '{chosen_name}' and omitted its other slots."
                         )
-                if chosen_analysis.fighter_slots and chosen_analysis.slot_count > 1:
+                if chosen_analysis.visual_fighter_slots and chosen_analysis.visual_slot_count > 1:
                     summary.skipped_items.append(f"{chosen_name} (unsupported multi-slot package)")
                     summary.warnings.append(
                         f"Skipped '{chosen_name}' because it still contains multiple fighter/slot targets "
@@ -489,9 +493,9 @@ def _build_slot_index(mods_path: Path) -> dict[str, dict[int, list[str]]]:
         if not folder.is_dir() or folder.name.startswith(".") or folder.name.startswith("_"):
             continue
         analysis = analyze_mod_directory(folder, [folder.name])
-        if not analysis.fighter_slots:
+        if not analysis.visual_fighter_slots:
             continue
-        for fighter, slots in analysis.fighter_slots.items():
+        for fighter, slots in analysis.visual_fighter_slots.items():
             for slot in slots:
                 index.setdefault(str(fighter), {}).setdefault(int(slot), []).append(folder.name)
     return index
@@ -558,9 +562,9 @@ def _move_installed_mod_to_open_slot(
 
 def _detect_installed_primary_slot(dest: Path, previous_analysis: SlotAnalysis) -> int | None:
     analysis = analyze_mod_directory(dest, [dest.name])
-    if analysis.has_detected_skin_slot:
+    if analysis.has_visual_skin_slot:
         return int(analysis.primary_slot)
-    if previous_analysis.has_detected_skin_slot:
+    if previous_analysis.has_visual_skin_slot:
         return int(previous_analysis.primary_slot)
     return None
 
@@ -603,6 +607,20 @@ def _collect_mod_sources(source_dir: Path) -> list[tuple[Path, str]]:
                 resolved = _unwrap_single_wrapper(child)
                 if _contains_mod_content(resolved):
                     found.append((resolved, _pick_mod_target_name(child, resolved)))
+
+    # Case 5: deeply nested mod collections inside an archive/package.
+    if not found:
+        try:
+            for candidate in sorted(source_dir.rglob("*"), key=lambda p: len(p.parts)):
+                if not candidate.is_dir() or candidate == source_dir:
+                    continue
+                if any(part.lower() in _MOD_SKIP_DIRS for part in candidate.relative_to(source_dir).parts):
+                    continue
+                resolved = _unwrap_single_wrapper(candidate)
+                if _contains_mod_content(resolved):
+                    found.append((resolved, _pick_mod_target_name(candidate, resolved)))
+        except (PermissionError, OSError):
+            pass
 
     return _dedupe_sources(found)
 

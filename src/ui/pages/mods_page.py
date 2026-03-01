@@ -893,7 +893,7 @@ class ModsPage(BasePage):
                 "No: move the existing mod into an open default slot.\n"
                 "Cancel: skip importing this skin."
             )
-            choice = messagebox.askyesnocancel("Slot Conflict", message)
+            choice = messagebox.askyesnocancel("Skin Slot Conflict", message)
             if choice is True:
                 return "replace"
             if choice is False:
@@ -907,11 +907,11 @@ class ModsPage(BasePage):
                 "Yes: disable the existing mod(s) and replace that slot.\n"
                 "No/Cancel: skip importing this skin."
             )
-            choice = messagebox.askyesnocancel("Slot Conflict", message)
+            choice = messagebox.askyesnocancel("Skin Slot Conflict", message)
             return "replace" if choice is True else "skip"
 
         messagebox.showwarning(
-            "No Open Slot",
+            "No Open Skin Slot",
             f"'{conflict.mod_name}' wants {slot_text}, but there are no open default slots left for "
             f"{conflict.fighter}. This skin will be skipped.",
         )
