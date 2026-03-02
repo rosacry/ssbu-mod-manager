@@ -959,7 +959,9 @@ class MusicPage(BasePage):
         if source_name:
             self.safe_slot_source.configure(text=f"Menu slot is built in | stage slot source: {source_name}")
         else:
-            self.safe_slot_source.configure(text="Menu slot is built in | stage slot source: none discovered")
+            self.safe_slot_source.configure(
+                text="Menu slot is built in | stage slot source: no compatible PRC mod found"
+            )
 
         if not self._selected_stage:
             self._update_stage_counts()
@@ -973,9 +975,9 @@ class MusicPage(BasePage):
             ctk.CTkLabel(
                 self.safe_slot_frame,
                 text=(
-                    "No stage-slot database was discovered.\n\n"
-                    "Add or point the app at a mod containing both "
-                    "ui_stage_db.prc and ui_bgm_db.prc to enable safe slot replacement."
+                    "No stage-slot data was found for this stage.\n\n"
+                    "Rescan after adding or enabling a mod that contains both "
+                    "ui_stage_db.prc and ui_bgm_db.prc."
                 ),
                 text_color=theme.TEXT_DISABLED,
                 font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),

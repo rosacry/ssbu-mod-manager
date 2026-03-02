@@ -14,7 +14,7 @@ from src.models.music import (
     StagePlaylist,
     StageTrackSlot,
 )
-from src.constants import VANILLA_STAGES
+from src.constants import LEGACY_STAGE_ID_ALIASES, VANILLA_STAGES
 from src.utils.xmsbt_parser import parse_xmsbt, extract_entries_from_msbt
 from src.utils.file_utils import backup_file
 from src.utils.resource_path import resource_path
@@ -166,6 +166,7 @@ REPLACEMENTS_FILENAME = "music_replacements.json"
 REPLACEMENT_MANIFEST_FILENAME = "music_replacement_manifest.json"
 REPLACEMENT_METADATA_FILENAME = "wifi_safe_replacements.json"
 VANILLA_BGM_REFERENCE_PATH = "assets/vanilla_bgm_ids.txt"
+MUSIC_PARAM_LABELS_PATH = "assets/music_param_labels.csv"
 STREAM_PREFIX = "stream;"
 SOUND_BGM_PARTS = ("sound", "bgm")
 MOD_FOLDER_PREFIXES_TO_SKIP = (".", "_")
@@ -179,6 +180,14 @@ STREAM_SET_PREFIX = "set_"
 NUS3AUDIO_SUFFIX = ".nus3audio"
 STAGE_ID_TOKEN = "ui_stage_id_"
 LEGACY_STAGE_ID_TOKEN = "ui_stage_"
+PRC_NON_PLAYLIST_ROOTS = {
+    "db_root",
+    "stage_bgm",
+    "stream_set",
+    "assigned_info",
+    "stream_property",
+    "fighter_jingle",
+}
 
 
 def beautify_track_name(track_id: str) -> str:
@@ -262,12 +271,23 @@ def infer_bgm_filename(ui_bgm_id: str, stream_set_id: str = "") -> str:
 
 def normalize_stage_id(stage_id: str) -> str:
     cleaned = (stage_id or "").strip()
-    if cleaned.startswith(LEGACY_STAGE_ID_TOKEN):
-        cleaned = cleaned.replace(LEGACY_STAGE_ID_TOKEN, STAGE_ID_TOKEN, 1)
+    if not cleaned:
+        return cleaned
+    if cleaned in VANILLA_STAGES:
+        return cleaned
+    alias = LEGACY_STAGE_ID_ALIASES.get(cleaned)
+    if alias:
+        return alias
+    if cleaned.startswith(STAGE_ID_TOKEN):
+        actual = cleaned.replace(STAGE_ID_TOKEN, LEGACY_STAGE_ID_TOKEN, 1)
+        if actual in VANILLA_STAGES:
+            return actual
     return cleaned
 
 
 class MusicManager:
+    _prc_hash_labels_loaded = False
+
     def __init__(self):
         self.tracks: list[MusicTrack] = []
         self.stage_playlists: dict[str, StagePlaylist] = {}
@@ -319,7 +339,7 @@ class MusicManager:
             if ref_path.exists():
                 with open(ref_path, "r", encoding="utf-8") as handle:
                     ids = {
-                        str(line).strip().lower()
+                        Path(str(line).strip()).stem.lower()
                         for line in handle
                         if str(line).strip()
                     }
@@ -343,18 +363,43 @@ class MusicManager:
         except Exception:
             return default
 
+    @staticmethod
+    def _is_vanilla_bgm_filename(filename: str, vanilla_ids: set[str]) -> bool:
+        if not filename:
+            return False
+        stem = Path(filename).stem.lower()
+        return stem in vanilla_ids or filename.lower() in vanilla_ids
+
+    @classmethod
+    def _ensure_prc_hash_labels_loaded(cls) -> None:
+        if cls._prc_hash_labels_loaded:
+            return
+
+        import pyprc
+
+        labels_path = Path(resource_path(MUSIC_PARAM_LABELS_PATH))
+        if not labels_path.exists():
+            raise FileNotFoundError(f"Missing PRC label asset: {labels_path}")
+
+        pyprc.hash.load_labels(str(labels_path))
+        cls._prc_hash_labels_loaded = True
+
     def _resolve_stage_id(self, raw_stage_id: str) -> str:
         normalized = normalize_stage_id(raw_stage_id)
         if normalized in VANILLA_STAGES:
             return normalized
 
-        normalized_suffix = normalized.replace(STAGE_ID_TOKEN, "", 1)
+        normalized_suffix = normalized.replace(STAGE_ID_TOKEN, "", 1).replace(LEGACY_STAGE_ID_TOKEN, "", 1)
+        normalized_compact = normalized_suffix.replace("_", "")
         for stage_id in VANILLA_STAGES:
             if stage_id == normalized:
                 return stage_id
             if normalized and (normalized in stage_id or stage_id in normalized):
                 return stage_id
-            if stage_id.replace(STAGE_ID_TOKEN, "", 1) == normalized_suffix:
+            stage_suffix = stage_id.replace(STAGE_ID_TOKEN, "", 1).replace(LEGACY_STAGE_ID_TOKEN, "", 1)
+            if stage_suffix == normalized_suffix:
+                return stage_id
+            if stage_suffix.replace("_", "") == normalized_compact:
                 return stage_id
         return normalized
 
@@ -484,7 +529,7 @@ class MusicManager:
 
         if self._scan_should_abort(cancel_event):
             return self.tracks
-        self._discover_stage_slots(mods_root)
+        self._discover_stage_slots(mods_root, additional_scan_dirs=additional_scan_dirs)
         if self._scan_should_abort(cancel_event):
             return self.tracks
         if self.stage_playlists:
@@ -626,14 +671,18 @@ class MusicManager:
             if best_match:
                 track.display_name = best_match
 
-    def _discover_stage_slots(self, mods_root: Path) -> None:
+    def _discover_stage_slots(
+        self,
+        mods_root: Path,
+        additional_scan_dirs: Optional[list[Path]] = None,
+    ) -> None:
         """Build per-stage slot metadata from discovered PRC databases."""
         self.stage_slots = {
             MENU_STAGE_ID: [self._build_menu_stage_slot()],
         }
         self._slot_source_mod = None
 
-        source_mod = self._find_music_source_mod(mods_root)
+        source_mod = self._find_music_source_mod(mods_root, additional_scan_dirs=additional_scan_dirs)
         if source_mod is None:
             return
 
@@ -649,9 +698,14 @@ class MusicManager:
             return
 
         try:
+            self._ensure_prc_hash_labels_loaded()
             vanilla_ids = self._load_vanilla_bgm_ids()
-            bgm_prc = pyprc.param(str(bgm_db_path))
-            bgm_db = list(bgm_prc)[0][1]
+            bgm_roots = list(pyprc.param(str(bgm_db_path)))
+            root_map = {str(key): value for key, value in bgm_roots}
+            bgm_db = root_map.get("db_root")
+            if bgm_db is None:
+                raise KeyError("db_root")
+
             bgm_lookup: dict[str, dict[str, str | int | bool]] = {}
             for entry in bgm_db:
                 ui_bgm_id = self._safe_field_str(entry, "ui_bgm_id")
@@ -666,12 +720,18 @@ class MusicManager:
                     "display_name": display_name,
                     "save_no": self._safe_field_int(entry, "save_no", -1),
                     "menu_value": self._safe_field_int(entry, "menu_value", 0),
-                    "is_likely_vanilla": filename.lower() in vanilla_ids if filename else False,
+                    "is_likely_vanilla": self._is_vanilla_bgm_filename(filename, vanilla_ids),
                 }
 
             stage_prc = pyprc.param(str(stage_db_path))
             stage_db = list(stage_prc)[0][1]
             discovered: dict[str, list[StageTrackSlot]] = dict(self.stage_slots)
+            playlist_roots = {
+                str(key): value
+                for key, value in bgm_roots
+                if str(key) not in PRC_NON_PLAYLIST_ROOTS
+            }
+
             for stage_entry in stage_db:
                 raw_stage_id = self._safe_field_str(stage_entry, "ui_stage_id")
                 if not raw_stage_id:
@@ -679,15 +739,21 @@ class MusicManager:
                 stage_id = self._resolve_stage_id(raw_stage_id)
                 if stage_id not in VANILLA_STAGES:
                     continue
-                try:
-                    bgm_set_list = stage_entry["bgm_set_list"]
-                except Exception:
+                playlist_id = self._safe_field_str(stage_entry, "bgm_set_id")
+                if not playlist_id:
+                    continue
+                setting_no = max(0, self._safe_field_int(stage_entry, "bgm_setting_no", 0))
+                playlist_entries = playlist_roots.get(playlist_id)
+                if playlist_entries is None:
                     continue
 
                 slots: list[StageTrackSlot] = []
-                for order_number, bgm_ref in enumerate(list(bgm_set_list)):
+                for bgm_ref in list(playlist_entries):
                     ui_bgm_id = self._safe_field_str(bgm_ref, "ui_bgm_id")
                     if not ui_bgm_id:
+                        continue
+                    order_number = self._safe_field_int(bgm_ref, f"order{setting_no}", -1)
+                    if order_number < 0:
                         continue
                     meta = bgm_lookup.get(ui_bgm_id, {})
                     filename = str(meta.get("filename", "") or infer_bgm_filename(ui_bgm_id))
@@ -700,13 +766,18 @@ class MusicManager:
                             ui_bgm_id=ui_bgm_id,
                             filename=filename,
                             display_name=str(meta.get("display_name", "") or beautify_track_name(Path(filename or ui_bgm_id).stem)),
-                            incidence=self._safe_field_int(bgm_ref, "incidence", DEFAULT_BGM_INCIDENCE),
+                            incidence=self._safe_field_int(
+                                bgm_ref,
+                                f"incidence{setting_no}",
+                                DEFAULT_BGM_INCIDENCE,
+                            ),
                             order_number=order_number,
                             is_likely_vanilla=bool(meta.get("is_likely_vanilla", False)),
                         )
                     )
 
                 if slots:
+                    slots.sort(key=lambda slot: (slot.order_number, slot.display_name.lower()))
                     discovered[stage_id] = slots
 
             menu_slots = discovered.get(MENU_STAGE_ID, [])
@@ -814,7 +885,8 @@ class MusicManager:
         return CONFIG_DIR / REPLACEMENTS_FILENAME
 
     def get_stage_slots(self, stage_id: str) -> list[StageTrackSlot]:
-        return list(self.stage_slots.get(stage_id, []))
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        return list(self.stage_slots.get(normalized_stage_id, []))
 
     def get_stage_slot_source_name(self) -> str:
         if self._slot_source_mod is None:
@@ -822,7 +894,8 @@ class MusicManager:
         return self._slot_source_mod.name
 
     def get_stage_slot_replacement(self, stage_id: str, slot_key: str) -> Optional[MusicReplacementAssignment]:
-        return self.replacement_assignments.get(stage_id, {}).get(slot_key)
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        return self.replacement_assignments.get(normalized_stage_id, {}).get(slot_key)
 
     def get_stage_slot_replacement_track(self, stage_id: str, slot_key: str) -> Optional[MusicTrack]:
         assignment = self.get_stage_slot_replacement(stage_id, slot_key)
@@ -839,26 +912,27 @@ class MusicManager:
         slot_key: str,
         track: Optional[MusicTrack],
     ) -> None:
-        if not stage_id or not slot_key:
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        if not normalized_stage_id or not slot_key:
             return
         if track is None:
-            stage_assignments = self.replacement_assignments.get(stage_id)
+            stage_assignments = self.replacement_assignments.get(normalized_stage_id)
             if stage_assignments is None:
                 return
             stage_assignments.pop(slot_key, None)
             if not stage_assignments:
-                self.replacement_assignments.pop(stage_id, None)
+                self.replacement_assignments.pop(normalized_stage_id, None)
             return
 
-        stage_assignments = self.replacement_assignments.setdefault(stage_id, {})
+        stage_assignments = self.replacement_assignments.setdefault(normalized_stage_id, {})
         stage_assignments[slot_key] = MusicReplacementAssignment(
-            stage_id=stage_id,
+            stage_id=normalized_stage_id,
             slot_key=slot_key,
             replacement_track_id=track.track_id,
         )
 
     def clear_stage_replacements(self, stage_id: str) -> None:
-        self.replacement_assignments.pop(stage_id, None)
+        self.replacement_assignments.pop(self._resolve_stage_id(stage_id), None)
 
     def clear_all_replacements(self) -> None:
         self.replacement_assignments.clear()
@@ -921,27 +995,30 @@ class MusicManager:
 
     def get_tracks_for_stage(self, stage_id: str) -> list[MusicTrack]:
         """Get tracks assigned to a specific stage."""
-        if stage_id in self.stage_playlists:
-            return self.stage_playlists[stage_id].tracks
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        if normalized_stage_id in self.stage_playlists:
+            return self.stage_playlists[normalized_stage_id].tracks
         return []
 
     def assign_track_to_stage(self, track: MusicTrack, stage_id: str) -> None:
         """Assign a music track to a stage."""
-        if stage_id not in self.stage_playlists:
-            stage_name = VANILLA_STAGES.get(stage_id, stage_id)
-            self.stage_playlists[stage_id] = StagePlaylist(
-                stage_id=stage_id,
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        if normalized_stage_id not in self.stage_playlists:
+            stage_name = VANILLA_STAGES.get(normalized_stage_id, normalized_stage_id)
+            self.stage_playlists[normalized_stage_id] = StagePlaylist(
+                stage_id=normalized_stage_id,
                 stage_name=stage_name,
             )
 
-        playlist = self.stage_playlists[stage_id]
+        playlist = self.stage_playlists[normalized_stage_id]
         if not any(t.track_id == track.track_id for t in playlist.tracks):
             playlist.tracks.append(track)
 
     def remove_track_from_stage(self, track_id: str, stage_id: str) -> None:
         """Remove a track from a stage's playlist."""
-        if stage_id in self.stage_playlists:
-            playlist = self.stage_playlists[stage_id]
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        if normalized_stage_id in self.stage_playlists:
+            playlist = self.stage_playlists[normalized_stage_id]
             playlist.tracks = [t for t in playlist.tracks if t.track_id != track_id]
 
     def assign_track_to_all_stages(self, track: MusicTrack) -> None:
@@ -956,8 +1033,9 @@ class MusicManager:
 
     def clear_stage(self, stage_id: str) -> None:
         """Clear all tracks from a stage."""
-        if stage_id in self.stage_playlists:
-            self.stage_playlists[stage_id].tracks = []
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        if normalized_stage_id in self.stage_playlists:
+            self.stage_playlists[normalized_stage_id].tracks = []
 
     def set_exclude_vanilla(self, exclude: bool) -> None:
         """Toggle exclusion of vanilla/core music."""
@@ -965,9 +1043,10 @@ class MusicManager:
 
     def move_track_up(self, stage_id: str, track_id: str) -> None:
         """Move a track up in a stage's playlist."""
-        if stage_id not in self.stage_playlists:
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        if normalized_stage_id not in self.stage_playlists:
             return
-        tracks = self.stage_playlists[stage_id].tracks
+        tracks = self.stage_playlists[normalized_stage_id].tracks
         for i, t in enumerate(tracks):
             if t.track_id == track_id and i > 0:
                 tracks[i], tracks[i-1] = tracks[i-1], tracks[i]
@@ -975,9 +1054,10 @@ class MusicManager:
 
     def move_track_down(self, stage_id: str, track_id: str) -> None:
         """Move a track down in a stage's playlist."""
-        if stage_id not in self.stage_playlists:
+        normalized_stage_id = self._resolve_stage_id(stage_id)
+        if normalized_stage_id not in self.stage_playlists:
             return
-        tracks = self.stage_playlists[stage_id].tracks
+        tracks = self.stage_playlists[normalized_stage_id].tracks
         for i, t in enumerate(tracks):
             if t.track_id == track_id and i < len(tracks) - 1:
                 tracks[i], tracks[i+1] = tracks[i+1], tracks[i]
@@ -1173,17 +1253,28 @@ class MusicManager:
                     f"Menu music set to: {track.display_name or track.track_id} "
                     f"(from {track.source_mod})")
 
-    def _find_music_source_mod(self, mods_root: Path) -> Optional[Path]:
-        """Find a mod folder that contains ui_bgm_db.prc (the BGM database)."""
-        for mod_folder in sorted(mods_root.iterdir()):
-            if not mod_folder.is_dir():
+    def _find_music_source_mod(
+        self,
+        mods_root: Path,
+        additional_scan_dirs: Optional[list[Path]] = None,
+    ) -> Optional[Path]:
+        """Find a mod folder that contains both `ui_bgm_db.prc` and `ui_stage_db.prc`."""
+        roots = [mods_root, *(additional_scan_dirs or [])]
+        seen_roots: set[Path] = set()
+        for root in roots:
+            root = Path(root)
+            if root in seen_roots or not root.exists() or not root.is_dir():
                 continue
-            if self._is_skipped_mod_folder(mod_folder):
-                continue
-            bgm_db = mod_folder / "ui" / "param" / "database" / "ui_bgm_db.prc"
-            stage_db = mod_folder / "ui" / "param" / "database" / "ui_stage_db.prc"
-            if bgm_db.exists() and stage_db.exists():
-                return mod_folder
+            seen_roots.add(root)
+            for mod_folder in sorted(root.iterdir()):
+                if not mod_folder.is_dir():
+                    continue
+                if self._is_skipped_mod_folder(mod_folder):
+                    continue
+                bgm_db = mod_folder / "ui" / "param" / "database" / "ui_bgm_db.prc"
+                stage_db = mod_folder / "ui" / "param" / "database" / "ui_stage_db.prc"
+                if bgm_db.exists() and stage_db.exists():
+                    return mod_folder
         return None
 
     def _apply_prc_assignments(self, source_mod: Path, mods_root: Path) -> dict:
@@ -1404,4 +1495,3 @@ class MusicManager:
             "slot_source_mod": self.get_stage_slot_source_name(),
             "slot_catalog_stages": len(self.stage_slots),
         }
-

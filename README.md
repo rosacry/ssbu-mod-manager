@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.1.0**.
+Current release version: **1.2.0**.
 
 One place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -9,33 +9,17 @@ One place to manage mods, Skyline plugins, music assignments, CSS edits, conflic
 
 Grab the latest zip from the [Releases](https://github.com/rosacry/ssbu-mod-manager/releases) page, extract it, and run `SSBUModManager.exe`.
 
-## What's New in 1.1.0
+## What's New in 1.2.0
 
-### Multi-Monitor DPI Scaling
-- Seamless Per-Monitor V2 DPI awareness — no more glitches when dragging between 1440p and 4K monitors.
-- Eliminated the alpha-flash/flicker during DPI transitions.
-- Proactive DPI change detection during window drag for smoother scaling.
+### Music Stage-Slot Fixes
+- The Music page now resolves stage slots from the real SSBU playlist structure in `ui_stage_db.prc` and `ui_bgm_db.prc` instead of the older broken `bgm_set_list` assumption.
+- Stage-slot discovery now checks scanned active mods and `disabled_mods`, so safe-slot replacement works even when the source PRC mod is disabled.
+- The stage catalog now uses the real in-game stage IDs and names, which fixes missing or mislabeled stages in the safe-slot workflow.
+- Older saved music assignments and safe replacements using the app's previous placeholder stage IDs are normalized automatically.
 
-### Disabled-Mods Track Browsing
-- The Music page now scans the `disabled_mods` folder automatically so you can browse, favorite, and assign tracks from disabled mods without re-enabling them.
-- Disabled tracks are clearly labeled "(disabled)" in the track list.
-
-### Music Playback Fixes
-- Fixed a bug where saved music assignments were silently dropped if the source mod was in `disabled_mods`, causing all stage/menu music to stop.
-- Added warning logging when saved assignments reference missing tracks.
-
-### Thread Safety & Stability
-- Audio player is now fully thread-safe — all public methods guarded by a reentrant lock, eliminating race conditions during concurrent play/stop/seek from background threads.
-- Configuration manager is now thread-safe with a lock on load/save/update operations.
-- Mixer initialization protected against double-init from concurrent threads.
-- All music preference and assignment saves (library, replacements, assignments) now use atomic writes (temp-file + rename) to prevent corruption on crash or power loss.
-
-### UI Reliability
-- Fixed spinner animation not being cancelled on stale scan generations, preventing ghost spinners.
-- Spinner `after` IDs are now tracked and properly cancelled on page hide.
-- Playback polling and seek-bar timers are now cancelled when navigating away from the Music page.
-- `ffplay` stderr is now captured and logged for debugging instead of being silently discarded.
-- Config parse errors are now logged with a warning instead of silently resetting to defaults.
+### Safe Replacement UX
+- Safe-slot rows keep the `default -> replacement` mapping visible, including menu music.
+- Empty-state messaging now explains that the app is waiting on compatible PRC stage data instead of implying the entire feature is unavailable.
 
 ## Features
 
@@ -62,7 +46,7 @@ Grab the latest zip from the [Releases](https://github.com/rosacry/ssbu-mod-mana
 - Edit `ui_chara_db.prc` and `msg_name.msbt` to customize the Character Select Screen.
 
 ### Music
-- PRC-backed stage slot discovery with a safe Main Menu replacement slot.
+- PRC-backed stage slot discovery using the real SSBU stage playlist structure, with a safe Main Menu replacement slot.
 - Wi-Fi-safer existing-slot replacement overlays.
 - Standalone library player with queue, favorites, and preview playback.
 - `.nus3audio` Opus stream playback via `ffplay` when available.
@@ -112,7 +96,7 @@ Requires Python 3.11+.
 python build.py
 ```
 
-Output: `dist/SSBUModManager-1.1.0-windows.zip`
+Output: `dist/SSBUModManager-1.2.0-windows.zip`
 
 ## First-Run Setup
 
@@ -143,6 +127,6 @@ build.py                 # PyInstaller build script
 ## Troubleshooting
 
 - **No mods/plugins found**: Re-check SDMC path in Settings.
-- **Music page shows no safe slots**: Point the app at a mod containing `ui_stage_db.prc` and `ui_bgm_db.prc`.
+- **Music page shows no safe slots**: Rescan after adding or enabling a mod containing both `ui_stage_db.prc` and `ui_bgm_db.prc`. The app now also checks `disabled_mods`.
 - **Audio preview fails**: Ensure `ffmpeg` is installed and in `PATH`.
 - **Startup diagnostics**: Set `SSBUMM_HEARTBEAT=1` before launch to enable heartbeat logging in `crash.log`.

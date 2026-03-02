@@ -2,7 +2,13 @@ import json
 from pathlib import Path
 
 import src.core.music_manager as music_manager_module
-from src.core.music_manager import MENU_BGM_FILENAME, MENU_STAGE_ID, MusicManager, infer_bgm_filename
+from src.core.music_manager import (
+    MENU_BGM_FILENAME,
+    MENU_STAGE_ID,
+    MusicManager,
+    infer_bgm_filename,
+    normalize_stage_id,
+)
 from src.models.music import MusicTrack
 
 
@@ -95,3 +101,27 @@ def test_save_assignments_can_write_menu_safe_replacement(tmp_path, monkeypatch)
     assert result["replacement_files"] == 1
     assert menu_dest.exists()
     assert menu_dest.read_bytes() == b"menu"
+
+
+def test_normalize_stage_id_maps_legacy_ids_to_actual_ids() -> None:
+    assert normalize_stage_id("ui_stage_id_battlefield") == "ui_stage_battle_field"
+    assert normalize_stage_id("ui_stage_id_stranger_dungeon") == "ui_stage_trail_castle"
+    assert normalize_stage_id(MENU_STAGE_ID) == MENU_STAGE_ID
+
+
+def test_stage_playlist_methods_normalize_legacy_stage_ids(tmp_path, monkeypatch) -> None:
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(music_manager_module, "CONFIG_DIR", config_dir)
+
+    mods_root = tmp_path / "mods"
+    track = _write_track(mods_root / "PackA" / "sound" / "bgm" / "bgm_alpha.nus3audio", b"alpha")
+
+    manager = MusicManager()
+    manager.tracks = [track]
+    manager.assign_track_to_stage(track, "ui_stage_id_battlefield")
+
+    actual_stage_tracks = manager.get_tracks_for_stage("ui_stage_battle_field")
+    legacy_stage_tracks = manager.get_tracks_for_stage("ui_stage_id_battlefield")
+
+    assert [item.track_id for item in actual_stage_tracks] == ["bgm_alpha"]
+    assert [item.track_id for item in legacy_stage_tracks] == ["bgm_alpha"]
