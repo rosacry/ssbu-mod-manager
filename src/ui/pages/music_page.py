@@ -133,9 +133,12 @@ class MusicPage(BasePage):
         self.stage_listbox = tk.Listbox(stage_list_frame, bg=theme.BG_LISTBOX, fg=theme.TEXT_SECONDARY,
                                         selectbackground=theme.PRIMARY,
                                         selectforeground="white",
-                                        font=("Segoe UI", theme.FONT_CAPTION),
+                                        font=("Segoe UI", theme.FONT_BODY),
                                         relief="flat", bd=0, highlightthickness=0,
                                         activestyle="none", cursor="arrow")
+        # Store base font info so the app can rescale on zoom changes.
+        self.stage_listbox._ssbumm_base_font_size = theme.FONT_BODY
+        self.stage_listbox._ssbumm_base_font_family = "Segoe UI"
         stage_scroll = ctk.CTkScrollbar(stage_list_frame, command=self.stage_listbox.yview)
         self.stage_listbox.configure(yscrollcommand=stage_scroll.set)
         self.stage_listbox.pack(side="left", fill="both", expand=True)
@@ -300,11 +303,14 @@ class MusicPage(BasePage):
         self.track_listbox = tk.Listbox(track_frame, bg=theme.BG_LISTBOX, fg=theme.TEXT_SECONDARY,
                                          selectbackground=theme.PRIMARY,
                                          selectforeground="white",
-                                         font=("Segoe UI", theme.FONT_CAPTION),
+                                         font=("Segoe UI", theme.FONT_BODY),
                                          relief="flat", bd=0, highlightthickness=0,
                                          activestyle="none", cursor="arrow",
                                          selectmode=tk.EXTENDED,
                                          exportselection=False)
+        # Store base font info so the app can rescale on zoom changes.
+        self.track_listbox._ssbumm_base_font_size = theme.FONT_BODY
+        self.track_listbox._ssbumm_base_font_family = "Segoe UI"
         track_scroll = ctk.CTkScrollbar(track_frame, command=self.track_listbox.yview)
         self.track_listbox.configure(yscrollcommand=track_scroll.set)
         self.track_listbox.pack(side="left", fill="both", expand=True)

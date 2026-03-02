@@ -520,6 +520,9 @@ class ModManagerApp(ctk.CTk):
         the window feel frozen after a DPI transition.  We shorten it to
         200 ms which is enough to avoid the Tk snap while keeping the UI
         responsive.
+
+        Also rescales raw tk.Listbox fonts which are outside CTk's scaling
+        system.
         """
         from customtkinter.windows.widgets.scaling.scaling_base_class import CTkScalingBaseClass
         import tkinter
@@ -538,6 +541,37 @@ class ModManagerApp(ctk.CTk):
 
         # Shorter delay before restoring real min/max constraints.
         self.after(200, self._set_scaled_min_max)
+
+        # Rescale raw Tk listbox fonts that don't participate in CTk scaling.
+        try:
+            self._rescale_tk_listboxes(new_widget_scaling)
+        except Exception:
+            pass
+
+    def _rescale_tk_listboxes(self, widget_scaling: float):
+        """Walk the widget tree and rescale fonts on raw tk.Listbox widgets.
+
+        CustomTkinter's scaling system only affects CTk widgets.  Raw Tk
+        widgets (like tk.Listbox) keep their original font sizes.  This
+        method finds all tk.Listbox widgets in the tree and scales their
+        font based on the stored base size and the new widget_scaling factor.
+        """
+        import tkinter
+
+        def _walk(widget):
+            try:
+                if isinstance(widget, tkinter.Listbox):
+                    base = getattr(widget, "_ssbumm_base_font_size", None)
+                    family = getattr(widget, "_ssbumm_base_font_family", "Segoe UI")
+                    if base is not None:
+                        scaled_size = max(8, int(round(base * widget_scaling)))
+                        widget.configure(font=(family, scaled_size))
+                for child in widget.winfo_children():
+                    _walk(child)
+            except Exception:
+                pass
+
+        _walk(self)
 
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
@@ -1350,32 +1384,6 @@ class ModManagerApp(ctk.CTk):
                 except Exception:
                     pass
             self._resize_after_id = self.after(self._RESIZE_SETTLE_MS, self._finalize_resize)
-            # DPI change detection is handled solely by the patched
-            # ScalingTracker polling loop (50 ms interval) which performs a
-            # proper hide→rescale→show transition.  Firing scaling callbacks
-            # ALSO from Configure events causes duplicate reflows and visual
-            # fighting, so we just track the value here for informational use.
-            self._track_monitor_dpi()
-        except Exception:
-            pass
-
-    def _track_monitor_dpi(self):
-        """Update the DPI tracking variable without firing scaling callbacks.
-
-        The actual DPI transition is handled by the patched
-        ``ScalingTracker.check_dpi_scaling`` polling loop which does a
-        hide→rescale→settle→show sequence.  This method only keeps our
-        ``_last_monitor_dpi`` in sync for logging / diagnostic purposes.
-        """
-        try:
-            from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
-            current_dpi = ScalingTracker.get_window_dpi_scaling(self)
-            if self._last_monitor_dpi is None:
-                self._last_monitor_dpi = current_dpi
-                return
-            if abs(current_dpi - self._last_monitor_dpi) > 0.01:
-                self._last_monitor_dpi = current_dpi
-                logger.debug("App", f"Monitor DPI change detected: {current_dpi:.2f}")
         except Exception:
             pass
 
@@ -1510,36 +1518,22 @@ class ModManagerApp(ctk.CTk):
         return True
 
     def _patch_ctk_dpi_transition(self):
-        """Replace CTk's harsh alpha-flash DPI transition with a smooth one.
+        """Disable CTk's alpha-flash during DPI transitions.
 
-        CustomTkinter's ``ScalingTracker.check_dpi_scaling`` sets the window
-        to alpha=0.15 for ~1500 ms when the user drags between monitors with
-        different DPI.  This looks like the window disappears and reappears.
-
-        This patch:
-        * Skips ALL alpha manipulation — any alpha change during a
-          cross-monitor drag causes Windows to drop the titlebar grab,
-          making it impossible to finish the move.  The brief widget
-          reflow (~50-100 ms) is far less jarring than losing the drag.
-        * Blocks dimension-event processing during the callback cascade
-          so intermediate Configure events don't corrupt geometry.
-        * Reduces the polling interval from 100 ms → 50 ms for faster
-          detection of monitor changes.
-        * Reduces the post-scaling pause from 1500 ms → 300 ms so the
-          UI tracks the new monitor promptly.
+        With System DPI awareness the OS handles cross-monitor scaling
+        via bitmap operations, so CTk's ScalingTracker should never
+        detect a DPI change.  This patch is a safety net: if a DPI
+        change IS somehow detected, it skips the alpha manipulation
+        that causes drag interruption and visual flashes.
         """
         try:
             from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
         except ImportError:
             return
 
-        # Reduce polling latency so we detect DPI changes sooner.
-        ScalingTracker.update_loop_interval = 50
-        ScalingTracker.loop_pause_after_new_scaling = 300
-
         @classmethod
-        def _smooth_check_dpi_scaling(cls):  # noqa: N805
-            """DPI change detector — no alpha changes, no drag interruption."""
+        def _safe_check_dpi_scaling(cls):  # noqa: N805
+            """DPI poll with no alpha changes (safety net)."""
             new_scaling_detected = False
 
             for window in list(cls.window_widgets_dict):
@@ -1549,38 +1543,31 @@ class ModManagerApp(ctk.CTk):
                 except Exception:
                     continue
 
-                current_dpi_scaling_value = cls.get_window_dpi_scaling(window)
-                if current_dpi_scaling_value != cls.window_dpi_scaling_dict.get(window):
-                    cls.window_dpi_scaling_dict[window] = current_dpi_scaling_value
-
-                    # NO alpha changes — setting alpha mid-drag causes
-                    # Windows to release the titlebar capture, making it
-                    # impossible for the user to finish moving the window.
-                    # The brief visual reflow is acceptable.
+                current = cls.get_window_dpi_scaling(window)
+                if current != cls.window_dpi_scaling_dict.get(window):
+                    cls.window_dpi_scaling_dict[window] = current
                     try:
                         window.block_update_dimensions_event()
                         cls.update_scaling_callbacks_for_window(window)
                         window.unblock_update_dimensions_event()
                     except Exception:
                         pass
-
                     new_scaling_detected = True
 
-            # Schedule the next poll on an existing window.
             for app in cls.window_widgets_dict.keys():
                 try:
-                    if new_scaling_detected:
-                        app.after(cls.loop_pause_after_new_scaling, cls.check_dpi_scaling)
-                    else:
-                        app.after(cls.update_loop_interval, cls.check_dpi_scaling)
+                    delay = (cls.loop_pause_after_new_scaling
+                             if new_scaling_detected
+                             else cls.update_loop_interval)
+                    app.after(delay, cls.check_dpi_scaling)
                     return
                 except Exception:
                     continue
 
             cls.update_loop_running = False
 
-        ScalingTracker.check_dpi_scaling = _smooth_check_dpi_scaling
-        logger.info("App", "Patched CTk ScalingTracker for smooth multi-monitor DPI transitions")
+        ScalingTracker.check_dpi_scaling = _safe_check_dpi_scaling
+        logger.info("App", "Patched CTk ScalingTracker (System DPI mode, no alpha flash)")
 
     def _patch_ctk_scrollbar_drag_behavior(self):
         """Make CTk scrollbar thumb dragging preserve click offset.

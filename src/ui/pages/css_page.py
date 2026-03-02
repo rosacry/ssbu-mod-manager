@@ -93,9 +93,12 @@ class CSSPage(BasePage):
         self.listbox = tk.Listbox(listbox_frame, bg=theme.BG_LISTBOX, fg=theme.TEXT_SECONDARY,
                                   selectbackground=theme.PRIMARY,
                                   selectforeground="white",
-                                  font=("Segoe UI", theme.FONT_CAPTION),
+                                  font=("Segoe UI", theme.FONT_BODY),
                                   relief="flat", bd=0, highlightthickness=0,
                                   activestyle="none", exportselection=False)
+        # Store base font info so the app can rescale on zoom changes.
+        self.listbox._ssbumm_base_font_size = theme.FONT_BODY
+        self.listbox._ssbumm_base_font_family = "Segoe UI"
         listbox_scroll = ctk.CTkScrollbar(listbox_frame, command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=listbox_scroll.set)
         self.listbox.pack(side="left", fill="both", expand=True)

@@ -9,24 +9,28 @@ import sys
 import threading
 import traceback
 
-# ── Per-Monitor V1 DPI awareness ──────────────────────────────────────
-# Must be set BEFORE any tkinter/CustomTkinter import so the process
-# tells Windows it will manage DPI itself.
+# ── System DPI Awareness ───────────────────────────────────────────────
+# Must be set BEFORE any tkinter/CustomTkinter import.
 #
-# Per-Monitor **V2** (SetProcessDpiAwarenessContext(-4)) is intentionally
-# NOT used here.  Tk has a known compatibility issue where V2's
-# automatic WM_DPICHANGED handling fights with CustomTkinter's own
-# scaling callback system, causing the window to grow uncontrollably
-# when dragged between monitors of different DPI.  The CTk author
-# documented this exact problem and deliberately chose V1.
+# We use **System** DPI awareness (level 1) — NOT Per-Monitor (level 2).
+# With Per-Monitor awareness, CustomTkinter's ScalingTracker detects DPI
+# changes when the window crosses monitors and rescales every widget
+# individually through callbacks.  This causes visible reflow, geometry
+# fighting, and can even drop the titlebar drag.  The CTk author noted
+# the same issues with Per-Monitor V2.
 #
-# Per-Monitor V1 lets CTk handle all client-area scaling through its
-# ScalingTracker polling loop while Windows bitmap-scales the non-client
-# area (titlebar).  This avoids the double-scaling conflict.
+# System DPI awareness means the app renders at the primary monitor's
+# DPI and Windows bitmap-scales it on other monitors.  The result:
+#   • Zero visual glitches when dragging between monitors.
+#   • Text may be very slightly softer on a non-primary monitor, but
+#     this is imperceptible in practice and matches how most desktop
+#     apps (VS Code, Discord, Spotify, etc.) behave.
+#   • The app's own zoom (Ctrl+/-) still works for user-controlled
+#     scaling.
 if os.name == "nt":
     try:
         import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-Monitor V1
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # System DPI Aware
     except Exception:
         pass
 
