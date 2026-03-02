@@ -24,6 +24,7 @@ class MusicPage(BasePage):
     _PLAYBACK_POLL_MS = 500
     _SEEK_UPDATE_MS = 500
     _PLAY_CLICK_DELAY_MS = 50
+    _VOLUME_DEBOUNCE_MS = 300
     _ZERO_DELAY_MS = 0
     _MAX_PERCENT = 100.0
     _MIN_VOLUME = 0.0
@@ -59,6 +60,7 @@ class MusicPage(BasePage):
         self._scan_cancel_event = None
         self._auto_scan_delay_ms = self._AUTO_SCAN_DELAY_MS
         self._pending_volume_value = self._DEFAULT_VOLUME
+        self._volume_debounce_after_id = None
         self._track_data_revision = 0
         self._last_track_render_signature = None
         self._spotify_dialog = None
@@ -67,6 +69,8 @@ class MusicPage(BasePage):
         self._queue_name = ""
         self._manual_stop_requested = False
         self._suppress_track_selection_autoplay = False
+        self._play_generation = 0
+        self._track_click_after_id = None
         self._build_ui()
 
     def _build_ui(self):
@@ -256,7 +260,7 @@ class MusicPage(BasePage):
                       ).pack(side="right", padx=5)
 
         right = ctk.CTkFrame(content, width=theme.WIDTH_PANEL_TRACKS, fg_color=theme.BG_CARD, corner_radius=10)
-        content.add(right, minsize=theme.WIDTH_PANEL_TRACKS_MIN, stretch="never", width=theme.WIDTH_PANEL_TRACKS)
+        content.add(right, minsize=theme.WIDTH_PANEL_TRACKS_MIN, stretch="always", width=theme.WIDTH_PANEL_TRACKS)
 
         avail_header = ctk.CTkFrame(right, fg_color="transparent")
         avail_header.pack(fill="x", padx=10, pady=(10, 5))
@@ -482,7 +486,8 @@ class MusicPage(BasePage):
                 logger.info("Music", "Cancelling background track scan while page is hidden")
             except Exception:
                 pass
-        for attr in ("_track_filter_after_id", "_stage_filter_after_id"):
+        for attr in ("_track_filter_after_id", "_stage_filter_after_id",
+                    "_volume_debounce_after_id", "_track_click_after_id"):
             aid = getattr(self, attr, None)
             if aid:
                 try:
@@ -2076,8 +2081,6 @@ class MusicPage(BasePage):
         self._cancel_playback_timers()
 
         # Cancel any in-flight play request by bumping the generation counter
-        if not hasattr(self, '_play_generation'):
-            self._play_generation = 0
         self._play_generation += 1
         current_gen = self._play_generation
 
@@ -2162,6 +2165,20 @@ class MusicPage(BasePage):
         if abs(new_volume - self._pending_volume_value) < self._VOLUME_EPSILON:
             return
         self._pending_volume_value = new_volume
+        # Debounce: only apply volume after the slider stops moving for a short
+        # period.  ffplay has no runtime-volume IPC so every set_volume() call
+        # that changes the integer step kills and re-launches the process.  By
+        # deferring we avoid dozens of restarts per drag.
+        if self._volume_debounce_after_id is not None:
+            self.after_cancel(self._volume_debounce_after_id)
+        self._volume_debounce_after_id = self.after(
+            self._VOLUME_DEBOUNCE_MS,
+            self._apply_debounced_volume,
+        )
+
+    def _apply_debounced_volume(self):
+        """Apply the latest pending volume value to the audio backend."""
+        self._volume_debounce_after_id = None
         audio_player.set_volume(self._pending_volume_value)
 
     def _on_seek_drag(self, value):

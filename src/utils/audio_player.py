@@ -48,7 +48,6 @@ def _ensure_mixer():
         # Double-check after acquiring lock
         if _pygame_initialized:
             return
-        _pygame_initialized = True
     if pygame is None:
         try:
             import pygame as _pg
@@ -92,6 +91,7 @@ def _ensure_mixer():
             _pygame_available = True
             _pygame_error = ""
             _pygame_backend = f"driver={driver or 'default'} init={init_tuple} buffer={buffer}"
+            _pygame_initialized = True
             try:
                 from src.utils.logger import logger
                 logger.info("AudioPlayer", f"Pygame mixer initialized ({_pygame_backend})")
@@ -102,6 +102,7 @@ def _ensure_mixer():
             init_errors.append(f"{driver or 'default'}@{freq}/{buffer}: {e}")
 
     _pygame_error = "; ".join(init_errors)[:500]
+    _pygame_initialized = True  # Mark as attempted so we don't retry endlessly
     try:
         from src.utils.logger import logger
         logger.error("AudioPlayer", f"Failed to initialize mixer: {_pygame_error}")
@@ -574,13 +575,14 @@ class AudioPlayer:
         global _pygame_initialized, _pygame_available
         with self._lock:
             self._stop_locked()
-        if _pygame_initialized and _pygame_available:
-            try:
-                pygame.mixer.quit()
-            except Exception:
-                pass
-        _pygame_initialized = False
-        _pygame_available = False
+        with _mixer_lock:
+            if _pygame_initialized and _pygame_available:
+                try:
+                    pygame.mixer.quit()
+                except Exception:
+                    pass
+            _pygame_initialized = False
+            _pygame_available = False
         # Clean up cached files
         try:
             from src.utils.nus3audio import cleanup_cache
