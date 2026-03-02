@@ -4,9 +4,24 @@ from src.utils.audio_player import AudioPlayer
 from src.utils import nus3audio
 
 
-def test_resolve_cached_preview_prefers_opus_stream_when_requested(tmp_path: Path) -> None:
+def test_resolve_cached_preview_converts_ogg_to_wav_even_when_streaming(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OGG Opus files from the Python builder can have malformed pages that
+    ffplay rejects.  _resolve_cached_preview must convert to WAV regardless
+    of the prefer_stream flag."""
     ogg_path = tmp_path / "song.ogg"
+    wav_path = tmp_path / "song.wav"
     ogg_path.write_bytes(b"OggS" + b"\x00" * 24 + b"OpusHead" + b"\x00" * 16)
+
+    calls: list[Path] = []
+
+    def fake_convert(path: Path) -> Path:
+        calls.append(path)
+        wav_path.write_bytes(b"RIFF" + b"\x00" * 2000)
+        return wav_path
+
+    monkeypatch.setattr(nus3audio, "_convert_ogg_opus_to_wav", fake_convert)
 
     ok, _message, preview_path = nus3audio._resolve_cached_preview(
         tmp_path,
@@ -16,7 +31,8 @@ def test_resolve_cached_preview_prefers_opus_stream_when_requested(tmp_path: Pat
     )
 
     assert ok is True
-    assert preview_path == ogg_path
+    assert preview_path == wav_path
+    assert calls == [ogg_path]
 
 
 def test_resolve_cached_preview_converts_opus_stream_for_wav_playback(

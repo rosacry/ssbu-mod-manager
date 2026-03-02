@@ -2018,12 +2018,20 @@ class MusicPage(BasePage):
     # Audio playback methods
     def _on_track_click(self, event):
         """When user clicks a track while music is already playing,
-        auto-play the newly selected track."""
+        auto-play the newly selected track.  Debounced to prevent duplicate
+        play calls when <<ListboxSelect>> fires more than once per click."""
         if self._suppress_track_selection_autoplay:
             return
         if self._is_playing and len(self._get_selected_tracks()) == 1:
-            # Short delay so the listbox selection updates first
-            self.after(self._PLAY_CLICK_DELAY_MS, self._play_selected)
+            aid = getattr(self, "_track_click_after_id", None)
+            if aid:
+                try:
+                    self.after_cancel(aid)
+                except Exception:
+                    pass
+            self._track_click_after_id = self.after(
+                self._PLAY_CLICK_DELAY_MS, self._play_selected
+            )
 
     def _toggle_playback(self):
         """Toggle between play and stop."""

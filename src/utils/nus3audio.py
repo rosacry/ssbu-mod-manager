@@ -2041,7 +2041,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r11"
+_DECODER_CACHE_REV = "r12"
 
 
 def _get_cache_dir() -> Path:
@@ -2087,9 +2087,13 @@ def _cache_selected_opus_artifacts(
 def _resolve_cached_preview(
     cache_dir: Path, cache_key: str, display_name: str, prefer_stream: bool
 ) -> tuple[bool, str, Optional[Path]]:
-    """Return a cached preview path matching the requested fidelity."""
-    cache_order = (".ogg", ".wav") if prefer_stream else (".wav", ".ogg")
-    for ext in cache_order:
+    """Return a cached preview path matching the requested fidelity.
+
+    Always prefers WAV over OGG because the Python OGG builder can produce
+    pages that ffplay rejects ("Error parsing the packet header") even
+    though ffmpeg tolerates them during WAV conversion.
+    """
+    for ext in (".wav", ".ogg"):
         cached = cache_dir / f"{cache_key}{ext}"
         if not cached.exists():
             continue
@@ -2103,7 +2107,7 @@ def _resolve_cached_preview(
             except OSError:
                 pass
             continue
-        if ext == ".ogg" and _is_ogg_opus(cached) and not prefer_stream:
+        if ext == ".ogg" and _is_ogg_opus(cached):
             wav_path = _convert_ogg_opus_to_wav(cached)
             if wav_path and wav_path.exists():
                 return True, f"Playing: {display_name}", wav_path
@@ -2169,8 +2173,7 @@ def extract_and_convert(
         file_size = os.path.getsize(nus3audio_path)
     except OSError:
         file_size = 0
-    from src import __version__
-    cache_key = f"{nus3audio_path.stem}_{file_size}_v{__version__}_{_DECODER_CACHE_REV}"
+    cache_key = f"{nus3audio_path.stem}_{file_size}_{_DECODER_CACHE_REV}"
 
     cached_result = _resolve_cached_preview(
         cache_dir, cache_key, nus3audio_path.name, prefer_stream
@@ -2386,13 +2389,7 @@ def _try_convert_audio(
                         f"score={best_score:.2f}, duration={best_duration:.2f}s, "
                         f"bitrate={best_bitrate:.1f}kbps)"
                     )
-                chosen_output = (
-                    best_ogg
-                    if prefer_stream and best_ogg and best_ogg.exists()
-                    else best_wav
-                )
-                if chosen_output is None or not chosen_output.exists():
-                    chosen_output = best_ogg if best_ogg and best_ogg.exists() else best_wav
+                chosen_output = best_wav if best_wav and best_wav.exists() else best_ogg
                 if chosen_output is not None and chosen_output.exists():
                     return True, f"Playing: {display_name}", chosen_output
 
@@ -2551,13 +2548,7 @@ def _try_convert_audio(
                     f"score={best_score:.2f}, duration={best_duration:.2f}s, "
                     f"bitrate={best_bitrate:.1f}kbps)"
                 )
-            chosen_output = (
-                best_ogg
-                if prefer_stream and best_ogg and best_ogg.exists()
-                else best_wav
-            )
-            if chosen_output is None or not chosen_output.exists():
-                chosen_output = best_ogg if best_ogg and best_ogg.exists() else best_wav
+            chosen_output = best_wav if best_wav and best_wav.exists() else best_ogg
             if chosen_output is not None and chosen_output.exists():
                 return True, f"Playing: {display_name}", chosen_output
 
