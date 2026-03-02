@@ -23,6 +23,10 @@ use_vulkan_driver_pipeline_cache\\use_global=false
 use_vulkan_driver_pipeline_cache=true
 enable_compute_pipelines\\use_global=false
 enable_compute_pipelines=true
+gpu_accuracy\\use_global=false
+gpu_accuracy=1
+use_reactive_flushing\\use_global=false
+use_reactive_flushing=true
 """
 
 
@@ -123,7 +127,10 @@ def _clear_arcropolis_runtime_cache(mods_path: Path) -> int:
 
 
 def _remove_plugin_junk_files(mods_path: Path) -> int:
-    sdmc_root = Path(mods_path).parents[1]
+    yuzu_root = derive_yuzu_root_from_mods_path(mods_path)
+    if yuzu_root is None:
+        return 0
+    sdmc_root = yuzu_root / "sdmc"
     plugins_root = (
         sdmc_root
         / "atmosphere"

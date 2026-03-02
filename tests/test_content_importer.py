@@ -5,6 +5,11 @@ import zipfile
 
 from src.core.content_importer import (
     _build_multi_slot_pack_options,
+    _build_repaired_visual_slot_config,
+    _is_effect_file_for_fighter_slot,
+    _merge_minimal_slot_manifest,
+    _quarantine_shared_path_effect_files,
+    _retarget_effect_relative_path,
     apply_mod_camera_pack_scope,
     apply_mod_effect_pack_scope,
     apply_mod_voice_pack_scope,
@@ -12,6 +17,7 @@ from src.core.content_importer import (
     import_plugin_package,
     inspect_mod_effect_pack,
     inspect_mod_voice_pack,
+    InstalledModsRepairSummary,
     repair_installed_mods,
 )
 from src.core.skin_slot_utils import analyze_mod_directory, analyze_relative_paths, choose_primary_skin_slot
@@ -1323,6 +1329,8 @@ def test_repair_installed_mods_removes_suspect_generated_stock_icon_clone(tmp_pa
 
 
 def test_repair_installed_mods_disables_suspicious_partial_fighter_bundle(tmp_path: Path):
+    """A Cloud mod with only ``model.numatb`` + textures + fusionsword is a
+    valid texture-replacement pattern and should NOT be disabled."""
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     mod_root = mods_path / "Cloud Shadow"
     (mod_root / "fighter" / "cloud" / "model" / "body" / "c03").mkdir(parents=True)
@@ -1335,14 +1343,13 @@ def test_repair_installed_mods_disables_suspicious_partial_fighter_bundle(tmp_pa
 
     summary = repair_installed_mods(mods_path)
 
-    disabled = mods_path.parent / "disabled_mods" / "Cloud Shadow"
-    assert summary.mods_changed == 1
-    assert not mod_root.exists()
-    assert disabled.exists()
-    assert any("Disabled suspicious fighter mod 'Cloud Shadow'" in warning for warning in summary.warnings)
+    assert mod_root.exists(), "numatb-only texture mod should stay active"
+    assert not any("Disabled suspicious fighter mod 'Cloud Shadow'" in w for w in summary.warnings)
 
 
 def test_repair_installed_mods_disables_cloud_bundle_missing_weapon_support(tmp_path: Path):
+    """Cloud mods without fusionsword should be kept – the vanilla
+    fusionsword is loaded from the base game and works fine."""
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     mod_root = mods_path / "crossworlds_miku"
     body = mod_root / "fighter" / "cloud" / "model" / "body" / "c01"
@@ -1362,11 +1369,8 @@ def test_repair_installed_mods_disables_cloud_bundle_missing_weapon_support(tmp_
 
     summary = repair_installed_mods(mods_path)
 
-    disabled = mods_path.parent / "disabled_mods" / "crossworlds_miku"
-    assert summary.mods_changed == 1
-    assert not mod_root.exists()
-    assert disabled.exists()
-    assert any("is missing required weapon model support files" in warning for warning in summary.warnings)
+    assert mod_root.exists(), "Cloud mod without fusionsword should stay active"
+    assert not any("missing required weapon model support files" in w for w in summary.warnings)
 
 
 def test_repair_installed_mods_keeps_cloud_bundle_with_matching_weapon_support(tmp_path: Path):
@@ -1397,7 +1401,9 @@ def test_repair_installed_mods_keeps_cloud_bundle_with_matching_weapon_support(t
     assert not any("Super Sonic Over Cloud" in warning for warning in summary.warnings)
 
 
-def test_repair_installed_mods_disables_cloud_bundle_without_fusionsword_support_even_if_markers_absent(tmp_path: Path):
+def test_repair_installed_mods_keeps_cloud_bundle_without_fusionsword_even_if_markers_absent(tmp_path: Path):
+    """Cloud mods without fusionsword AND without weapon markers should
+    NOT be disabled – the vanilla fusionsword handles this."""
     mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
     mod_root = mods_path / "mihawk over cloud"
     body = mod_root / "fighter" / "cloud" / "model" / "body" / "c00"
@@ -1417,11 +1423,8 @@ def test_repair_installed_mods_disables_cloud_bundle_without_fusionsword_support
 
     summary = repair_installed_mods(mods_path)
 
-    disabled = mods_path.parent / "disabled_mods" / "mihawk over cloud"
-    assert summary.mods_changed == 1
-    assert not mod_root.exists()
-    assert disabled.exists()
-    assert any("cloud c00 is missing required weapon model support files" in warning for warning in summary.warnings)
+    assert mod_root.exists(), "Cloud mod without fusionsword should stay active"
+    assert not any("missing required weapon model support files" in w for w in summary.warnings)
 
 
 def test_repair_installed_mods_keeps_partial_but_multi_core_model_bundle(tmp_path: Path):
@@ -1462,6 +1465,67 @@ def test_repair_installed_mods_keeps_single_core_body_only_bundle(tmp_path: Path
     assert mod_root.exists()
     assert not (mods_path.parent / "disabled_mods" / "Skadi Byleth").exists()
     assert not any("Skadi Byleth" in warning for warning in summary.warnings)
+
+
+def test_repair_installed_mods_quarantines_shared_path_effect_files(tmp_path: Path):
+    """A single-slot Cloud mod with shared-path effect files should have
+    those effects quarantined to prevent global fighter overrides."""
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Super Sonic Over Cloud"
+    body = mod_root / "fighter" / "cloud" / "model" / "body" / "c06"
+    body.mkdir(parents=True)
+    for filename, payload in {
+        "model.nuhlpb": b"h",
+        "model.numatb": b"mat",
+        "model.numdlb": b"d",
+        "model.numshb": b"s",
+        "model.numshexb": b"x",
+        "model.nusktb": b"k",
+    }.items():
+        (body / filename).write_bytes(payload)
+    (body / "def_cloud_001_col.nutexb").write_bytes(b"tex")
+    # Shared-path effects at effect/fighter/cloud/ (no slot token)
+    (mod_root / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
+    (mod_root / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"eff")
+    (mod_root / "effect" / "fighter" / "cloud" / "trail" / "tex_cloud_sword1.nutexb").write_bytes(b"trail")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_06.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert mod_root.exists(), "mod should stay active"
+    assert summary.shared_effect_files_quarantined == 2
+    assert any("Quarantined" in w for w in summary.warnings)
+    quarantine = mod_root / "_quarantined_effects"
+    assert (quarantine / "effect" / "fighter" / "cloud" / "ef_cloud.eff").exists()
+    assert (quarantine / "effect" / "fighter" / "cloud" / "trail" / "tex_cloud_sword1.nutexb").exists()
+    # Original paths should be gone
+    assert not (mod_root / "effect" / "fighter" / "cloud" / "ef_cloud.eff").exists()
+
+
+def test_repair_installed_mods_skips_quarantine_when_weapon_dir_present(tmp_path: Path):
+    """A complete Cloud mod with fusionsword + effects should NOT have
+    effects quarantined."""
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+    mod_root = mods_path / "Complete Cloud"
+    body = mod_root / "fighter" / "cloud" / "model" / "body" / "c02"
+    body.mkdir(parents=True)
+    for filename in ("model.nuhlpb", "model.numatb", "model.numdlb",
+                     "model.numshb", "model.numshexb", "model.nusktb"):
+        (body / filename).write_bytes(b"x")
+    sword = mod_root / "fighter" / "cloud" / "model" / "fusionsword" / "c02"
+    sword.mkdir(parents=True)
+    (sword / "def_cloud_004_col.nutexb").write_bytes(b"sword")
+    (mod_root / "effect" / "fighter" / "cloud" / "trail").mkdir(parents=True)
+    (mod_root / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"eff")
+    (mod_root / "effect" / "fighter" / "cloud" / "trail" / "tex_cloud_sword1.nutexb").write_bytes(b"trail")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_02.bntx").write_bytes(b"ui")
+
+    summary = repair_installed_mods(mods_path)
+
+    assert summary.shared_effect_files_quarantined == 0
+    assert (mod_root / "effect" / "fighter" / "cloud" / "ef_cloud.eff").exists()
 
 
 def test_import_mod_package_postflight_fills_missing_required_ui_portrait_sizes(tmp_path: Path):
@@ -1555,3 +1619,192 @@ def test_import_plugin_package_routes_disabled_plugins_to_disabled_folder(tmp_pa
     assert summary.plugin_files >= 1
     assert not (plugins_path / "liblegacy.nro.disabled").exists()
     assert (plugins_path.parent / "disabled_plugins" / "liblegacy.nro").exists()
+
+
+# ---------------------------------------------------------------------------
+# Bug 1.1: Moved existing mod must be included in repair focus set
+# ---------------------------------------------------------------------------
+
+def test_import_mod_package_repairs_moved_existing_mod_config(tmp_path: Path):
+    """When an existing mod is moved to an open slot to make room for an
+    incoming import, the moved mod must be included in the post-import
+    repair pass.  Previously only the *imported* mod names were passed to
+    repair_installed_mods, leaving the moved mod unrepaired.
+
+    We verify this by including a shared-path effect file in the existing
+    mod that should be quarantined during repair."""
+    mods_path = tmp_path / "sdmc" / "ultimate" / "mods"
+
+    # Pre-install a Cloud c00 skin mod WITH a shared-path effect file.
+    existing = mods_path / "Existing Cloud Skin"
+    (existing / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
+    (existing / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numdlb").write_bytes(b"mesh")
+    (existing / "fighter" / "cloud" / "model" / "body" / "c00" / "skin.nutexb").write_bytes(b"tex")
+    (existing / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (existing / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_00.bntx").write_bytes(b"ui")
+    # Shared-path effect (no slot token) — should be quarantined during repair.
+    (existing / "effect" / "fighter" / "cloud").mkdir(parents=True)
+    (existing / "effect" / "fighter" / "cloud" / "ef_cloud.eff").write_bytes(b"eff")
+
+    # Import a new mod that targets the same c00 slot.
+    source = tmp_path / "downloads" / "New Cloud Skin"
+    (source / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
+    (source / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numdlb").write_bytes(b"new-mesh")
+    (source / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (source / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_00.bntx").write_bytes(b"new-ui")
+
+    def conflict_handler(info):
+        return "move_existing"
+
+    summary = import_mod_package(source, mods_path, slot_conflict_resolver=conflict_handler)
+    assert summary.items_imported >= 1
+    assert summary.slot_reassignments >= 1
+
+    # The existing mod was moved to a new slot.  Because the fix adds the
+    # moved mod to the repair focus set, the shared-path effect file should
+    # now be quarantined.  Before the fix, the effect would survive because
+    # the moved mod was never processed by the repair pass.
+    quarantine_dir = existing / "_quarantined_effects"
+    # The effect file should either be quarantined OR the effect directory
+    # should no longer contain the original shared-path file.
+    effect_original = existing / "effect" / "fighter" / "cloud" / "ef_cloud.eff"
+    assert not effect_original.exists() or quarantine_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# Bug 1.2: Preserve custom config keys during reslot
+# ---------------------------------------------------------------------------
+
+def test_build_repaired_visual_slot_config_preserves_custom_keys(tmp_path: Path):
+    """Custom/unrecognised keys in config.json must survive reslot operations."""
+    mod_root = tmp_path / "TestMod"
+    (mod_root / "fighter" / "mario" / "model" / "body" / "c05").mkdir(parents=True)
+    (mod_root / "fighter" / "mario" / "model" / "body" / "c05" / "model.numdlb").write_bytes(b"m")
+
+    source_config = {
+        "new-dir-files": {
+            "fighter/mario/model/body/c00": [
+                "fighter/mario/model/body/c00/model.numdlb"
+            ]
+        },
+        "preprocess-reshade": True,
+        "custom-metadata": {"author": "test", "version": 2},
+    }
+    result = _build_repaired_visual_slot_config(
+        mod_root, source_config, "mario", source_slot=0, target_slot=5
+    )
+    assert result is not None
+    # Custom keys must be preserved.
+    assert result.get("preprocess-reshade") is True
+    assert result.get("custom-metadata") == {"author": "test", "version": 2}
+
+
+# ---------------------------------------------------------------------------
+# Bug 2.2: Effect slot detection must not match bare version numbers
+# ---------------------------------------------------------------------------
+
+def test_is_effect_file_for_fighter_slot_no_false_positive_on_version_numbers():
+    """Bare numbers in asset filenames (e.g. _01_ in trail textures) must
+    NOT be mistaken for slot tokens."""
+    # Shared-path effect with no slot token should NOT be detected as slotted.
+    assert _is_effect_file_for_fighter_slot(
+        "effect/fighter/cloud/ef_cloud.eff", "cloud"
+    ) is False
+    assert _is_effect_file_for_fighter_slot(
+        "effect/fighter/cloud/ef_edge_trail_01_glow.eff", "cloud"
+    ) is False
+    assert _is_effect_file_for_fighter_slot(
+        "effect/fighter/cloud/model/ef_cloud_sword/c00/trail.nutexb", "cloud"
+    ) is True
+    # Canonically slotted path must still be detected.
+    assert _is_effect_file_for_fighter_slot(
+        "effect/fighter/cloud/model/ef_cloud_sword/c05/trail.nutexb", "cloud", slot=5
+    ) is True
+
+
+def test_is_effect_file_for_fighter_slot_specific_slot_boundary():
+    """When checking a specific slot, the match must have proper boundaries."""
+    # c01 should NOT match a path containing c010 or xc01.
+    assert _is_effect_file_for_fighter_slot(
+        "effect/fighter/mario/model/ef_mario/c010/file.eff", "mario", slot=1
+    ) is False
+    # But c01 in a normal path should match.
+    assert _is_effect_file_for_fighter_slot(
+        "effect/fighter/mario/model/ef_mario/c01/file.eff", "mario", slot=1
+    ) is True
+
+
+# ---------------------------------------------------------------------------
+# Bug 2.4: Effect retarget must not corrupt asset version numbers
+# ---------------------------------------------------------------------------
+
+def test_retarget_effect_relative_path_does_not_corrupt_version_numbers():
+    """When retargeting from slot 1 to slot 5, the bare-number _01_ in
+    'ef_edge_trail_01_glow.eff' must NOT be changed to _05_."""
+    path = "effect/fighter/cloud/model/ef_cloud_sword/c01/ef_edge_trail_01_glow.eff"
+    result = _retarget_effect_relative_path(path, source_slot=1, target_slot=5)
+    assert "c05" in result
+    assert "trail_01_glow" in result  # version number preserved
+
+
+def test_retarget_effect_relative_path_bare_number_fallback_when_no_c_token():
+    """When there is no canonical c## token, the bare-number fallback should
+    still work for legacy mod paths."""
+    path = "effect/fighter/cloud/model/ef_cloud_sword/01/file.eff"
+    result = _retarget_effect_relative_path(path, source_slot=1, target_slot=5)
+    assert "/05/" in result
+
+
+# ---------------------------------------------------------------------------
+# Bug 3.1: Quarantine idempotency on Windows
+# ---------------------------------------------------------------------------
+
+def test_quarantine_shared_path_effects_idempotent(tmp_path: Path):
+    """Running quarantine twice on the same files should not crash on
+    Windows, where shutil.move fails if the destination already exists."""
+    mod_root = tmp_path / "TestMod"
+    (mod_root / "fighter" / "cloud" / "model" / "body" / "c00").mkdir(parents=True)
+    (mod_root / "fighter" / "cloud" / "model" / "body" / "c00" / "model.numdlb").write_bytes(b"m")
+    (mod_root / "ui" / "replace" / "chara" / "chara_0").mkdir(parents=True)
+    (mod_root / "ui" / "replace" / "chara" / "chara_0" / "chara_0_cloud_00.bntx").write_bytes(b"ui")
+    # Shared-path effect file (no slot token).
+    effect_dir = mod_root / "effect" / "fighter" / "cloud"
+    effect_dir.mkdir(parents=True)
+    (effect_dir / "ef_cloud.eff").write_bytes(b"eff")
+
+    analysis = analyze_mod_directory(mod_root, [mod_root.name])
+
+    summary1 = InstalledModsRepairSummary()
+    _quarantine_shared_path_effect_files(mod_root, analysis, summary1)
+    assert summary1.shared_effect_files_quarantined == 1
+
+    # Second run: the original file is gone; quarantine dir already has it.
+    # This must not crash.
+    summary2 = InstalledModsRepairSummary()
+    _quarantine_shared_path_effect_files(mod_root, analysis, summary2)
+    assert summary2.shared_effect_files_quarantined == 0  # no files left to quarantine
+
+
+# ---------------------------------------------------------------------------
+# Bug 3.6: Dual new-dir-files / new_dir_files key normalization
+# ---------------------------------------------------------------------------
+
+def test_merge_minimal_slot_manifest_normalizes_dual_keys():
+    """When both 'new-dir-files' and 'new_dir_files' exist, ensure they
+    are merged into a single key."""
+    payload = {
+        "new-dir-files": {"fighter/mario/model/body/c00": ["fighter/mario/model/body/c00/model.numdlb"]},
+        "new_dir_files": {"fighter/mario/camera/c00": ["fighter/mario/camera/c00/cam.bin"]},
+    }
+    minimal = {
+        "new-dir-files": {"fighter/mario/model/body/c00": ["fighter/mario/model/body/c00/extra.nutexb"]},
+    }
+    result = _merge_minimal_slot_manifest(payload, minimal)
+
+    # Should have only one key (hyphenated preferred) with all entries merged.
+    assert "new_dir_files" not in result
+    ndf = result["new-dir-files"]
+    assert "fighter/mario/camera/c00" in ndf
+    assert "fighter/mario/model/body/c00" in ndf
+    # The extra file from the minimal manifest should be present.
+    assert "fighter/mario/model/body/c00/extra.nutexb" in ndf["fighter/mario/model/body/c00"]

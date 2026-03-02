@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.17**.
+Current release version: **1.4.18**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -24,6 +24,13 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: repair/import now drops unnecessary `config.json` entries for plain base-slot fighter replacements and keeps manifest entries only where a pack actually needs added-file enumeration, reducing loader risk for vanilla-path skin swaps.
   - Mods: repair/import now quarantines suspicious partial fighter-model installs that ship only part of a model core bundle, moving them to `disabled_mods` instead of leaving them active to break a fighter at runtime.
   - Mods: repair/import now also quarantines fighter model packs that still reference extra weapon-model assets without shipping the matching support files, which prevents Cloud-style body swaps from staying active when their sword support is incomplete.
+  - Mods: existing mods moved to a new slot during import conflict resolution are now included in the post-import repair pass, ensuring their config manifests and quarantine checks run on the reslotted content.
+  - Mods: reslot operations now preserve custom/unrecognised config.json keys (e.g. `preprocess-reshade`, plugin-specific metadata) instead of silently discarding them.
+  - Mods: effect-file slot detection no longer matches bare version numbers in asset filenames (e.g. `_01_` in `ef_edge_trail_01_glow.eff`), preventing shared-path effects from escaping quarantine.
+  - Mods: effect path retargeting during reslot no longer corrupts asset version numbers when a canonical `c##` slot token is already present in the path.
+  - Mods: shared-path effect quarantine now handles pre-existing destination files on Windows without crashing on repeat runs.
+  - Mods: configs with both `new-dir-files` and `new_dir_files` keys are now merged into a single canonical key to prevent stale dual-key divergence.
+  - Runtime repair plugin junk-file cleanup now derives the SDMC root from the detected Yuzu data root instead of assuming a fixed directory depth from the mods path.
   - Mods: import now runs a postflight installed-content repair pass for the imported mods, so broken manifests, safe broad-support overlaps, and byte-identical exact file collisions are corrected immediately instead of being left for Yuzu/ARCropolis to discover.
   - Mods: repair/import postflight fills only the required `ui/replace[_patch]/chara/chara_0..4` portrait assets from the closest available portrait size in the same skin, and no longer fabricates advanced `chara_5..7` portrait files from mismatched BNTX sizes.
   - Mods: imports and installed repairs now invalidate ARCropolis `mod_cache` and stale `conflicts.json` automatically after content changes so new file layouts are not masked by cached loader state.
@@ -72,7 +79,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.17-windows.zip`
+- `dist/SSBUModManager-1.4.18-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 

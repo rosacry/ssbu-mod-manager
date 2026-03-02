@@ -38,6 +38,7 @@ _GENERIC_FOLDER_NAMES = {
 _INVALID_NAME_CHARS = set('<>:"/\\|?*')
 _SUPPORT_BACKUP_DIR_NAME = "_import_backups"
 _INSTALLED_REPAIR_BACKUP_DIR_NAME = "_installed_repair"
+_EFFECT_QUARANTINE_DIR_NAME = "_quarantined_effects"
 _METADATA_FILENAMES = {
     "config.json",
     "config.txt",
@@ -106,10 +107,9 @@ _STANDARD_BODY_TEXTURE_PREFIXES = (
 )
 _FIGHTER_WEAPON_SUPPORT_RULES: dict[str, dict[str, object]] = {
     "cloud": {
-        "model_markers": (b"bastar_sword_", b"def_cloud_004"),
         "weapon_dirs": ("fusionsword",),
         "body_prefixes": ("def_cloud_004",),
-        "require_weapon_dirs_for_visual_slots": True,
+        "require_weapon_dirs_for_visual_slots": False,
     },
 }
 
@@ -147,6 +147,7 @@ class InstalledModsRepairSummary:
     support_mod_adjustments: int = 0
     support_files_pruned: int = 0
     identical_files_pruned: int = 0
+    shared_effect_files_quarantined: int = 0
     resolved_exact_overlaps: int = 0
     remaining_exact_overlaps: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -535,6 +536,9 @@ def import_mod_package(
                             target_open_slot,
                             summary,
                         )
+                        # Include the moved mod in the post-import repair pass
+                        # so its config.json gets updated with new slot references.
+                        imported_mod_names.add(existing_mod_name)
                         slot_index.setdefault(fighter, {}).pop(source_slot, None)
                         slot_index.setdefault(fighter, {}).setdefault(target_open_slot, []).append(existing_mod_name)
                     elif action == "move_incoming":
@@ -678,6 +682,8 @@ def repair_installed_mods(
             changed_mods.add(mod_root.name)
 
         analysis = analyze_mod_directory(mod_root, [mod_root.name])
+        if _quarantine_shared_path_effect_files(mod_root, analysis, summary):
+            changed_mods.add(mod_root.name)
         if _quarantine_suspicious_partial_fighter_pack(mods_path, mod_root, analysis, summary):
             changed_mods.add(mod_root.name)
             continue
@@ -2225,14 +2231,15 @@ def _is_effect_file_for_fighter_slot(relative_path: str, fighter: str, slot: int
     if not rel.startswith(prefix):
         return False
     if slot is None:
-        return re.search(r"(?i)(?<![a-z0-9])c\d{2,3}(?=[^0-9]|$)", rel) is not None or (
-            re.search(r"(?i)(_|/)\d{2}(?=\.|/|_|$)", rel) is not None
-        )
+        # Only match the canonical c## slot token.  The old bare-number
+        # fallback (/_|/)\d{2}) matched asset version numbers like
+        # "ef_edge_trail_01_glow.eff" causing shared-path effects to
+        # escape quarantine.
+        return re.search(r"(?i)(?<![a-z0-9])c\d{2,3}(?=[^0-9]|$)", rel) is not None
     slot_num = f"{int(slot):02d}"
-    return (
-        f"c{slot_num}" in rel
-        or re.search(rf"(?i)(_|/){slot_num}(?=\.|/|_|$)", rel) is not None
-    )
+    # Use word-boundary-aware matching to avoid false positives where
+    # the slot number appears inside unrelated filenames.
+    return re.search(rf"(?<![a-z0-9])c{slot_num}(?=[^0-9]|$)", rel) is not None
 
 
 def _is_support_file_for_fighter_slot(
@@ -2270,16 +2277,22 @@ def _retarget_camera_relative_path(relative_path: str, source_slot: int, target_
 def _retarget_effect_relative_path(relative_path: str, source_slot: int, target_slot: int) -> str:
     source_num = f"{int(source_slot):02d}"
     target_num = f"{int(target_slot):02d}"
+    # First pass: retarget the canonical c## slot token.
     retargeted = re.sub(
         rf"(?i)(?<![a-z0-9])c{source_num}(?=[^0-9]|$)",
         f"c{target_num}",
         relative_path.replace("\\", "/"),
     )
-    return re.sub(
-        rf"(?i)(_|/){source_num}(?=\.|/|_|$)",
-        lambda match: match.group(1) + target_num,
-        retargeted,
-    )
+    # Only fall back to bare-number replacement when the canonical pass
+    # made NO changes — otherwise asset version numbers (e.g. _01_ in
+    # "ef_edge_trail_01_glow.eff") would be corrupted.
+    if retargeted == relative_path.replace("\\", "/"):
+        retargeted = re.sub(
+            rf"(?i)(_|/){source_num}(?=\.|/|_|$)",
+            lambda match: match.group(1) + target_num,
+            retargeted,
+        )
+    return retargeted
 
 
 def _retarget_support_relative_path(
@@ -2444,7 +2457,21 @@ def _merge_minimal_slot_manifest(payload: dict, minimal_manifest: dict | None) -
         return payload
 
     merged = dict(payload)
-    key_name = "new-dir-files" if "new-dir-files" in merged or "new_dir_files" not in merged else "new_dir_files"
+
+    # Normalize: if both hyphenated and underscored keys exist, merge
+    # the underscored entries into the hyphenated key and drop the
+    # underscored key to prevent stale dual-key divergence.
+    if "new-dir-files" in merged and "new_dir_files" in merged:
+        hyphenated = merged.get("new-dir-files")
+        underscored = merged.pop("new_dir_files")
+        if isinstance(hyphenated, dict) and isinstance(underscored, dict):
+            for alias, values in underscored.items():
+                if alias not in hyphenated:
+                    hyphenated[alias] = values
+        key_name = "new-dir-files"
+    else:
+        key_name = "new-dir-files" if "new-dir-files" in merged or "new_dir_files" not in merged else "new_dir_files"
+
     existing_section = merged.get(key_name)
     if not isinstance(existing_section, dict):
         existing_section = {}
@@ -2568,6 +2595,17 @@ def _build_repaired_visual_slot_config(
         )
         if repaired_section:
             repaired[repaired_key] = repaired_section
+
+    # Preserve any custom/unrecognised config keys that are not part of
+    # the standard reslot-able sections so they survive a reslot operation.
+    _KNOWN_CONFIG_KEYS = {
+        "new-dir-files", "new_dir_files",
+        "share-to-vanilla", "share_to_vanilla",
+        "share-to-added", "share_to_added",
+    }
+    for key, value in source_config.items():
+        if key not in _KNOWN_CONFIG_KEYS and key not in repaired:
+            repaired[key] = value
 
     return repaired or None
 
@@ -2912,6 +2950,11 @@ def _find_suspicious_partial_fighter_bundle_issues(mod_root: Path, analysis: Slo
                 continue
             if len(present_core) > 1:
                 continue
+            # A single numatb is a valid texture-replacement pattern –
+            # the material file tells the engine which textures to use
+            # without requiring the full mesh to be bundled.
+            if present_core == ["model.numatb"]:
+                continue
             if not _has_non_body_fighter_model_content(mod_root, fighter, int(slot)):
                 continue
             missing_core = sorted(_MODEL_CORE_FILENAMES - filenames)
@@ -3004,6 +3047,162 @@ def _dir_has_any_files(path: Path) -> bool:
         if child.is_file():
             return True
     return False
+
+
+def _quarantine_shared_path_effect_files(
+    mod_root: Path,
+    analysis: SlotAnalysis,
+    summary: InstalledModsRepairSummary,
+) -> bool:
+    """Move shared-path effect files to quarantine to prevent global overrides.
+
+    Effect files at ``effect/fighter/{fighter}/`` without a slot token in
+    their path override that effect for *every* costume of the fighter.
+    When a single-slot skin mod ships such files the override poisons all
+    other costumes, often causing black-screen hangs on match load.
+
+    This function moves the offending files into a quarantine directory
+    inside the mod so the existing config sanitiser drops the now-stale
+    ``new-dir-files`` references automatically.
+    """
+    fighter = (
+        str(analysis.primary_fighter).lower()
+        if analysis.primary_fighter
+        else None
+    )
+    if not fighter:
+        return False
+
+    effect_root = mod_root / "effect" / "fighter" / fighter
+    if not effect_root.exists() or not effect_root.is_dir():
+        return False
+
+    # Only quarantine when a mod targets a single slot – shared effects
+    # across a multi-slot pack are intentional.
+    slots = analysis.visual_fighter_slots.get(fighter, [])
+    if len(slots) != 1:
+        return False
+
+    # For fighters that require weapon directories (e.g. Cloud with
+    # fusionsword), only quarantine when the weapon dir is absent.  A
+    # complete mod (body + weapon + effects) likely ships effects that
+    # are properly bound via config and libone_slot_eff.
+    rule = _FIGHTER_WEAPON_SUPPORT_RULES.get(fighter)
+    if rule:
+        slot = slots[0]
+        for weapon_dir_name in rule.get("weapon_dirs", ()):
+            weapon_dir = (
+                mod_root / "fighter" / fighter / "model"
+                / str(weapon_dir_name) / f"c{int(slot):02d}"
+            )
+            if _dir_has_any_files(weapon_dir):
+                return False
+
+    # Collect shared-path (non-slot-specific) effect files.
+    shared_files: list[tuple[Path, str]] = []
+    for file_path in sorted(effect_root.rglob("*")):
+        if not file_path.is_file():
+            continue
+        rel = str(file_path.relative_to(mod_root)).replace("\\", "/")
+        if _is_effect_file_for_fighter_slot(rel, fighter):
+            # Has a slot token – already slot-specific, leave it alone.
+            continue
+        shared_files.append((file_path, rel))
+
+    if not shared_files:
+        return False
+
+    quarantine_dir = mod_root / _EFFECT_QUARANTINE_DIR_NAME
+    moved = 0
+    for file_path, rel in shared_files:
+        dest = quarantine_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # Remove pre-existing destination to avoid shutil.move
+            # failure on Windows when the file already exists.
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            shutil.move(str(file_path), str(dest))
+            moved += 1
+        except OSError:
+            continue
+
+    if moved:
+        # Prune empty directories left behind under effect/.
+        _prune_empty_parents(effect_root, stop_at=mod_root)
+        summary.shared_effect_files_quarantined += moved
+        summary.warnings.append(
+            f"Quarantined {moved} shared-path effect file(s) from "
+            f"'{mod_root.name}' to prevent global fighter overrides. "
+            f"Files moved to '{_EFFECT_QUARANTINE_DIR_NAME}/' within the mod."
+        )
+    return moved > 0
+
+
+def _strip_redundant_slot_config_entries(
+    mod_root: Path,
+    analysis: SlotAnalysis,
+) -> bool:
+    """Remove ``new-dir-files`` entries that duplicate auto-discovered paths.
+
+    ARCropolis automatically discovers files whose physical path already
+    encodes the correct fighter/slot.  Listing them *again* in
+    ``new-dir-files`` is redundant and can confuse the loader.  This
+    helper strips those entries and rewrites the config if anything
+    changed.
+    """
+    config_path = mod_root / "config.json"
+    payload = _load_optional_mod_config(mod_root)
+    if payload is None:
+        return False
+
+    ndf = payload.get("new-dir-files") or payload.get("new_dir_files")
+    if not isinstance(ndf, dict) or not ndf:
+        return False
+
+    changed = False
+    cleaned_ndf: dict[str, list[str]] = {}
+    for alias, values in ndf.items():
+        if not isinstance(values, list):
+            cleaned_ndf[alias] = values
+            continue
+        alias_matches = iter_slot_matches(str(alias).replace("\\", "/"))
+        if not alias_matches:
+            cleaned_ndf[alias] = values
+            continue
+        alias_fighter, alias_slot = alias_matches[0]
+
+        filtered: list[str] = []
+        for rel in values:
+            rel_text = str(rel or "").replace("\\", "/")
+            # A path already targeting the correct fighter+slot is
+            # auto-discovered by ARCropolis – skip it.
+            if _config_path_targets_slot(rel_text, alias_fighter, int(alias_slot)):
+                # Check for model/body paths – these are the common
+                # redundant entries (e.g. S Hawk listing body textures).
+                if rel_text.lower().startswith(
+                    f"fighter/{alias_fighter}/model/body/c{int(alias_slot):02d}/"
+                ):
+                    changed = True
+                    continue
+                # Also catch motion paths that are auto-discovered.
+                if rel_text.lower().startswith(
+                    f"fighter/{alias_fighter}/motion/body/c{int(alias_slot):02d}/"
+                ):
+                    changed = True
+                    continue
+            filtered.append(rel_text)
+
+        cleaned_ndf[alias] = filtered
+
+    if not changed:
+        return False
+
+    key_name = "new-dir-files" if "new-dir-files" in payload else "new_dir_files"
+    updated = dict(payload)
+    updated[key_name] = cleaned_ndf
+    _write_or_remove_config_json(config_path, updated)
+    return True
 
 
 def _has_non_body_fighter_model_content(mod_root: Path, fighter: str, slot: int) -> bool:
