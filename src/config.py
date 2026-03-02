@@ -2,6 +2,7 @@
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional
 from src.models.settings import AppSettings
@@ -15,10 +16,15 @@ UI_SCALE_DEFAULT = 1.2
 
 class ConfigManager:
     def __init__(self):
+        self._lock = threading.Lock()
         self.settings = AppSettings()
 
     def load(self) -> AppSettings:
         """Load settings from config file."""
+        with self._lock:
+            return self._load_locked()
+
+    def _load_locked(self) -> AppSettings:
         if CONFIG_FILE.exists():
             try:
                 with open(CONFIG_FILE, 'r') as f:
@@ -84,12 +90,21 @@ class ConfigManager:
                     spotify_last_playlist_id=str(data.get("spotify_last_playlist_id", "") or ""),
                 )
             except (json.JSONDecodeError, KeyError, TypeError, OSError,
-                    ValueError, UnicodeDecodeError):
+                    ValueError, UnicodeDecodeError) as e:
+                try:
+                    from src.utils.logger import logger
+                    logger.warn("Config", f"Failed to parse config, using defaults: {e}")
+                except Exception:
+                    pass
                 self.settings = AppSettings()
         return self.settings
 
     def save(self, settings: Optional[AppSettings] = None) -> None:
         """Save settings to config file."""
+        with self._lock:
+            self._save_locked(settings)
+
+    def _save_locked(self, settings: Optional[AppSettings] = None) -> None:
         if settings:
             self.settings = settings
 
@@ -157,6 +172,7 @@ class ConfigManager:
 
     def update_setting(self, key: str, value) -> None:
         """Update a single setting and save."""
-        if hasattr(self.settings, key):
-            setattr(self.settings, key, value)
-            self.save()
+        with self._lock:
+            if hasattr(self.settings, key):
+                setattr(self.settings, key, value)
+                self._save_locked()

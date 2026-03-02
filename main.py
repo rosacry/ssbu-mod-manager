@@ -9,6 +9,29 @@ import sys
 import threading
 import traceback
 
+# ── Per-Monitor V2 DPI awareness ──────────────────────────────────────
+# Must be set BEFORE any tkinter/CustomTkinter import so the process
+# tells Windows it will manage DPI itself.  V2 gives native non-client
+# scaling (titlebar, scrollbars) and WM_DPICHANGED messages so
+# cross-monitor drag is smooth instead of bitmap-stretched.
+if os.name == "nt":
+    try:
+        import ctypes
+        # Try Per-Monitor V2 first (-4).
+        # Falls back to Per-Monitor V1 (SetProcessDpiAwareness=2) if V2
+        # is unavailable (Windows < 10 1703).
+        _DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ctypes.c_ssize_t(-4)
+        _ok = ctypes.windll.user32.SetProcessDpiAwarenessContext(
+            _DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        )
+        if not _ok:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            pass
+
 CRASH_LOG_FILENAME = "crash.log"
 HEARTBEAT_ENV_VAR = "SSBUMM_HEARTBEAT"
 HEARTBEAT_ENABLED_VALUE = "1"

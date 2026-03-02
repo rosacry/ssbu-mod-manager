@@ -4,6 +4,7 @@ from typing import Optional
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 DEFAULT_VOLUME = 0.7
@@ -18,6 +19,7 @@ _pygame_initialized = False
 _pygame_backend = ""
 _ffplay_path: Optional[str] = None
 _ffplay_checked = False
+_mixer_lock = threading.Lock()
 
 # Keep pygame import lazy so startup never touches SDL/audio until playback.
 pygame = None  # type: ignore
@@ -40,7 +42,11 @@ def _ensure_mixer():
     global _pygame_available, _pygame_error, _pygame_initialized, _pygame_backend, pygame
     if _pygame_initialized:
         return
-    _pygame_initialized = True
+    with _mixer_lock:
+        # Double-check after acquiring lock
+        if _pygame_initialized:
+            return
+        _pygame_initialized = True
     if pygame is None:
         try:
             import pygame as _pg
@@ -102,9 +108,15 @@ def _ensure_mixer():
 
 
 class AudioPlayer:
-    """Simple audio player with play/pause/stop/volume controls."""
+    """Simple audio player with play/pause/stop/volume controls.
+
+    All public methods are guarded by a reentrant lock so the player
+    can be driven safely from both the main thread and background
+    playback threads.
+    """
 
     def __init__(self):
+        self._lock = threading.RLock()
         self._ffplay = _find_ffplay()
         self._ffplay_proc: Optional[subprocess.Popen] = None
         self._ffplay_offset = 0.0
@@ -126,23 +138,25 @@ class AudioPlayer:
 
     @property
     def is_playing(self) -> bool:
-        if self._backend == "ffplay":
-            if self._ffplay_paused:
-                return True
-            if self._ffplay_proc and self._ffplay_proc.poll() is None:
-                return True
-            if self._playing:
-                self._playing = False
-            return False
-        if not _pygame_initialized or not _pygame_available:
-            return False
-        return pygame.mixer.music.get_busy() or self._paused
+        with self._lock:
+            if self._backend == "ffplay":
+                if self._ffplay_paused:
+                    return True
+                if self._ffplay_proc and self._ffplay_proc.poll() is None:
+                    return True
+                if self._playing:
+                    self._playing = False
+                return False
+            if not _pygame_initialized or not _pygame_available:
+                return False
+            return pygame.mixer.music.get_busy() or self._paused
 
     @property
     def is_paused(self) -> bool:
-        if self._backend == "ffplay":
-            return self._ffplay_paused
-        return self._paused
+        with self._lock:
+            if self._backend == "ffplay":
+                return self._ffplay_paused
+            return self._paused
 
     @property
     def current_file(self) -> Optional[Path]:
@@ -183,6 +197,14 @@ class AudioPlayer:
                         proc.wait(timeout=0.5)
                     except Exception:
                         pass
+            # Log any stderr output from ffplay for debugging
+            try:
+                stderr_data = proc.stderr.read() if proc.stderr else b""
+                if stderr_data and stderr_data.strip():
+                    from src.utils.logger import logger
+                    logger.warn("AudioPlayer", f"ffplay stderr: {stderr_data.decode('utf-8', errors='replace').strip()[:200]}")
+            except Exception:
+                pass
         except Exception:
             pass
         self._ffplay_proc = None
@@ -209,7 +231,7 @@ class AudioPlayer:
             self._ffplay_proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self._backend = "ffplay"
@@ -233,6 +255,10 @@ class AudioPlayer:
     def play(self, file_path: Path) -> tuple[bool, str]:
         """Play an audio file. Returns (success, message)."""
         _ensure_mixer()
+        with self._lock:
+            return self._play_locked(file_path)
+
+    def _play_locked(self, file_path: Path) -> tuple[bool, str]:
         if not _pygame_available and not self._ffplay:
             msg = "Audio playback requires pygame or ffplay."
             if _pygame_error:
@@ -308,7 +334,7 @@ class AudioPlayer:
         pygame_error = None
         if _pygame_available:
             try:
-                self.stop()
+                self._stop_locked()
                 pygame.mixer.music.load(str(file_path))
                 pygame.mixer.music.set_volume(self._volume)
                 pygame.mixer.music.play()
@@ -353,6 +379,10 @@ class AudioPlayer:
 
     def stop(self):
         """Stop playback."""
+        with self._lock:
+            self._stop_locked()
+
+    def _stop_locked(self):
         if self._backend == "ffplay":
             self._terminate_ffplay()
             self._playing = False
@@ -378,39 +408,41 @@ class AudioPlayer:
 
     def pause(self):
         """Pause playback."""
-        if self._backend == "ffplay":
-            if not self._playing or self._ffplay_paused:
+        with self._lock:
+            if self._backend == "ffplay":
+                if not self._playing or self._ffplay_paused:
+                    return
+                self._ffplay_offset = self._get_position_locked()
+                self._terminate_ffplay()
+                self._ffplay_paused = True
+                self._paused = True
                 return
-            self._ffplay_offset = self.get_position()
-            self._terminate_ffplay()
-            self._ffplay_paused = True
-            self._paused = True
-            return
-        if not _pygame_initialized or not _pygame_available or not self._playing:
-            return
-        try:
-            pygame.mixer.music.pause()
-            self._paused = True
-        except Exception:
-            pass
+            if not _pygame_initialized or not _pygame_available or not self._playing:
+                return
+            try:
+                pygame.mixer.music.pause()
+                self._paused = True
+            except Exception:
+                pass
 
     def unpause(self):
         """Resume paused playback."""
-        if self._backend == "ffplay":
-            if not self._ffplay_paused or not self._current_file:
+        with self._lock:
+            if self._backend == "ffplay":
+                if not self._ffplay_paused or not self._current_file:
+                    return
+                ok, _msg = self._play_file_ffplay(self._current_file, start=self._ffplay_offset)
+                if ok:
+                    self._ffplay_paused = False
+                    self._paused = False
                 return
-            ok, _msg = self._play_file_ffplay(self._current_file, start=self._ffplay_offset)
-            if ok:
-                self._ffplay_paused = False
+            if not _pygame_initialized or not _pygame_available or not self._paused:
+                return
+            try:
+                pygame.mixer.music.unpause()
                 self._paused = False
-            return
-        if not _pygame_initialized or not _pygame_available or not self._paused:
-            return
-        try:
-            pygame.mixer.music.unpause()
-            self._paused = False
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     def toggle_pause(self):
         """Toggle pause/unpause."""
@@ -421,22 +453,23 @@ class AudioPlayer:
 
     def set_volume(self, volume: float):
         """Set volume (0.0 to 1.0)."""
-        new_volume = max(0.0, min(1.0, volume))
-        old_step = int(round(self._volume * 100.0))
-        new_step = int(round(new_volume * 100.0))
-        self._volume = new_volume
-        if new_step == old_step:
-            return
-        if self._backend == "ffplay" and self._playing and self._current_file and not self._ffplay_paused:
-            # ffplay has no runtime volume IPC, so restart at current position.
-            pos = self.get_position()
-            self._play_file_ffplay(self._current_file, start=pos)
-            return
-        if _pygame_initialized and _pygame_available:
-            try:
-                pygame.mixer.music.set_volume(self._volume)
-            except Exception:
-                pass
+        with self._lock:
+            new_volume = max(0.0, min(1.0, volume))
+            old_step = int(round(self._volume * 100.0))
+            new_step = int(round(new_volume * 100.0))
+            self._volume = new_volume
+            if new_step == old_step:
+                return
+            if self._backend == "ffplay" and self._playing and self._current_file and not self._ffplay_paused:
+                # ffplay has no runtime volume IPC, so restart at current position.
+                pos = self._get_position_locked()
+                self._play_file_ffplay(self._current_file, start=pos)
+                return
+            if _pygame_initialized and _pygame_available:
+                try:
+                    pygame.mixer.music.set_volume(self._volume)
+                except Exception:
+                    pass
 
     @property
     def volume(self) -> float:
@@ -444,6 +477,11 @@ class AudioPlayer:
 
     def get_position(self) -> float:
         """Get current playback position in seconds (seek-aware)."""
+        with self._lock:
+            return self._get_position_locked()
+
+    def _get_position_locked(self) -> float:
+        """Internal position getter (caller must hold self._lock)."""
         if self._backend == "ffplay":
             if not self._playing:
                 return 0.0
@@ -470,67 +508,70 @@ class AudioPlayer:
 
     def get_duration(self) -> float:
         """Get duration of current track in seconds (estimated from file)."""
-        if self._backend == "ffplay":
-            if self._ffplay_duration > 0.0:
-                return self._ffplay_duration
-            if self._current_file:
-                self._ffplay_duration = self._estimate_duration(self._current_file)
-                return self._ffplay_duration
-            return 0.0
-        if not self._current_file or not self._current_file.exists():
-            return 0.0
-        try:
-            import wave
-            if self._current_file.suffix.lower() == '.wav':
-                with wave.open(str(self._current_file), 'rb') as wf:
-                    return wf.getnframes() / wf.getframerate()
-        except Exception:
-            pass
-        try:
-            size = self._current_file.stat().st_size
-            return size / APPROX_BYTES_PER_SECOND
-        except Exception:
-            return 0.0
+        with self._lock:
+            if self._backend == "ffplay":
+                if self._ffplay_duration > 0.0:
+                    return self._ffplay_duration
+                if self._current_file:
+                    self._ffplay_duration = self._estimate_duration(self._current_file)
+                    return self._ffplay_duration
+                return 0.0
+            if not self._current_file or not self._current_file.exists():
+                return 0.0
+            try:
+                import wave
+                if self._current_file.suffix.lower() == '.wav':
+                    with wave.open(str(self._current_file), 'rb') as wf:
+                        return wf.getnframes() / wf.getframerate()
+            except Exception:
+                pass
+            try:
+                size = self._current_file.stat().st_size
+                return size / APPROX_BYTES_PER_SECOND
+            except Exception:
+                return 0.0
 
     def seek(self, position: float):
         """Seek to a position in seconds."""
-        if self._backend == "ffplay":
-            if not self._current_file:
-                return
-            pos = max(0.0, position)
-            if self._ffplay_duration > 0.0:
-                pos = min(pos, self._ffplay_duration)
-            if self._ffplay_paused:
-                self._ffplay_offset = pos
-                return
-            if self._playing:
-                if abs(self.get_position() - pos) < 0.05:
+        with self._lock:
+            if self._backend == "ffplay":
+                if not self._current_file:
                     return
-                self._play_file_ffplay(self._current_file, start=pos)
-            return
-        if not _pygame_initialized or not _pygame_available or not self._playing:
-            return
-        self._seek_offset = position
-        try:
-            pygame.mixer.music.set_pos(position)
-            # Record raw get_pos() right after seek so get_position()
-            # can compute elapsed time relative to this anchor.
+                pos = max(0.0, position)
+                if self._ffplay_duration > 0.0:
+                    pos = min(pos, self._ffplay_duration)
+                if self._ffplay_paused:
+                    self._ffplay_offset = pos
+                    return
+                if self._playing:
+                    if abs(self._get_position_locked() - pos) < 0.05:
+                        return
+                    self._play_file_ffplay(self._current_file, start=pos)
+                return
+            if not _pygame_initialized or not _pygame_available or not self._playing:
+                return
+            self._seek_offset = position
             try:
-                self._raw_pos_at_anchor = pygame.mixer.music.get_pos() / MS_PER_SECOND
+                pygame.mixer.music.set_pos(position)
+                # Record raw get_pos() right after seek so get_position()
+                # can compute elapsed time relative to this anchor.
+                try:
+                    self._raw_pos_at_anchor = pygame.mixer.music.get_pos() / MS_PER_SECOND
+                except Exception:
+                    self._raw_pos_at_anchor = 0.0
             except Exception:
-                self._raw_pos_at_anchor = 0.0
-        except Exception:
-            # Some formats may not support set_pos; restart from offset
-            try:
-                pygame.mixer.music.play(start=position)
-                self._raw_pos_at_anchor = 0.0
-            except Exception:
-                pass
+                # Some formats may not support set_pos; restart from offset
+                try:
+                    pygame.mixer.music.play(start=position)
+                    self._raw_pos_at_anchor = 0.0
+                except Exception:
+                    pass
 
     def cleanup(self):
         """Clean up audio resources."""
         global _pygame_initialized, _pygame_available
-        self.stop()
+        with self._lock:
+            self._stop_locked()
         if _pygame_initialized and _pygame_available:
             try:
                 pygame.mixer.quit()

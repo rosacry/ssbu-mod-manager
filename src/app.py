@@ -156,10 +156,18 @@ class ModManagerApp(ctk.CTk):
         self._status_refresh_generation = 0
         self._status_refresh_thread_active = False
         self._status_refresh_pending = False
+        self._last_monitor_dpi = None
 
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
         self.configure(fg_color=theme.BG_SIDEBAR)
+
+        # Smooth multi-monitor DPI transitions - patch CTk's ScalingTracker
+        # to avoid the jarring alpha-flash when dragging between monitors.
+        try:
+            self._patch_ctk_dpi_transition()
+        except Exception as e:
+            logger.warn("App", f"Failed to patch CTk DPI transition: {e}")
 
         # Patch CTkScrollbar drag behavior so grabbing the thumb doesn't
         # jump/recenter to the cursor position on first movement.
@@ -1301,6 +1309,32 @@ class ModManagerApp(ctk.CTk):
                 except Exception:
                     pass
             self._resize_after_id = self.after(self._RESIZE_SETTLE_MS, self._finalize_resize)
+            # Proactively detect DPI changes during window moves / drags.
+            # The CTk polling loop runs every 50ms, but Configure events
+            # fire during the drag itself, so we can catch monitor
+            # transitions earlier.
+            self._check_monitor_dpi_change()
+        except Exception:
+            pass
+
+    def _check_monitor_dpi_change(self):
+        """Detect if the window moved to a monitor with different DPI."""
+        try:
+            from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
+            current_dpi = ScalingTracker.get_window_dpi_scaling(self)
+            if self._last_monitor_dpi is None:
+                self._last_monitor_dpi = current_dpi
+                return
+            if abs(current_dpi - self._last_monitor_dpi) > 0.01:
+                self._last_monitor_dpi = current_dpi
+                ScalingTracker.window_dpi_scaling_dict[self] = current_dpi
+                try:
+                    self.block_update_dimensions_event()
+                    ScalingTracker.update_scaling_callbacks_for_window(self)
+                    self.unblock_update_dimensions_event()
+                except Exception:
+                    pass
+                logger.debug("App", f"Monitor DPI change detected: {current_dpi:.2f}")
         except Exception:
             pass
 
@@ -1434,13 +1468,80 @@ class ModManagerApp(ctk.CTk):
             return abs(float(after[0]) - float(before[0])) > 1e-6
         return True
 
+    def _patch_ctk_dpi_transition(self):
+        """Replace CTk's harsh alpha-flash DPI transition with a smooth one.
+
+        CustomTkinter's ``ScalingTracker.check_dpi_scaling`` sets the window
+        to alpha=0.15 during rescaling when the user drags between monitors
+        with different DPI.  This looks like the window disappears and
+        reappears.
+
+        This patch replaces that behaviour:
+        * Skip the alpha manipulation entirely — the brief rescaling
+          reflow is far less jarring than a near-invisible flash.
+        * Reduce the polling interval from 100ms → 50ms for faster
+          detection of monitor changes.
+        * Reduce the post-scaling pause from 1500ms → 400ms so the UI
+          tracks the new monitor promptly.
+        """
+        try:
+            from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
+        except ImportError:
+            return
+
+        # Reduce polling latency so we detect DPI changes sooner.
+        ScalingTracker.update_loop_interval = 50
+        ScalingTracker.loop_pause_after_new_scaling = 400
+
+        @classmethod
+        def _smooth_check_dpi_scaling(cls):  # noqa: N805
+            """DPI change detector without the alpha-flash."""
+            import sys as _sys
+            new_scaling_detected = False
+
+            for window in list(cls.window_widgets_dict):
+                try:
+                    if not window.winfo_exists() or window.state() == "iconic":
+                        continue
+                except Exception:
+                    continue
+
+                current_dpi_scaling_value = cls.get_window_dpi_scaling(window)
+                if current_dpi_scaling_value != cls.window_dpi_scaling_dict.get(window):
+                    cls.window_dpi_scaling_dict[window] = current_dpi_scaling_value
+
+                    # DO NOT flash alpha — this is the key fix.
+                    try:
+                        window.block_update_dimensions_event()
+                        cls.update_scaling_callbacks_for_window(window)
+                        window.unblock_update_dimensions_event()
+                    except Exception:
+                        pass
+
+                    new_scaling_detected = True
+
+            # Schedule the next poll on an existing window.
+            for app in cls.window_widgets_dict.keys():
+                try:
+                    if new_scaling_detected:
+                        app.after(cls.loop_pause_after_new_scaling, cls.check_dpi_scaling)
+                    else:
+                        app.after(cls.update_loop_interval, cls.check_dpi_scaling)
+                    return
+                except Exception:
+                    continue
+
+            cls.update_loop_running = False
+
+        ScalingTracker.check_dpi_scaling = _smooth_check_dpi_scaling
+        logger.info("App", "Patched CTk ScalingTracker for smooth multi-monitor DPI transitions")
+
     def _patch_ctk_scrollbar_drag_behavior(self):
         """Make CTk scrollbar thumb dragging preserve click offset.
 
         CustomTkinter's default behavior recenters the thumb under the mouse
         on click, which feels like a sudden jump when dragging from the top
-        or bottom half of the thumb.
-        """
+        or bottom half of the thumb."""
         from customtkinter.windows.widgets import ctk_scrollbar as _ctk_scrollbar
 
         if getattr(_ctk_scrollbar.CTkScrollbar, "_ssbumm_drag_patch", False):

@@ -1,7 +1,9 @@
 """Music track discovery, stage assignment, playlist management, and PRC save."""
 import json
+import os
 import re
 import shutil
+import tempfile
 import threading
 from pathlib import Path
 from typing import Optional
@@ -18,6 +20,22 @@ from src.utils.file_utils import backup_file
 from src.utils.resource_path import resource_path
 from src.config import CONFIG_DIR
 from src.utils.logger import logger
+
+
+def _atomic_json_write(file_path: Path, data: dict) -> None:
+    """Write *data* as JSON atomically via temp-file + os.replace."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(file_path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, str(file_path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # Keys are lowercase prefixes found in SSBU internal BGM filenames.
@@ -346,34 +364,26 @@ class MusicManager:
             is_likely_vanilla=True,
         )
 
-    def discover_tracks(
+    def _scan_directory_for_tracks(
         self,
-        mods_root: Path,
-        cancel_event: Optional[threading.Event] = None,
-        parse_binary_msbt: bool = True,
-        generate_msbt_overlays: bool = True,
-    ) -> list[MusicTrack]:
-        """Discover all custom music tracks across all mod folders.
-
-        ``parse_binary_msbt`` and ``generate_msbt_overlays`` are expensive and
-        should only be enabled for explicit full rescans.
-        """
-        self._load_library_preferences()
-        self.tracks = []
-        seen_ids = set()
-
-        if not mods_root.exists():
-            return self.tracks
-
-        for mod_folder in sorted(mods_root.iterdir()):
+        scan_root: Path,
+        seen_ids: set,
+        cancel_event: Optional[threading.Event],
+        parse_binary_msbt: bool,
+        is_disabled: bool = False,
+    ) -> None:
+        """Scan a single root directory for music tracks."""
+        if not scan_root.exists():
+            return
+        for mod_folder in sorted(scan_root.iterdir()):
             if self._scan_should_abort(cancel_event):
-                return self.tracks
+                return
             if not mod_folder.is_dir() or self._is_skipped_mod_folder(mod_folder):
                 continue
 
             for audio_file in mod_folder.rglob(NUS3AUDIO_GLOB):
                 if self._scan_should_abort(cancel_event):
-                    return self.tracks
+                    return
                 if not self._is_supported_track_file(audio_file):
                     continue
                 track_id = audio_file.stem
@@ -393,15 +403,50 @@ class MusicManager:
                     file_size=fsize,
                     is_custom=True,
                     is_favorite=track_id in self.favorite_track_ids,
+                    is_disabled=is_disabled,
                 )
                 self.tracks.append(track)
 
             if self._scan_should_abort(cancel_event):
-                return self.tracks
+                return
             self._load_track_names_from_mod(
                 mod_folder,
                 cancel_event=cancel_event,
                 parse_binary_msbt=parse_binary_msbt,
+            )
+
+    def discover_tracks(
+        self,
+        mods_root: Path,
+        cancel_event: Optional[threading.Event] = None,
+        parse_binary_msbt: bool = True,
+        generate_msbt_overlays: bool = True,
+        additional_scan_dirs: Optional[list[Path]] = None,
+    ) -> list[MusicTrack]:
+        """Discover all custom music tracks across all mod folders.
+
+        ``parse_binary_msbt`` and ``generate_msbt_overlays`` are expensive and
+        should only be enabled for explicit full rescans.
+
+        ``additional_scan_dirs`` may contain extra directories (e.g.
+        ``disabled_mods``) whose tracks are included with ``is_disabled=True``
+        so the user can browse / favourite them without enabling the mods.
+        """
+        self._load_library_preferences()
+        self.tracks = []
+        seen_ids: set[str] = set()
+
+        # Scan the main mods directory.
+        self._scan_directory_for_tracks(
+            mods_root, seen_ids, cancel_event, parse_binary_msbt, is_disabled=False,
+        )
+
+        # Scan any additional directories (e.g. disabled_mods).
+        for extra_dir in (additional_scan_dirs or []):
+            if self._scan_should_abort(cancel_event):
+                return self.tracks
+            self._scan_directory_for_tracks(
+                extra_dir, seen_ids, cancel_event, parse_binary_msbt, is_disabled=True,
             )
 
         if self._scan_should_abort(cancel_event):
@@ -696,15 +741,12 @@ class MusicManager:
         self._library_loaded = True
 
     def _save_library_preferences(self) -> None:
-        config_dir = CONFIG_DIR
-        config_dir.mkdir(parents=True, exist_ok=True)
         config_file = self._library_config_path()
         data = {
             "favorite_track_ids": sorted(self.favorite_track_ids),
         }
         try:
-            with open(config_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            _atomic_json_write(config_file, data)
         except OSError as e:
             logger.error("Music", f"Failed to save music library preferences: {e}")
 
@@ -813,8 +855,6 @@ class MusicManager:
         self.replacement_assignments.clear()
 
     def _save_replacement_config(self) -> None:
-        config_dir = CONFIG_DIR
-        config_dir.mkdir(parents=True, exist_ok=True)
         config_file = self._replacement_config_path()
         data = {"assignments": {}}
         for stage_id, stage_assignments in self.replacement_assignments.items():
@@ -826,8 +866,7 @@ class MusicManager:
                 if assignment.replacement_track_id
             }
         try:
-            with open(config_file, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, indent=2)
+            _atomic_json_write(config_file, data)
         except OSError as exc:
             logger.error("Music", f"Failed to save replacement config: {exc}")
 
@@ -841,16 +880,26 @@ class MusicManager:
             with open(config_file, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             track_lookup = {track.track_id: track for track in self.tracks}
+            missing_track_ids: list[str] = []
             for stage_id, slot_map in (data.get("assignments", {}) or {}).items():
                 if not isinstance(slot_map, dict):
                     continue
                 normalized_stage_id = self._resolve_stage_id(str(stage_id))
                 for slot_key, track_id in slot_map.items():
                     track_id_str = str(track_id).strip()
+                    if not track_id_str:
+                        continue
                     track = track_lookup.get(track_id_str)
-                    if not track_id_str or track is None:
+                    if track is None:
+                        missing_track_ids.append(track_id_str)
                         continue
                     self.set_stage_slot_replacement(normalized_stage_id, str(slot_key), track)
+            if missing_track_ids:
+                logger.warn(
+                    "MusicManager",
+                    f"Skipped {len(missing_track_ids)} replacement(s) - tracks not found "
+                    f"(may be in a removed mod folder): {missing_track_ids[:5]}",
+                )
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
             logger.warn("Music", f"Failed to load music replacements: {exc}")
 
@@ -1271,9 +1320,7 @@ class MusicManager:
 
     def _save_assignment_config(self, mods_root: Path) -> None:
         """Save current assignments to a persistent JSON config."""
-        config_dir = CONFIG_DIR
-        config_dir.mkdir(parents=True, exist_ok=True)
-        config_file = config_dir / ASSIGNMENTS_FILENAME
+        config_file = CONFIG_DIR / ASSIGNMENTS_FILENAME
 
         data = {
             "exclude_vanilla": self.exclude_vanilla,
@@ -1285,8 +1332,7 @@ class MusicManager:
                 data["assignments"][stage_id] = [t.track_id for t in playlist.tracks]
 
         try:
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
+            _atomic_json_write(config_file, data)
         except OSError as e:
             logger.error("Music", f"Failed to save assignment config: {e}")
 
@@ -1304,10 +1350,18 @@ class MusicManager:
 
             track_lookup = {t.track_id: t for t in self.tracks}
 
+            missing = []
             for stage_id, track_ids in data.get("assignments", {}).items():
                 for track_id in track_ids:
                     if track_id in track_lookup:
                         self.assign_track_to_stage(track_lookup[track_id], stage_id)
+                    else:
+                        missing.append(track_id)
+            if missing:
+                logger.warn(
+                    "Music",
+                    f"Skipped {len(missing)} assignment(s) - tracks not found: {missing[:5]}",
+                )
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             logger.warn("Music", f"Failed to load saved assignments: {e}")
 

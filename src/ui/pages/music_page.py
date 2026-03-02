@@ -50,6 +50,7 @@ class MusicPage(BasePage):
         self._is_playing = False
         self._spinner_index = 0
         self._spinner_active = False
+        self._spinner_after_id = None
         self._track_filter_after_id = None
         self._stage_filter_after_id = None
         self._deferred_ui_apply = False
@@ -471,6 +472,7 @@ class MusicPage(BasePage):
     def on_hide(self):
         """Clean up playlist widgets for smoother page transitions."""
         self._cancel_auto_scan()
+        self._cancel_playback_timers()
         if self._scan_in_progress and self._scan_cancel_event is not None:
             try:
                 self._scan_cancel_event.set()
@@ -545,6 +547,13 @@ class MusicPage(BasePage):
     def _stop_spinner(self):
         """Stop the loading spinner."""
         self._spinner_active = False
+        aid = getattr(self, "_spinner_after_id", None)
+        if aid:
+            try:
+                self.after_cancel(aid)
+            except Exception:
+                pass
+            self._spinner_after_id = None
         self.loading_label.configure(text="")
 
     def _animate_spinner(self):
@@ -554,7 +563,7 @@ class MusicPage(BasePage):
         frame = self._SPINNER_FRAMES[self._spinner_index % len(self._SPINNER_FRAMES)]
         self.loading_label.configure(text=f"{frame} {self._spinner_text}...")
         self._spinner_index += 1
-        self.after(self._SPINNER_FRAME_INTERVAL_MS, self._animate_spinner)
+        self._spinner_after_id = self.after(self._SPINNER_FRAME_INTERVAL_MS, self._animate_spinner)
 
     def _force_scan(self):
         self._cancel_auto_scan()
@@ -587,6 +596,14 @@ class MusicPage(BasePage):
 
         mods_path = settings.mods_path
 
+        # Also scan disabled_mods so users can browse/favourite tracks
+        # from disabled mods without having to re-enable them first.
+        disabled_mods_path = mods_path.parent / "disabled_mods"
+        additional_dirs = []
+        if disabled_mods_path.exists() and disabled_mods_path.is_dir():
+            additional_dirs.append(disabled_mods_path)
+            logger.info("Music", f"Also scanning disabled_mods: {disabled_mods_path}")
+
         def scan():
             try:
                 tracks = self.app.music_manager.discover_tracks(
@@ -594,6 +611,7 @@ class MusicPage(BasePage):
                     cancel_event=cancel_event,
                     parse_binary_msbt=full_scan,
                     generate_msbt_overlays=full_scan,
+                    additional_scan_dirs=additional_dirs or None,
                 )
                 if cancel_event.is_set():
                     logger.info("Music", "Track scan cancelled")
@@ -632,6 +650,9 @@ class MusicPage(BasePage):
     def _on_scan_finished(self, scan_gen: int | None = None):
         """Mark scan complete and run queued rescan requests."""
         if scan_gen is not None and scan_gen != self._scan_generation:
+            # Stale generation — still stop the spinner if it was left running
+            if self._spinner_active:
+                self._stop_spinner()
             return
         self._scan_in_progress = False
         self._scan_cancel_event = None
@@ -639,6 +660,8 @@ class MusicPage(BasePage):
             self._stop_spinner()
             if self._is_music_page_active():
                 self.track_count_label.configure(text="Scan cancelled")
+        elif self._spinner_active:
+            self._stop_spinner()
         if self._pending_rescan:
             run_full_rescan = bool(self._pending_full_rescan)
             self._pending_rescan = False
@@ -667,7 +690,14 @@ class MusicPage(BasePage):
         self._last_track_render_signature = None
         try:
             self._stop_spinner()
-            self.track_count_label.configure(text=f"{len(tracks)} tracks")
+            disabled_count = sum(1 for t in tracks if t.is_disabled)
+            enabled_count = len(tracks) - disabled_count
+            if disabled_count:
+                self.track_count_label.configure(
+                    text=f"{len(tracks)} tracks ({enabled_count} active, {disabled_count} from disabled mods)"
+                )
+            else:
+                self.track_count_label.configure(text=f"{len(tracks)} tracks")
             if self._is_music_page_active():
                 self._apply_loaded_tracks_ui()
             else:
@@ -1044,7 +1074,8 @@ class MusicPage(BasePage):
             display = track.display_name if track.display_name else track.track_id
             mod = f" [{track.source_mod}]" if track.source_mod else ""
             prefix = "[Fav] " if track.is_favorite else ""
-            self.track_listbox.insert(tk.END, f"{prefix}{display}{mod}")
+            disabled_tag = " (disabled)" if track.is_disabled else ""
+            self.track_listbox.insert(tk.END, f"{prefix}{display}{mod}{disabled_tag}")
             self._track_id_map[i] = track
             if track.track_id in selected_track_ids:
                 self.track_listbox.selection_set(i)

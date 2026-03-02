@@ -13,6 +13,7 @@ class MusicTrack:
     file_size: int = 0
     is_custom: bool = True
     is_favorite: bool = False
+    is_disabled: bool = False
 
 
 @dataclass
