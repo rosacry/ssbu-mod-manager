@@ -11,6 +11,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from src.ui.base_page import BasePage
+from src.ui import theme
 from src.paths import auto_detect_all_emulators, EMULATOR_PATHS
 from src.core.emulator_migrator import (
     scan_emulator_data, create_migration_plan, execute_migration,
@@ -29,19 +30,18 @@ class MigrationPage(BasePage):
         self._build_ui()
 
     def _build_ui(self):
-        # Header
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=30, pady=(25, 5))
 
         ctk.CTkLabel(header, text="Migration",
-                     font=ctk.CTkFont(size=24, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE, weight="bold"), anchor="w"
                      ).pack(side="left")
 
         desc = ctk.CTkLabel(self,
             text="Migrate your SSBU data between emulators. Different emulators run separate multiplayer "
                  "networks/protocol builds, so cross-emulator play is not guaranteed. "
                  "For reliable online play, use the same emulator and build as your opponent.",
-            font=ctk.CTkFont(size=12), text_color="#999999", anchor="w", wraplength=800,
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=800,
             justify="left")
         desc.pack(fill="x", padx=30, pady=(0, 15))
 
@@ -50,60 +50,55 @@ class MigrationPage(BasePage):
         self._scroll = scroll
 
         # === Section 1: Emulator-to-Emulator Migration ===
-        migrate_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        migrate_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         migrate_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(migrate_section, text="Migrate Between Emulators",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(migrate_section,
                      text="Copy all SSBU data from one emulator to another. The source data is preserved.",
-                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w"
                      ).pack(fill="x", padx=15, pady=(0, 10))
 
-        # Source / Target selection
         sel_frame = ctk.CTkFrame(migrate_section, fg_color="transparent")
         sel_frame.pack(fill="x", padx=15, pady=5)
 
         emulator_names = list(EMULATOR_PATHS.keys())
 
-        # Source
         src_frame = ctk.CTkFrame(sel_frame, fg_color="transparent")
         src_frame.pack(side="left", padx=(0, 30))
         ctk.CTkLabel(src_frame, text="Source Emulator:",
-                     font=ctk.CTkFont(size=13), anchor="w").pack(anchor="w")
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), anchor="w").pack(anchor="w")
         self.source_var = ctk.StringVar(value=emulator_names[0] if emulator_names else "")
         self.source_menu = ctk.CTkOptionMenu(
             src_frame, variable=self.source_var, values=emulator_names,
             width=180, height=34, command=self._on_source_changed)
         self.source_menu.pack(anchor="w", pady=5)
         self.source_status = ctk.CTkLabel(src_frame, text="",
-                                          font=ctk.CTkFont(size=11), text_color="#888888", anchor="w")
+                                          font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM, anchor="w")
         self.source_status.pack(anchor="w")
 
-        # Arrow
-        ctk.CTkLabel(sel_frame, text="\u27a1", font=ctk.CTkFont(size=24),
-                     text_color="#e94560").pack(side="left", padx=10, pady=(15, 0))
+        ctk.CTkLabel(sel_frame, text="\u27a1", font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE),
+                     text_color=theme.ACCENT).pack(side="left", padx=10, pady=(15, 0))
 
-        # Target
         tgt_frame = ctk.CTkFrame(sel_frame, fg_color="transparent")
         tgt_frame.pack(side="left", padx=(30, 0))
         ctk.CTkLabel(tgt_frame, text="Target Emulator:",
-                     font=ctk.CTkFont(size=13), anchor="w").pack(anchor="w")
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), anchor="w").pack(anchor="w")
         self.target_var = ctk.StringVar(value=emulator_names[1] if len(emulator_names) > 1 else "")
         self.target_menu = ctk.CTkOptionMenu(
             tgt_frame, variable=self.target_var, values=emulator_names,
             width=180, height=34)
         self.target_menu.pack(anchor="w", pady=5)
         self.target_status = ctk.CTkLabel(tgt_frame, text="",
-                                          font=ctk.CTkFont(size=11), text_color="#888888", anchor="w")
+                                          font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM, anchor="w")
         self.target_status.pack(anchor="w")
 
-        # Data category checkboxes
-        cat_frame = ctk.CTkFrame(migrate_section, fg_color="#1e1e38", corner_radius=8)
+        cat_frame = ctk.CTkFrame(migrate_section, fg_color=theme.BG_CARD_INNER, corner_radius=8)
         cat_frame.pack(fill="x", padx=15, pady=(10, 5))
         ctk.CTkLabel(cat_frame, text="Data to Migrate:",
-                     font=ctk.CTkFont(size=13, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=12, pady=(10, 5))
 
         self.category_vars = {}
@@ -121,83 +116,77 @@ class MigrationPage(BasePage):
             row = ctk.CTkFrame(cat_frame, fg_color="transparent")
             row.pack(fill="x", padx=12, pady=2)
             ctk.CTkCheckBox(row, text=label, variable=var,
-                            font=ctk.CTkFont(size=12)).pack(side="left")
+                            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM)).pack(side="left")
             ctk.CTkLabel(row, text=f"  â€” {desc_text}",
-                         font=ctk.CTkFont(size=11), text_color="#777777"
+                         font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_VERSION
                          ).pack(side="left")
 
-        # Overwrite option
         ow_frame = ctk.CTkFrame(migrate_section, fg_color="transparent")
         ow_frame.pack(fill="x", padx=15, pady=5)
         self.overwrite_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(ow_frame, text="Overwrite existing files at target",
                         variable=self.overwrite_var,
-                        font=ctk.CTkFont(size=12)).pack(side="left")
+                        font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM)).pack(side="left")
         ctk.CTkLabel(ow_frame, text="  (unchecked = skip files that already exist)",
-                     font=ctk.CTkFont(size=11), text_color="#777777").pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_VERSION).pack(side="left")
 
-        # Scan & Migrate buttons
         btn_frame = ctk.CTkFrame(migrate_section, fg_color="transparent")
         btn_frame.pack(fill="x", padx=15, pady=(10, 5))
 
         ctk.CTkButton(btn_frame, text="\u2315  Scan Source", width=140,
-                      fg_color="#1f538d", hover_color="#163b6a",
+                      fg_color=theme.PRIMARY, hover_color=theme.HOVER_PRIMARY,
                       command=self._scan_source, height=36, corner_radius=8
                       ).pack(side="left", padx=(0, 10))
 
         self.migrate_btn = ctk.CTkButton(btn_frame, text="\u27a1  Migrate Now", width=160,
-                      fg_color="#2fa572", hover_color="#106a43",
+                      fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS,
                       command=self._start_migration, height=36, corner_radius=8)
         self.migrate_btn.pack(side="left")
 
-        # Scan results area
         self.scan_result_frame = ctk.CTkFrame(migrate_section, fg_color="transparent")
         self.scan_result_frame.pack(fill="x", padx=15, pady=(5, 15))
 
         # === Section 2: Export / Import ===
-        export_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        export_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         export_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(export_section, text="Direct Export / Import",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(export_section,
                      text="Export ALL emulator data directly â€” no need to use the emulator's own export tool. "
                           "This reads data straight from the emulator's AppData directories, including keys, "
                           "firmware, and profiles that aren't in the SDMC root.",
-                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w", wraplength=700
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=700
                      ).pack(fill="x", padx=15, pady=(0, 10))
 
-        # Direct export info note
-        direct_note = ctk.CTkFrame(export_section, fg_color="#1a1a30", corner_radius=6)
+        direct_note = ctk.CTkFrame(export_section, fg_color=theme.BG_CARD_DEEP, corner_radius=6)
         direct_note.pack(fill="x", padx=15, pady=(0, 8))
         ctk.CTkLabel(direct_note,
             text="\u2139  Direct Export reads from emulator directories automatically â€” "
                  "you do NOT need to open the emulator first or use its Data Manager page.",
-            font=ctk.CTkFont(size=11), text_color="#6688bb", anchor="w",
+            font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.INFO, anchor="w",
             wraplength=680, justify="left"
         ).pack(fill="x", padx=12, pady=8)
 
-        # Export emulator selection
         exp_sel_frame = ctk.CTkFrame(export_section, fg_color="transparent")
         exp_sel_frame.pack(fill="x", padx=15, pady=(0, 5))
         ctk.CTkLabel(exp_sel_frame, text="Export from:",
-                     font=ctk.CTkFont(size=13), anchor="w").pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), anchor="w").pack(side="left")
         self.export_emu_var = ctk.StringVar(value=emulator_names[0] if emulator_names else "")
         ctk.CTkOptionMenu(exp_sel_frame, variable=self.export_emu_var,
                           values=emulator_names, width=180, height=32,
                           command=self._on_export_emu_changed
                           ).pack(side="left", padx=10)
         self._export_emu_status = ctk.CTkLabel(exp_sel_frame, text="",
-                                               font=ctk.CTkFont(size=11),
-                                               text_color="#888888", anchor="w")
+                                               font=ctk.CTkFont(size=theme.FONT_BODY),
+                                               text_color=theme.TEXT_DIM, anchor="w")
         self._export_emu_status.pack(side="left", padx=5)
 
-        # Extra data checkboxes
-        self._extra_cat_frame = ctk.CTkFrame(export_section, fg_color="#1e1e38", corner_radius=8)
+        self._extra_cat_frame = ctk.CTkFrame(export_section, fg_color=theme.BG_CARD_INNER, corner_radius=8)
         self._extra_cat_frame.pack(fill="x", padx=15, pady=(0, 8))
         ctk.CTkLabel(self._extra_cat_frame, text="Extended Data (beyond SDMC):",
-                     font=ctk.CTkFont(size=13, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=12, pady=(10, 5))
 
         self.extra_include_sdmc = ctk.BooleanVar(value=True)
@@ -207,17 +196,17 @@ class MigrationPage(BasePage):
         row_sdmc.pack(fill="x", padx=12, pady=2)
         ctk.CTkCheckBox(row_sdmc, text="SDMC Data (mods, plugins, saves)",
                         variable=self.extra_include_sdmc,
-                        font=ctk.CTkFont(size=12)).pack(side="left")
+                        font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM)).pack(side="left")
 
         row_extra = ctk.CTkFrame(self._extra_cat_frame, fg_color="transparent")
         row_extra.pack(fill="x", padx=12, pady=2)
         ctk.CTkCheckBox(row_extra, text="Extended Data (keys, firmware, profiles)",
                         variable=self.extra_include_extra,
-                        font=ctk.CTkFont(size=12)).pack(side="left")
+                        font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM)).pack(side="left")
 
         self._extra_details = ctk.CTkLabel(self._extra_cat_frame, text="",
-                                           font=ctk.CTkFont(size=11),
-                                           text_color="#888888", anchor="w",
+                                           font=ctk.CTkFont(size=theme.FONT_BODY),
+                                           text_color=theme.TEXT_DIM, anchor="w",
                                            wraplength=680, justify="left")
         self._extra_details.pack(fill="x", padx=12, pady=(3, 8))
 
@@ -226,48 +215,45 @@ class MigrationPage(BasePage):
 
         self._direct_export_btn = ctk.CTkButton(
             exp_btn_frame, text="\u21e9  Direct Export", width=180,
-            fg_color="#2fa572", hover_color="#248a5d",
+            fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS_ALT,
             command=self._direct_export, height=36, corner_radius=8)
         self._direct_export_btn.pack(side="left", padx=(0, 10))
 
         ctk.CTkButton(exp_btn_frame, text="\u21e7  Import from Folder", width=180,
-                      fg_color="#555555", hover_color="#444444",
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                       command=self._import_data, height=36, corner_radius=8
                       ).pack(side="left")
 
-        # Export progress
         self._export_progress_frame = ctk.CTkFrame(export_section, fg_color="transparent")
         self._export_progress_frame.pack(fill="x", padx=15, pady=(0, 5))
 
         self._export_status = ctk.CTkLabel(self._export_progress_frame, text="",
-                                           font=ctk.CTkFont(size=11),
-                                           text_color="#6688bb", anchor="w")
+                                           font=ctk.CTkFont(size=theme.FONT_BODY),
+                                           text_color=theme.INFO, anchor="w")
         self._export_progress_bar = ctk.CTkProgressBar(self._export_progress_frame,
-                                                        height=4, fg_color="#2a2a45",
-                                                        progress_color="#2fa572")
-        # Not shown until export starts
+                                                        height=4, fg_color=theme.PROGRESS_TRACK,
+                                                        progress_color=theme.SUCCESS)
 
         ctk.CTkFrame(export_section, height=8, fg_color="transparent").pack()
 
         # === Section 3: Emulator Version Upgrade ===
-        upgrade_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        upgrade_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         upgrade_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(upgrade_section, text="Emulator Version Upgrade",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(upgrade_section,
                      text="Upgrade to a new version of the same emulator while preserving all your data â€” "
                           "mods, plugins, saves, encryption keys, shader cache, and settings.",
-                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
                      wraplength=800, justify="left"
                      ).pack(fill="x", padx=15, pady=(0, 10))
 
-        # Emulator selection
         up_sel = ctk.CTkFrame(upgrade_section, fg_color="transparent")
         up_sel.pack(fill="x", padx=15, pady=5)
 
-        ctk.CTkLabel(up_sel, text="Emulator:", font=ctk.CTkFont(size=13),
+        ctk.CTkLabel(up_sel, text="Emulator:", font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
                      anchor="w", width=100).pack(side="left")
         self.upgrade_emu_var = ctk.StringVar(value=emulator_names[0] if emulator_names else "")
         ctk.CTkOptionMenu(
@@ -275,98 +261,88 @@ class MigrationPage(BasePage):
             width=180, height=34,
         ).pack(side="left", padx=10)
 
-        # Old path
         old_path_frame = ctk.CTkFrame(upgrade_section, fg_color="transparent")
         old_path_frame.pack(fill="x", padx=15, pady=5)
         ctk.CTkLabel(old_path_frame, text="Old Data Root:",
-                     font=ctk.CTkFont(size=13), anchor="w", width=100).pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), anchor="w", width=100).pack(side="left")
         self.upgrade_old_var = ctk.StringVar()
         ctk.CTkEntry(old_path_frame, textvariable=self.upgrade_old_var,
                      width=400, height=32,
                      placeholder_text="Path to old emulator data folder..."
                      ).pack(side="left", padx=10)
         ctk.CTkButton(old_path_frame, text="Browse", width=80, height=32,
-                      fg_color="#555555", hover_color="#444444",
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                       command=self._browse_upgrade_old).pack(side="left")
         ctk.CTkButton(old_path_frame, text="Auto-Detect", width=100, height=32,
-                      fg_color="#3a5a8a", hover_color="#2a4a7a",
+                      fg_color=theme.BTN_UPGRADE, hover_color=theme.HOVER_UPGRADE,
                       command=self._auto_detect_upgrade_old).pack(side="left", padx=(5, 0))
 
-        # New path
         new_path_frame = ctk.CTkFrame(upgrade_section, fg_color="transparent")
         new_path_frame.pack(fill="x", padx=15, pady=5)
         ctk.CTkLabel(new_path_frame, text="New Data Root:",
-                     font=ctk.CTkFont(size=13), anchor="w", width=100).pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), anchor="w", width=100).pack(side="left")
         self.upgrade_new_var = ctk.StringVar()
         ctk.CTkEntry(new_path_frame, textvariable=self.upgrade_new_var,
                      width=400, height=32,
                      placeholder_text="Path to new emulator data folder..."
                      ).pack(side="left", padx=10)
         ctk.CTkButton(new_path_frame, text="Browse", width=80, height=32,
-                      fg_color="#555555", hover_color="#444444",
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                       command=self._browse_upgrade_new).pack(side="left")
 
-        # Overwrite option
         up_opts = ctk.CTkFrame(upgrade_section, fg_color="transparent")
         up_opts.pack(fill="x", padx=15, pady=5)
         self.upgrade_overwrite_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(up_opts, text="Overwrite existing files",
                         variable=self.upgrade_overwrite_var,
-                        font=ctk.CTkFont(size=12)).pack(side="left")
+                        font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM)).pack(side="left")
 
-        # Scan / Execute buttons
         up_btns = ctk.CTkFrame(upgrade_section, fg_color="transparent")
         up_btns.pack(fill="x", padx=15, pady=(5, 5))
 
         self.upgrade_scan_btn = ctk.CTkButton(
             up_btns, text="Scan Data", width=120, height=34,
-            fg_color="#3a5a8a", hover_color="#2a4a7a",
+            fg_color=theme.BTN_UPGRADE, hover_color=theme.HOVER_UPGRADE,
             command=self._scan_upgrade)
         self.upgrade_scan_btn.pack(side="left", padx=(0, 10))
 
         self.upgrade_exec_btn = ctk.CTkButton(
             up_btns, text="Upgrade", width=120, height=34,
-            fg_color="#2fa572", hover_color="#106a43",
+            fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS,
             state="disabled", command=self._execute_upgrade)
         self.upgrade_exec_btn.pack(side="left")
 
         self.upgrade_status = ctk.CTkLabel(up_btns, text="",
-                                           font=ctk.CTkFont(size=11),
-                                           text_color="#888888", anchor="w")
+                                           font=ctk.CTkFont(size=theme.FONT_BODY),
+                                           text_color=theme.TEXT_DIM, anchor="w")
         self.upgrade_status.pack(side="left", padx=15)
 
-        # Upgrade scan results
         self._upgrade_results_frame = ctk.CTkFrame(upgrade_section, fg_color="transparent")
         self._upgrade_results_frame.pack(fill="x", padx=15, pady=(0, 10))
 
-        # Upgrade progress bar
         self._upgrade_progress = ctk.CTkProgressBar(upgrade_section, width=600,
-                                                      progress_color="#2fa572")
-        # Not shown until upgrade starts
+                                                      progress_color=theme.SUCCESS)
 
         ctk.CTkFrame(upgrade_section, height=8, fg_color="transparent").pack()
 
-        # Store upgrade plan and checkbox vars
         self._upgrade_plan = None
         self._upgrade_check_vars: dict[str, ctk.BooleanVar] = {}
 
         # === Section 4: Detected Emulators Info ===
-        info_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        info_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         info_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(info_section, text="Detected Emulators",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
 
         self.detected_info_frame = ctk.CTkFrame(info_section, fg_color="transparent")
         self.detected_info_frame.pack(fill="x", padx=15, pady=(0, 15))
 
-        # Progress bar (hidden by default)
-        self.progress_frame = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
-        # Not packed initially
+        self.progress_frame = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
 
         self.progress_label = ctk.CTkLabel(self.progress_frame, text="",
-                                           font=ctk.CTkFont(size=12), anchor="w")
+                                           font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), anchor="w")
         self.progress_label.pack(fill="x", padx=15, pady=(15, 5))
 
         self.progress_bar = ctk.CTkProgressBar(self.progress_frame, width=600)
@@ -382,18 +358,15 @@ class MigrationPage(BasePage):
             self._refresh_detected_async()
 
     def _refresh_detected_async(self):
-        """Refresh detected emulators in a background thread."""
-        # Show placeholder while loading
         for w in self.detected_info_frame.winfo_children():
             w.destroy()
         ctk.CTkLabel(self.detected_info_frame,
                      text="Detecting emulators...",
-                     font=ctk.CTkFont(size=12), text_color="#888888"
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_DIM
                      ).pack(anchor="w", pady=5)
 
         def do_detect():
             detected = auto_detect_all_emulators()
-            # Gather data for each detected emulator
             results = []
             for emu_name, emu_path in detected:
                 items = scan_emulator_data(emu_path)
@@ -412,7 +385,6 @@ class MigrationPage(BasePage):
         threading.Thread(target=do_detect, daemon=True).start()
 
     def _render_detected(self, results):
-        """Render detected emulators from pre-computed data."""
         self._detected_loaded = True
         for w in self.detected_info_frame.winfo_children():
             w.destroy()
@@ -420,41 +392,39 @@ class MigrationPage(BasePage):
         if not results:
             ctk.CTkLabel(self.detected_info_frame,
                          text="No emulators detected. Install an emulator and set up SSBU first.",
-                         font=ctk.CTkFont(size=12), text_color="#888888"
+                         font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_DIM
                          ).pack(anchor="w", pady=5)
             return
 
         for emu_name, emu_path, total_files, total_size in results:
-            row = ctk.CTkFrame(self.detected_info_frame, fg_color="#1e1e38", corner_radius=6)
+            row = ctk.CTkFrame(self.detected_info_frame, fg_color=theme.BG_CARD_INNER, corner_radius=6)
             row.pack(fill="x", pady=3)
 
             name_label = ctk.CTkLabel(row, text=f"\u2713  {emu_name}",
-                                      font=ctk.CTkFont(size=13, weight="bold"),
-                                      text_color="#2fa572", anchor="w")
+                                      font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"),
+                                      text_color=theme.SUCCESS, anchor="w")
             name_label.pack(side="left", padx=(12, 10), pady=8)
 
             path_label = ctk.CTkLabel(row, text=str(emu_path),
-                                      font=ctk.CTkFont(size=11), text_color="#7a7a9a", anchor="w")
+                                      font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_SUBTLE, anchor="w")
             path_label.pack(side="left", padx=5, pady=8)
 
             size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
             if total_files > 0:
                 size_label = ctk.CTkLabel(row,
                     text=f"{total_files} files, {size_mb:.1f} MB",
-                    font=ctk.CTkFont(size=11), text_color="#6688bb", anchor="e")
+                    font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.INFO, anchor="e")
                 size_label.pack(side="right", padx=12, pady=8)
 
     def _on_source_changed(self, _value=None):
-        """Update source status when selection changes."""
         src_name = self.source_var.get()
         src_path = get_emulator_sdmc_path(src_name)
         if src_path:
-            self.source_status.configure(text=f"Found: {src_path}", text_color="#2fa572")
+            self.source_status.configure(text=f"Found: {src_path}", text_color=theme.SUCCESS)
         else:
-            self.source_status.configure(text="Not installed or no data found", text_color="#e94560")
+            self.source_status.configure(text="Not installed or no data found", text_color=theme.ACCENT)
 
     def _scan_source(self):
-        """Scan the source emulator and show what data is available."""
         src_name = self.source_var.get()
         src_path = get_emulator_sdmc_path(src_name)
 
@@ -464,7 +434,6 @@ class MigrationPage(BasePage):
                 f"Make sure {src_name} is installed and has SSBU data.")
             return
 
-        # Clear previous results
         for w in self.scan_result_frame.winfo_children():
             w.destroy()
 
@@ -474,42 +443,40 @@ class MigrationPage(BasePage):
         if not found:
             ctk.CTkLabel(self.scan_result_frame,
                          text="No SSBU data found in source emulator.",
-                         font=ctk.CTkFont(size=12), text_color="#e94560"
+                         font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.ACCENT
                          ).pack(anchor="w", pady=5)
             return
 
         ctk.CTkLabel(self.scan_result_frame,
                      text=f"Found {len(found)} data categories in {src_name}:",
-                     font=ctk.CTkFont(size=12, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM, weight="bold"), anchor="w"
                      ).pack(anchor="w", pady=(5, 5))
 
         for item in found:
             size_mb = item.total_size / (1024 * 1024)
-            row = ctk.CTkFrame(self.scan_result_frame, fg_color="#1e1e38", corner_radius=6)
+            row = ctk.CTkFrame(self.scan_result_frame, fg_color=theme.BG_CARD_INNER, corner_radius=6)
             row.pack(fill="x", pady=2)
 
             ctk.CTkLabel(row, text=f"  \u2713  {item.label}",
-                         font=ctk.CTkFont(size=12, weight="bold"),
-                         text_color="#2fa572", anchor="w"
+                         font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM, weight="bold"),
+                         text_color=theme.SUCCESS, anchor="w"
                          ).pack(side="left", padx=10, pady=6)
             ctk.CTkLabel(row,
                          text=f"{item.file_count} files, {size_mb:.1f} MB",
-                         font=ctk.CTkFont(size=11), text_color="#6688bb", anchor="e"
+                         font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.INFO, anchor="e"
                          ).pack(side="right", padx=10, pady=6)
 
         total_files = sum(i.file_count for i in found)
         total_mb = sum(i.total_size for i in found) / (1024 * 1024)
         ctk.CTkLabel(self.scan_result_frame,
                      text=f"Total: {total_files} files, {total_mb:.1f} MB",
-                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w"
                      ).pack(anchor="w", pady=(5, 0))
 
     def _get_selected_categories(self) -> list[str]:
-        """Get list of selected data categories."""
         return [label for label, var in self.category_vars.items() if var.get()]
 
     def _start_migration(self):
-        """Start the emulator-to-emulator migration."""
         if self._migrating:
             return
 
@@ -593,7 +560,6 @@ class MigrationPage(BasePage):
         threading.Thread(target=run_migration, daemon=True).start()
 
     def _update_progress(self, message: str, fraction: float):
-        """Update progress bar from main thread."""
         try:
             self.progress_label.configure(text=message)
             self.progress_bar.set(fraction)
@@ -601,7 +567,6 @@ class MigrationPage(BasePage):
             pass
 
     def _migration_done(self, result, target_name: str):
-        """Called when migration completes."""
         self._migrating = False
         self.migrate_btn.configure(state="normal", text="\u27a1  Migrate Now")
 
@@ -634,7 +599,6 @@ class MigrationPage(BasePage):
             messagebox.showerror("Migration Failed", msg)
 
     def _switch_active_emulator(self, emulator_name: str):
-        """Switch the app to use a different emulator."""
         from src.paths import derive_mods_path, derive_plugins_path
         path = get_emulator_sdmc_path(emulator_name)
         if path:
@@ -651,12 +615,11 @@ class MigrationPage(BasePage):
                 f"SDMC path: {path}")
 
     def _on_export_emu_changed(self, _value=None):
-        """Update export section when emulator selection changes."""
         emu = self.export_emu_var.get()
         sdmc = get_emulator_sdmc_path(emu)
 
         if sdmc:
-            self._export_emu_status.configure(text=f"Found: {sdmc}", text_color="#2fa572")
+            self._export_emu_status.configure(text=f"Found: {sdmc}", text_color=theme.SUCCESS)
             # Show extended data info
             extra_items = scan_emulator_extended_data(emu)
             found_extra = [i for i in extra_items if i.exists]
@@ -669,11 +632,10 @@ class MigrationPage(BasePage):
                     text="No extended data directories found for this emulator.")
         else:
             self._export_emu_status.configure(
-                text="Not installed or no data found", text_color="#e94560")
+                text="Not installed or no data found", text_color=theme.ACCENT)
             self._extra_details.configure(text="")
 
     def _direct_export(self):
-        """Direct export: reads data from emulator directories without emulator UI."""
         if self._migrating:
             return
 
@@ -707,7 +669,7 @@ class MigrationPage(BasePage):
         self._export_status.pack(fill="x", pady=(5, 2))
         self._export_progress_bar.pack(fill="x", pady=(0, 5))
         self._export_progress_bar.set(0)
-        self._export_status.configure(text="Starting export...", text_color="#6688bb")
+        self._export_status.configure(text="Starting export...", text_color=theme.INFO)
 
         def progress_cb(msg, frac):
             try:
@@ -743,7 +705,7 @@ class MigrationPage(BasePage):
         self._direct_export_btn.configure(state="normal", text="\u21e9  Direct Export")
 
         if result is None:
-            self._export_status.configure(text="Export failed!", text_color="#e94560")
+            self._export_status.configure(text="Export failed!", text_color=theme.ACCENT)
             messagebox.showerror("Export Failed", "An unexpected error occurred during export.")
             return
 
@@ -751,7 +713,7 @@ class MigrationPage(BasePage):
             size_mb = result.bytes_copied / (1024 * 1024)
             self._export_status.configure(
                 text=f"Exported {result.files_copied} files ({size_mb:.1f} MB)",
-                text_color="#2fa572")
+                text_color=theme.SUCCESS)
             self._export_progress_bar.set(1.0)
             messagebox.showinfo("Export Complete",
                 f"Direct export complete!\n\n"
@@ -761,7 +723,7 @@ class MigrationPage(BasePage):
                 f"Saved to: {export_path}\n\n"
                 f"You can import this into any emulator using the Import button.")
         else:
-            self._export_status.configure(text="Export had errors", text_color="#d4a017")
+            self._export_status.configure(text="Export had errors", text_color=theme.WARNING)
             messagebox.showwarning("Export Warnings",
                 f"Export completed with {len(result.errors)} error(s):\n"
                 + "\n".join(result.errors[:10]))
@@ -813,7 +775,6 @@ class MigrationPage(BasePage):
             messagebox.showerror("Export Failed", "\n".join(result.errors[:10]))
 
     def _import_data(self):
-        """Import SSBU data from an exported folder."""
         settings = self.app.config_manager.settings
         if not settings.eden_sdmc_path:
             messagebox.showwarning("Warning", "Set up your emulator SDMC path in Settings first.")
@@ -920,7 +881,6 @@ class MigrationPage(BasePage):
             self.upgrade_new_var.set(path)
 
     def _auto_detect_upgrade_old(self):
-        """Auto-detect the current data root for the selected emulator."""
         from src.core.emulator_migrator import get_emulator_data_root
         emu = self.upgrade_emu_var.get()
         if not emu:
@@ -929,13 +889,12 @@ class MigrationPage(BasePage):
         if root:
             self.upgrade_old_var.set(str(root))
             self.upgrade_status.configure(
-                text=f"Detected {emu} at: {root}", text_color="#2fa572")
+                text=f"Detected {emu} at: {root}", text_color=theme.SUCCESS)
         else:
             self.upgrade_status.configure(
-                text=f"Could not auto-detect {emu} data directory.", text_color="#e94560")
+                text=f"Could not auto-detect {emu} data directory.", text_color=theme.ACCENT)
 
     def _scan_upgrade(self):
-        """Scan old data root and show what can be migrated."""
         from src.core.emulator_migrator import scan_upgrade_data
 
         emu = self.upgrade_emu_var.get()
@@ -967,7 +926,6 @@ class MigrationPage(BasePage):
         plan = scan_upgrade_data(emu, old, new)
         self._upgrade_plan = plan
 
-        # Clear previous results
         for w in self._upgrade_results_frame.winfo_children():
             w.destroy()
         self._upgrade_check_vars.clear()
@@ -975,7 +933,7 @@ class MigrationPage(BasePage):
         if not plan.items:
             ctk.CTkLabel(self._upgrade_results_frame,
                          text="No data found in the old emulator directory.",
-                         font=ctk.CTkFont(size=12), text_color="#e94560"
+                         font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.ACCENT
                          ).pack(anchor="w", pady=5)
             self.upgrade_exec_btn.configure(state="disabled")
             return
@@ -984,7 +942,7 @@ class MigrationPage(BasePage):
         ctk.CTkLabel(self._upgrade_results_frame,
             text=f"Found {len(plan.items)} data categories, "
                  f"{plan.total_files} files ({plan.total_size_mb:.1f} MB)",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color="#2fa572",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM, weight="bold"), text_color=theme.SUCCESS,
             anchor="w"
         ).pack(fill="x", pady=(8, 5))
 
@@ -993,29 +951,28 @@ class MigrationPage(BasePage):
             var = ctk.BooleanVar(value=True)
             self._upgrade_check_vars[item.label] = var
 
-            row = ctk.CTkFrame(self._upgrade_results_frame, fg_color="#1e1e38",
+            row = ctk.CTkFrame(self._upgrade_results_frame, fg_color=theme.BG_CARD_INNER,
                                corner_radius=6)
             row.pack(fill="x", pady=2)
 
             cb = ctk.CTkCheckBox(row, text=item.label, variable=var,
-                                 font=ctk.CTkFont(size=12))
+                                 font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM))
             cb.pack(side="left", padx=(12, 8), pady=6)
 
             size_mb = item.total_size / (1024 * 1024)
             detail = f"{item.file_count} files, {size_mb:.1f} MB"
-            ctk.CTkLabel(row, text=detail, font=ctk.CTkFont(size=11),
-                         text_color="#888888", anchor="w").pack(side="left", padx=5)
+            ctk.CTkLabel(row, text=detail, font=ctk.CTkFont(size=theme.FONT_BODY),
+                         text_color=theme.TEXT_DIM, anchor="w").pack(side="left", padx=5)
 
-            ctk.CTkLabel(row, text=item.description, font=ctk.CTkFont(size=10),
-                         text_color="#666666", anchor="w").pack(side="left", padx=10)
+            ctk.CTkLabel(row, text=item.description, font=ctk.CTkFont(size=theme.FONT_CAPTION),
+                         text_color=theme.TEXT_DISABLED, anchor="w").pack(side="left", padx=10)
 
         self.upgrade_exec_btn.configure(state="normal")
         self.upgrade_status.configure(
             text="Review categories and click 'Upgrade' to proceed.",
-            text_color="#6688bb")
+            text_color=theme.INFO)
 
     def _execute_upgrade(self):
-        """Execute the emulator version upgrade."""
         from src.core.emulator_migrator import execute_upgrade
 
         if self._migrating or not self._upgrade_plan:
@@ -1055,7 +1012,7 @@ class MigrationPage(BasePage):
         def progress_cb(msg, frac):
             try:
                 self.after(0, lambda: self.upgrade_status.configure(
-                    text=msg, text_color="#6688bb"))
+                    text=msg, text_color=theme.INFO))
                 self.after(0, lambda: self._upgrade_progress.set(frac))
             except Exception:
                 pass
@@ -1082,7 +1039,7 @@ class MigrationPage(BasePage):
             self.upgrade_status.configure(
                 text=f"Upgrade complete! {result.files_copied} files "
                      f"({size_mb:.1f} MB) in {result.duration_seconds:.1f}s",
-                text_color="#2fa572")
+                text_color=theme.SUCCESS)
             messagebox.showinfo("Upgrade Complete",
                 f"Successfully upgraded {self._upgrade_plan.emulator_name}!\n\n"
                 f"Files copied: {result.files_copied}\n"
@@ -1110,7 +1067,7 @@ class MigrationPage(BasePage):
         else:
             self.upgrade_status.configure(
                 text=f"Upgrade failed with {len(result.errors)} error(s)",
-                text_color="#e94560")
+                text_color=theme.ACCENT)
             messagebox.showerror("Upgrade Failed",
                 f"Errors during upgrade:\n\n" +
                 "\n".join(result.errors[:10]))

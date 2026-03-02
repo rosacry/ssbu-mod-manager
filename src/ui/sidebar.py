@@ -1,11 +1,13 @@
 """Sidebar navigation component with icons and active indicator."""
 import customtkinter as ctk
 
+from src.ui import theme
+
 SIDEBAR_WIDTH = 230
-SIDEBAR_BG = "#0e0e1a"
-SIDEBAR_HOVER = "#1c1c34"
-SIDEBAR_ACTIVE = "#162850"
-ACCENT_COLOR = "#e94560"
+SIDEBAR_BG = theme.BG_SIDEBAR
+SIDEBAR_HOVER = theme.BG_ROW
+SIDEBAR_ACTIVE = theme.SIDEBAR_ACTIVE
+ACCENT_COLOR = theme.ACCENT
 
 # Navigation items with Unicode icons
 NAV_ITEMS = [
@@ -31,11 +33,9 @@ class Sidebar(ctk.CTkFrame):
 
         self.pack_propagate(False)
 
-        # Brand header with accent (fixed, not scrollable)
         brand_area = ctk.CTkFrame(self, fg_color="transparent")
         brand_area.pack(fill="x", padx=0, pady=(0, 0))
 
-        # Top accent line
         ctk.CTkFrame(brand_area, height=3, fg_color=ACCENT_COLOR,
                       corner_radius=0).pack(fill="x")
 
@@ -43,55 +43,47 @@ class Sidebar(ctk.CTkFrame):
         brand_inner.pack(fill="x", padx=22, pady=(16, 4))
 
         title = ctk.CTkLabel(brand_inner, text="SSBU",
-                             font=ctk.CTkFont(family="Segoe UI", size=26, weight="bold"),
+                             font=ctk.CTkFont(family="Segoe UI", size=theme.FONT_BRAND, weight="bold"),
                              text_color=ACCENT_COLOR)
         title.pack(anchor="w")
         subtitle = ctk.CTkLabel(brand_inner, text="Mod Manager",
-                                font=ctk.CTkFont(family="Segoe UI", size=14),
-                                text_color="#6a6a8a")
+                                font=ctk.CTkFont(family="Segoe UI", size=theme.FONT_CARD_HEADING),
+                                text_color=theme.TEXT_FAINT)
         subtitle.pack(anchor="w", pady=(0, 0))
 
-        # Separator
-        ctk.CTkFrame(self, height=1, fg_color="#1e1e34").pack(fill="x", padx=18, pady=(10, 8))
+        ctk.CTkFrame(self, height=1, fg_color=theme.BORDER_SEPARATOR).pack(fill="x", padx=18, pady=(10, 8))
 
-        # Non-scroll container with compact spacing so the full menu fits.
         self._nav_container = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
         self._nav_container.pack(fill="both", expand=True, padx=0, pady=0)
 
-        # Section label
         ctk.CTkLabel(self._nav_container, text="NAVIGATION",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color="#3a3a55", anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_CAPTION, weight="bold"),
+                     text_color=theme.TEXT_HEADING_DIM, anchor="w"
                      ).pack(fill="x", padx=16, pady=(2, 4))
 
-        # Navigation buttons with active indicator bars
         for page_id, icon, label in NAV_ITEMS:
             self._add_nav_btn(page_id, f"{icon}  {label}")
 
-        # Separator before tools
-        ctk.CTkFrame(self._nav_container, height=1, fg_color="#1e1e34"
+        ctk.CTkFrame(self._nav_container, height=1, fg_color=theme.BORDER_SEPARATOR
                      ).pack(fill="x", padx=10, pady=(8, 6))
 
         ctk.CTkLabel(self._nav_container, text="TOOLS",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color="#3a3a55", anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_CAPTION, weight="bold"),
+                     text_color=theme.TEXT_HEADING_DIM, anchor="w"
                      ).pack(fill="x", padx=16, pady=(0, 4))
 
-        # Developer button
-        self._add_nav_btn("developer", "\u2630  Developer", text_color="#555570")
+        self._add_nav_btn("developer", "\u2630  Developer", text_color=theme.TEXT_INACTIVE)
 
-        # Settings button
         self._add_nav_btn("settings", "\u2731  Settings", bottom_pad=True)
 
         self._highlight("dashboard")
 
-    def _add_nav_btn(self, page_id, label, text_color="#9a9ab0", bottom_pad=False):
+    def _add_nav_btn(self, page_id, label, text_color=theme.TEXT_MUTED, bottom_pad=False):
         """Add a navigation button with active indicator."""
         row = ctk.CTkFrame(self._nav_container, fg_color="transparent", height=36)
         row.pack(fill="x", padx=0, pady=(0, 10) if bottom_pad else (0, 1))
         row.pack_propagate(False)
 
-        # Active indicator bar (left edge)
         indicator = ctk.CTkFrame(row, width=3, fg_color="transparent",
                                  corner_radius=2)
         indicator.pack(side="left", fill="y", pady=5)
@@ -100,7 +92,7 @@ class Sidebar(ctk.CTkFrame):
         btn = ctk.CTkButton(
             row,
             text=label,
-            font=ctk.CTkFont(family="Segoe UI", size=12),
+            font=ctk.CTkFont(family="Segoe UI", size=theme.FONT_BODY_MEDIUM),
             fg_color="transparent",
             hover_color=SIDEBAR_HOVER,
             anchor="w",
@@ -114,7 +106,7 @@ class Sidebar(ctk.CTkFrame):
 
     def _on_click(self, page_id):
         if page_id == self.active_page:
-            return  # Already on this page
+            return
         self.on_navigate(page_id)
 
     def set_active(self, page_id):
@@ -126,13 +118,13 @@ class Sidebar(ctk.CTkFrame):
         for pid, btn in self.buttons.items():
             indicator = self.indicators.get(pid)
             if pid == page_id:
-                btn.configure(fg_color=SIDEBAR_ACTIVE, text_color="white")
+                btn.configure(fg_color=SIDEBAR_ACTIVE, text_color=theme.TEXT_PRIMARY)
                 if indicator:
                     indicator.configure(fg_color=ACCENT_COLOR)
             else:
                 if pid == "developer":
-                    btn.configure(fg_color="transparent", text_color="#555570")
+                    btn.configure(fg_color="transparent", text_color=theme.TEXT_INACTIVE)
                 else:
-                    btn.configure(fg_color="transparent", text_color="#9a9ab0")
+                    btn.configure(fg_color="transparent", text_color=theme.TEXT_MUTED)
                 if indicator:
                     indicator.configure(fg_color="transparent")

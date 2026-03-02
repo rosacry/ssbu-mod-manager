@@ -10,8 +10,8 @@ from src.ui.base_page import BasePage
 from src.ui.widgets.conflict_card import ConflictCard
 from src.models.conflict import ResolutionStrategy, ConflictSeverity
 from src.utils.logger import logger
+from src.ui import theme
 
-# Explanations for conflict types
 CONFLICT_EXPLANATIONS = {
     ".nestedmod": (
         "Folder Structure Conflicts",
@@ -91,7 +91,7 @@ class ConflictsPage(BasePage):
         header_frame.pack(fill="x", padx=30, pady=(25, 10))
 
         title = ctk.CTkLabel(header_frame, text="Conflicts",
-                             font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
+                             font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE, weight="bold"), anchor="w")
         title.pack(side="left")
 
         self.header_btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
@@ -99,27 +99,26 @@ class ConflictsPage(BasePage):
                                       command=self._force_scan, corner_radius=8, height=34)
         self.fix_text_btn_header = ctk.CTkButton(
             self.header_btn_frame, text="Fix Text Conflicts",
-            fg_color="#b08a2a", hover_color="#8a6a1a",
+            fg_color=theme.WARNING_ALT, hover_color=theme.HOVER_WARNING,
             command=self._fix_text_conflicts, width=185,
             corner_radius=8, height=34,
         )
         self.restore_btn_header = ctk.CTkButton(
             self.header_btn_frame, text="Restore Originals",
-            fg_color="#7a2f3a", hover_color="#5f2530",
+            fg_color=theme.DANGER_CLEAR, hover_color=theme.HOVER_DANGER_CLEAR,
             command=self._restore_originals, width=165,
             corner_radius=8, height=34,
         )
 
-        # Explanation section
-        explain_frame = ctk.CTkFrame(self, fg_color="#1e1e38", corner_radius=10)
+        explain_frame = ctk.CTkFrame(self, fg_color=theme.BG_CARD_INNER, corner_radius=10)
         explain_frame.pack(fill="x", padx=30, pady=(0, 8))
 
         explain_inner = ctk.CTkFrame(explain_frame, fg_color="transparent")
         explain_inner.pack(fill="x", padx=15, pady=12)
 
         ctk.CTkLabel(explain_inner, text="What are conflicts?",
-                     font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
-                     text_color="#cccccc").pack(anchor="w")
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"), anchor="w",
+                     text_color=theme.TEXT_SECONDARY).pack(anchor="w")
 
         ctk.CTkLabel(explain_inner,
                      text="Conflicts occur when two or more mods modify the same game file. "
@@ -128,12 +127,12 @@ class ConflictsPage(BasePage):
                           "character/stage names. These can be auto-merged. Other conflict types "
                           "(PRC, MSBT) usually don't cause crashes but may result in one mod's "
                           "changes being overridden by another.",
-                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
                      wraplength=900, justify="left").pack(anchor="w", pady=(4, 0))
 
         self.summary_label = ctk.CTkLabel(self, text="Click 'Scan for Conflicts' to check for mod file conflicts.",
-                                          font=ctk.CTkFont(size=13),
-                                          text_color="#999999", anchor="w")
+                                          font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
+                                          text_color=theme.TEXT_MUTED, anchor="w")
         self.summary_label.pack(fill="x", padx=30, pady=(0, 5))
 
         self.view_controls_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -143,8 +142,8 @@ class ConflictsPage(BasePage):
         ctk.CTkLabel(
             view_left,
             text="View",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#8f97bb",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM, weight="bold"),
+            text_color=theme.INFO_SUMMARY,
             anchor="w",
         ).pack(side="left", padx=(0, 8))
 
@@ -172,14 +171,14 @@ class ConflictsPage(BasePage):
 
         self.auto_resolve_btn = ctk.CTkButton(
             self.auto_btn_frame, text="Fix Text Conflicts",
-            fg_color="#b08a2a", hover_color="#8a6a1a",
+            fg_color=theme.WARNING_ALT, hover_color=theme.HOVER_WARNING,
             command=self._fix_text_conflicts, width=210,
             corner_radius=8, height=34,
         )
 
         self.fix_locale_btn = ctk.CTkButton(
             self.auto_btn_frame, text="Fix Locale MSBT Files",
-            fg_color="#1f538d", hover_color="#163b6a",
+            fg_color=theme.PRIMARY, hover_color=theme.HOVER_PRIMARY,
             command=self._fix_locale_msbts, width=200,
             corner_radius=8, height=34,
         )
@@ -204,7 +203,6 @@ class ConflictsPage(BasePage):
             except Exception:
                 pass
 
-        # Host wrapper (pack/lift target)
         self._conflict_list_host = ctk.CTkFrame(self._results_stack, fg_color="transparent")
         try:
             setattr(self._conflict_list_host, "_ssbum_conflicts_scroll_host", True)
@@ -212,12 +210,11 @@ class ConflictsPage(BasePage):
             pass
         self._conflict_list_host.pack(fill="both", expand=True)
 
-        # Canvas + scrollbar
         self._conflict_canvas = tk.Canvas(
             self._conflict_list_host,
             highlightthickness=0,
             borderwidth=0,
-            bg="#12121e",
+            bg=theme.BG_APP,
         )
         # Exclude this canvas from BasePage's direct tk.Canvas wheel patch;
         # global scroll handling in App must remain the source of truth.
@@ -237,7 +234,6 @@ class ConflictsPage(BasePage):
         self._conflict_canvas.grid(row=0, column=0, sticky="nsew")
         self._conflict_scrollbar.grid(row=0, column=1, sticky="ns")
 
-        # Inner content frame that receives all conflict widgets
         self.conflict_list = ctk.CTkFrame(self._conflict_canvas, fg_color="transparent")
         self._conflict_window_id = self._conflict_canvas.create_window(
             0, 0, window=self.conflict_list, anchor="nw"
@@ -330,19 +326,19 @@ class ConflictsPage(BasePage):
         self._initial_prompt_frame = ctk.CTkFrame(self._initial_prompt_host, fg_color="transparent")
         self._initial_prompt_frame.place(relx=0.5, rely=0.5, anchor="center")
         ctk.CTkLabel(self._initial_prompt_frame, text="No scan performed yet",
-                     font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color="#cccccc").pack(pady=(0, 8))
+                     font=ctk.CTkFont(size=theme.FONT_SUBSECTION, weight="bold"),
+                     text_color=theme.TEXT_SECONDARY).pack(pady=(0, 8))
 
         ctk.CTkLabel(self._initial_prompt_frame,
                      text="Click the button below to scan your mods for file conflicts.\n"
                           "This may take a few seconds depending on how many mods you have installed.",
-                     font=ctk.CTkFont(size=13), text_color="#888888",
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_DIM,
                      justify="center").pack(pady=(0, 20))
 
         scan_prompt_btn = ctk.CTkButton(
             self._initial_prompt_frame, text="\U0001F50D  Scan for Conflicts", width=220, height=40,
-            fg_color="#1f538d", hover_color="#163b6a",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=theme.PRIMARY, hover_color=theme.HOVER_PRIMARY,
+            font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"),
             corner_radius=8, command=self._scan,
         )
         scan_prompt_btn.pack()
@@ -790,7 +786,7 @@ class ConflictsPage(BasePage):
         settings = self.app.config_manager.settings
         if not settings.mods_path or not settings.mods_path.exists():
             self.summary_label.configure(text="No mods path configured. Go to Settings first.",
-                                         text_color="#e94560")
+                                         text_color=theme.ACCENT)
             logger.warn("Conflicts", "No mods path configured")
             return
 
@@ -806,13 +802,13 @@ class ConflictsPage(BasePage):
         self._recreate_conflict_list()
         self._show_conflict_list()
         self._arm_top_anchor_guard("scan-start")
-        self.summary_label.configure(text="Scanning for conflicts...", text_color="#999999")
+        self.summary_label.configure(text="Scanning for conflicts...", text_color=theme.TEXT_MUTED)
 
         for w in self.conflict_list.winfo_children():
             w.destroy()
         ctk.CTkLabel(self.conflict_list,
                      text="Scanning mod files for conflicts...",
-                     font=ctk.CTkFont(size=13), text_color="#888888").pack(pady=40)
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_DIM).pack(pady=40)
         self._reset_conflict_canvas_view()
         self._stabilize_conflict_viewport()
 
@@ -824,7 +820,6 @@ class ConflictsPage(BasePage):
                 conflicts = self.app.conflict_detector.detect_conflicts(mods_path)
                 logger.info("Conflicts", f"Found {len(conflicts)} total conflicts")
 
-                # Detect locale-specific MSBT files
                 locale_msbts = self.app.conflict_resolver.detect_locale_msbts()
                 if locale_msbts:
                     logger.info("Conflicts",
@@ -863,13 +858,13 @@ class ConflictsPage(BasePage):
         self._recreate_conflict_list()
         self._show_conflict_list()
         self.summary_label.configure(
-            text=f"Scan failed: {error_msg}", text_color="#e94560")
+            text=f"Scan failed: {error_msg}", text_color=theme.ACCENT)
 
         for w in self.conflict_list.winfo_children():
             w.destroy()
         ctk.CTkLabel(self.conflict_list,
                      text=f"Scan error: {error_msg}\nClick 'Rescan' to try again.",
-                     font=ctk.CTkFont(size=13), text_color="#e94560").pack(pady=40)
+                     font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.ACCENT).pack(pady=40)
         self._stabilize_conflict_viewport()
         self._arm_top_anchor_guard("scan-error")
 
@@ -897,7 +892,7 @@ class ConflictsPage(BasePage):
                 self._show_conflict_list()
                 self.summary_label.configure(
                     text="Conflicts detected (fallback rendering active).",
-                    text_color="#d4a017",
+                    text_color=theme.WARNING,
                 )
                 self._render_minimal_results()
             except Exception:
@@ -947,17 +942,17 @@ class ConflictsPage(BasePage):
         if not self._conflicts and not self._locale_msbts:
             self.summary_label.configure(
                 text="No conflicts detected. All your mods are compatible.",
-                text_color="#2fa572")
+                text_color=theme.SUCCESS)
 
             empty_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
             empty_frame.pack(fill="x", pady=(40, 24))
             ctk.CTkLabel(empty_frame, text="No Conflicts Found",
-                         font=ctk.CTkFont(size=18, weight="bold"),
-                         text_color="#2fa572").pack(pady=(0, 8))
+                         font=ctk.CTkFont(size=theme.FONT_SUBSECTION, weight="bold"),
+                         text_color=theme.SUCCESS).pack(pady=(0, 8))
             ctk.CTkLabel(empty_frame,
                          text="All your installed mods are compatible with each other.\n"
                               "No file conflicts were detected.",
-                         font=ctk.CTkFont(size=13), text_color="#888888",
+                         font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_DIM,
                          justify="center").pack()
             self.after(10, lambda: self._center_content_in_view(empty_frame))
             return
@@ -965,21 +960,21 @@ class ConflictsPage(BasePage):
         if not filtered_conflicts and not filtered_locale_msbts and filter_text:
             self.summary_label.configure(
                 text=f"No conflicts match the current filter: {self.conflict_search_var.get().strip()}",
-                text_color="#d4a017",
+                text_color=theme.WARNING,
             )
             empty_frame = ctk.CTkFrame(self.conflict_list, fg_color="transparent")
             empty_frame.pack(fill="x", pady=(40, 24))
             ctk.CTkLabel(
                 empty_frame,
                 text="No Matching Results",
-                font=ctk.CTkFont(size=18, weight="bold"),
-                text_color="#d4a017",
+                font=ctk.CTkFont(size=theme.FONT_SUBSECTION, weight="bold"),
+                text_color=theme.WARNING,
             ).pack(pady=(0, 8))
             ctk.CTkLabel(
                 empty_frame,
                 text="Adjust the filter text or switch back to the full conflict list.",
-                font=ctk.CTkFont(size=13),
-                text_color="#888888",
+                font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
+                text_color=theme.TEXT_DIM,
                 justify="center",
             ).pack()
             self.after(10, lambda: self._center_content_in_view(empty_frame))
@@ -1019,7 +1014,6 @@ class ConflictsPage(BasePage):
             except Exception:
                 pass
 
-        # Count by type
         type_counts = {}
         for c in filtered_conflicts:
             ext = self._conflict_extension(c)
@@ -1054,7 +1048,7 @@ class ConflictsPage(BasePage):
         summary_text = " | ".join(summary_parts) if summary_parts else "No conflicts found."
         self.summary_label.configure(
             text=summary_text,
-            text_color="#e94560" if (overall_mergeable_pending > 0 or overall_locale_count > 0) else "#2fa572")
+            text_color=theme.ACCENT if (overall_mergeable_pending > 0 or overall_locale_count > 0) else theme.SUCCESS)
 
         if overall_mergeable_pending > 0 or overall_locale_count > 0:
             self.auto_resolve_btn.pack(side="left")
@@ -1095,7 +1089,7 @@ class ConflictsPage(BasePage):
                         self._conflict_display_path(c).lower(),
                     ))
 
-                section_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+                section_header = ctk.CTkFrame(self.conflict_list, fg_color=theme.BG_CARD_INNER, corner_radius=8)
                 section_header.pack(fill="x", pady=(8, 4))
                 rendered_section_blocks += 1
 
@@ -1103,12 +1097,12 @@ class ConflictsPage(BasePage):
                 header_inner.pack(fill="x", padx=12, pady=8)
 
                 ctk.CTkLabel(header_inner, text=f"{section_title} ({len(conflicts)})",
-                             font=ctk.CTkFont(size=13, weight="bold"),
-                             text_color="white", anchor="w").pack(anchor="w")
+                             font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"),
+                             text_color=theme.TEXT_PRIMARY, anchor="w").pack(anchor="w")
 
                 if section_description:
                     ctk.CTkLabel(header_inner, text=section_description,
-                                 font=ctk.CTkFont(size=11), text_color="#888888",
+                                 font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM,
                                  anchor="w", wraplength=800, justify="left").pack(anchor="w")
 
                 pending_in_group = sum(
@@ -1130,7 +1124,7 @@ class ConflictsPage(BasePage):
                 if merge_hint:
                     ctk.CTkLabel(header_inner,
                                  text=merge_hint,
-                                 font=ctk.CTkFont(size=11), text_color="#2fa572",
+                                 font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.SUCCESS,
                                  anchor="w").pack(anchor="w")
 
                 for conflict in conflicts:
@@ -1148,13 +1142,13 @@ class ConflictsPage(BasePage):
                             "Conflicts",
                             f"Failed to render conflict card for {getattr(conflict, 'relative_path', 'unknown')}: {e}",
                         )
-                        fallback_row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
+                        fallback_row = ctk.CTkFrame(self.conflict_list, fg_color=theme.BG_CARD, corner_radius=6)
                         fallback_row.pack(fill="x", pady=2)
                         ctk.CTkLabel(
                             fallback_row,
                             text=f"Could not render conflict row: {self._conflict_display_line(conflict)}",
-                            font=ctk.CTkFont(size=12),
-                            text_color="#d4a017",
+                            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+                            text_color=theme.WARNING,
                             anchor="w",
                         ).pack(fill="x", padx=10, pady=8)
             except Exception as e:
@@ -1164,28 +1158,27 @@ class ConflictsPage(BasePage):
                         section_header.destroy()
                 except Exception:
                     pass
-                fallback_row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
+                fallback_row = ctk.CTkFrame(self.conflict_list, fg_color=theme.BG_CARD, corner_radius=6)
                 fallback_row.pack(fill="x", pady=2)
                 ctk.CTkLabel(
                     fallback_row,
                     text=f"Could not render section {section_title}; falling back to minimal row(s).",
-                    font=ctk.CTkFont(size=12),
-                    text_color="#d4a017",
+                    font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+                    text_color=theme.WARNING,
                     anchor="w",
                 ).pack(fill="x", padx=10, pady=(8, 4))
                 for conflict in conflicts[:8]:
                     ctk.CTkLabel(
                         fallback_row,
                         text=f"  - {self._conflict_display_line(conflict)}",
-                        font=ctk.CTkFont(size=11),
-                        text_color="#bbbbcc",
+                        font=ctk.CTkFont(size=theme.FONT_BODY),
+                        text_color=theme.TEXT_DETAIL,
                         anchor="w",
                     ).pack(fill="x", padx=10, pady=1)
                 ctk.CTkFrame(fallback_row, height=4, fg_color="transparent").pack()
 
-        # Render locale-specific MSBT section if any were found
         if filtered_locale_msbts:
-            locale_header = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+            locale_header = ctk.CTkFrame(self.conflict_list, fg_color=theme.BG_CARD_INNER, corner_radius=8)
             locale_header.pack(fill="x", pady=(12, 4))
             rendered_section_blocks += 1
 
@@ -1194,56 +1187,55 @@ class ConflictsPage(BasePage):
 
             ctk.CTkLabel(lh_inner,
                          text=f"Locale-Specific MSBT Files ({len(filtered_locale_msbts)})",
-                         font=ctk.CTkFont(size=13, weight="bold"),
-                         text_color="#d4a017", anchor="w").pack(anchor="w")
+                         font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"),
+                         text_color=theme.WARNING, anchor="w").pack(anchor="w")
 
             ctk.CTkLabel(lh_inner,
                          text="These MSBT files have locale suffixes (e.g. msg_bgm+us_en.msbt) which "
                               "limit them to a single language. Renaming them removes the locale suffix "
                               "(e.g. → msg_bgm.msbt) so they work for all languages and avoid conflicts "
                               "between mods. Click 'Fix Locale MSBT Files' above to rename them all.",
-                         font=ctk.CTkFont(size=11), text_color="#888888",
+                         font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM,
                          anchor="w", wraplength=800, justify="left").pack(anchor="w", pady=(4, 0))
 
-            # List each locale MSBT file
             for entry in filtered_locale_msbts:
                 try:
                     mod_name = entry[0]
                     filename = entry[1]
                 except Exception:
                     continue
-                row = ctk.CTkFrame(self.conflict_list, fg_color="#242438", corner_radius=6)
+                row = ctk.CTkFrame(self.conflict_list, fg_color=theme.BG_CARD, corner_radius=6)
                 row.pack(fill="x", pady=2, padx=4)
 
                 row_inner = ctk.CTkFrame(row, fg_color="transparent")
                 row_inner.pack(fill="x", padx=10, pady=6)
 
                 ctk.CTkLabel(row_inner, text=f"\u26a0  {filename}",
-                             font=ctk.CTkFont(size=12), text_color="#d4a017",
+                             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.WARNING,
                              anchor="w").pack(side="left")
                 ctk.CTkLabel(row_inner, text=f"in {mod_name}",
-                             font=ctk.CTkFont(size=11), text_color="#888888",
+                             font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM,
                              anchor="w").pack(side="left", padx=(10, 0))
                 rendered_conflict_rows += 1
 
         if rendered_conflict_rows == 0 and rendered_section_blocks == 0 and (filtered_conflicts or filtered_locale_msbts):
             # Never leave the results area blank - show a resilient fallback.
             logger.warn("Conflicts", "No conflict rows rendered; displaying fallback list")
-            fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+            fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color=theme.BG_CARD_INNER, corner_radius=8)
             fallback_frame.pack(fill="x", pady=(12, 4))
             ctk.CTkLabel(
                 fallback_frame,
                 text="Conflicts detected but detailed cards failed to render.",
-                font=ctk.CTkFont(size=13, weight="bold"),
-                text_color="#d4a017",
+                font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"),
+                text_color=theme.WARNING,
                 anchor="w",
             ).pack(fill="x", padx=12, pady=(10, 6))
             for conflict in filtered_conflicts[:20]:
                 ctk.CTkLabel(
                     fallback_frame,
                     text=f"  - {self._conflict_display_line(conflict)}",
-                    font=ctk.CTkFont(size=11),
-                    text_color="#bbbbcc",
+                    font=ctk.CTkFont(size=theme.FONT_BODY),
+                    text_color=theme.TEXT_DETAIL,
                     anchor="w",
                 ).pack(fill="x", padx=12, pady=1)
             ctk.CTkFrame(fallback_frame, height=8, fg_color="transparent").pack()
@@ -1262,7 +1254,6 @@ class ConflictsPage(BasePage):
         self.after(150, self._compact_leading_conflict_gap)
         self.after(22, self._ensure_results_not_blank)
         self._arm_top_anchor_guard("render")
-        # Re-patch scroll speed after rendering new widgets
         self.after(100, self._patch_all_scroll_speeds)
 
     def _ensure_results_not_blank(self):
@@ -1286,13 +1277,13 @@ class ConflictsPage(BasePage):
         for w in self.conflict_list.winfo_children():
             w.destroy()
 
-        fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color="#1e1e38", corner_radius=8)
+        fallback_frame = ctk.CTkFrame(self.conflict_list, fg_color=theme.BG_CARD_INNER, corner_radius=8)
         fallback_frame.pack(fill="x", pady=(10, 4))
         ctk.CTkLabel(
             fallback_frame,
             text="Conflicts detected (fallback view)",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color="#d4a017",
+            font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"),
+            text_color=theme.WARNING,
             anchor="w",
         ).pack(fill="x", padx=12, pady=(10, 6))
 
@@ -1300,8 +1291,8 @@ class ConflictsPage(BasePage):
             ctk.CTkLabel(
                 fallback_frame,
                 text=f"  - {self._conflict_display_line(conflict)}",
-                font=ctk.CTkFont(size=11),
-                text_color="#bbbbcc",
+                font=ctk.CTkFont(size=theme.FONT_BODY),
+                text_color=theme.TEXT_DETAIL,
                 anchor="w",
             ).pack(fill="x", padx=12, pady=1)
 
@@ -1309,8 +1300,8 @@ class ConflictsPage(BasePage):
             ctk.CTkLabel(
                 fallback_frame,
                 text=f"  - {len(self._locale_msbts)} locale-specific MSBT file(s) detected",
-                font=ctk.CTkFont(size=11),
-                text_color="#bbbbcc",
+                font=ctk.CTkFont(size=theme.FONT_BODY),
+                text_color=theme.TEXT_DETAIL,
                 anchor="w",
             ).pack(fill="x", padx=12, pady=(4, 1))
 
@@ -1666,7 +1657,7 @@ class ConflictsPage(BasePage):
                 return
 
             self._scanning = True
-            self.summary_label.configure(text="Fixing text conflicts...", text_color="#999999")
+            self.summary_label.configure(text="Fixing text conflicts...", text_color=theme.TEXT_MUTED)
             self._set_auto_actions_visible(False)
             self._set_rescan_visible(True)
             self.scan_btn.configure(state="disabled")
@@ -1788,7 +1779,6 @@ class ConflictsPage(BasePage):
             renamed = resolver.rename_locale_msbt_files()
             logger.info("Conflicts", f"Fixed {renamed} locale MSBT file(s)")
             messagebox.showinfo("Done", f"Renamed {renamed} locale-specific MSBT file(s).")
-            # Re-scan to update the view
             self._scanned = False
             self._scan()
         except Exception as e:

@@ -9,6 +9,10 @@ from src.models.settings import AppSettings
 CONFIG_DIR = Path.home() / ".ssbu-mod-manager"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+UI_SCALE_MIN = 0.6
+UI_SCALE_MAX = 2.0
+UI_SCALE_DEFAULT = 1.2
+
 class ConfigManager:
     def __init__(self):
         self.settings = AppSettings()
@@ -43,7 +47,7 @@ class ConfigManager:
                     emulator_version=str(data.get("emulator_version", "") or ""),
                     game_version=str(data.get("game_version", "") or ""),
                     debug_mode=data.get("debug_mode", False),
-                    ui_scale=max(0.6, min(2.0, float(data.get("ui_scale", 1.2)))),
+                    ui_scale=max(UI_SCALE_MIN, min(UI_SCALE_MAX, float(data.get("ui_scale", UI_SCALE_DEFAULT)))),
                     use_plugin_friendly_names=bool(data.get("use_plugin_friendly_names", True)),
                     plugin_name_overrides={
                         str(k): str(v)

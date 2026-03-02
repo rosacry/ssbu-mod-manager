@@ -1,8 +1,9 @@
-"""Plugins management page - compact rows with accent bars."""
+"""Plugins management page."""
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from pathlib import Path
+from src.ui import theme
 from src.ui.base_page import BasePage
 from src.models.plugin import PluginStatus
 from src.core.content_importer import import_plugin_package
@@ -11,10 +12,10 @@ from src.core.runtime_guard import ContentOperationBlockedError
 from src.utils.logger import logger
 
 PLUGIN_RISK_BADGES = {
-    "desync_vulnerable": ("DESYNC", "#e94560"),
-    "conditionally_shared": ("CONDITIONAL", "#d4a017"),
-    "unknown_needs_review": ("REVIEW", "#b08a2a"),
-    "safe_client_only": ("SAFE", "#2fa572"),
+    "desync_vulnerable": ("DESYNC", theme.ACCENT),
+    "conditionally_shared": ("CONDITIONAL", theme.WARNING),
+    "unknown_needs_review": ("REVIEW", theme.WARNING_ALT),
+    "safe_client_only": ("SAFE", theme.SUCCESS),
 }
 
 
@@ -27,12 +28,11 @@ class PluginsPage(BasePage):
         self._build_ui()
 
     def _build_ui(self):
-        # Header
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(20, 8))
 
         title = ctk.CTkLabel(header_frame, text="Plugins",
-                             font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
+                             font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE, weight="bold"), anchor="w")
         title.pack(side="left")
 
         refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=100,
@@ -42,27 +42,27 @@ class PluginsPage(BasePage):
 
         open_btn = ctk.CTkButton(header_frame, text="Open Folder", width=110,
                                  command=self._open_folder,
-                                 fg_color="#555555", hover_color="#444444",
+                                 fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                                  corner_radius=8, height=34)
         open_btn.pack(side="right", padx=(5, 0))
 
         import_btn = ctk.CTkButton(
             header_frame, text="Import", width=100,
             command=self._import_plugin_folder,
-            fg_color="#7a3fb0", hover_color="#633292",
+            fg_color=theme.PURPLE, hover_color=theme.HOVER_PURPLE,
             corner_radius=8, height=34,
         )
         import_btn.pack(side="right", padx=(5, 0))
 
         disable_all_btn = ctk.CTkButton(header_frame, text="Disable All", width=100,
                                         command=self._disable_all,
-                                        fg_color="#8b2e2e", hover_color="#6e2424",
+                                        fg_color=theme.DANGER_BUTTON, hover_color=theme.HOVER_DANGER_ALL,
                                         corner_radius=8, height=34)
         disable_all_btn.pack(side="right", padx=(5, 0))
 
         enable_all_btn = ctk.CTkButton(header_frame, text="Enable All", width=100,
                                        command=self._enable_all,
-                                       fg_color="#2e6b3e", hover_color="#245530",
+                                       fg_color=theme.SUCCESS_BUTTON, hover_color=theme.HOVER_SUCCESS_ALL,
                                        corner_radius=8, height=34)
         enable_all_btn.pack(side="right", padx=(5, 0))
 
@@ -71,17 +71,16 @@ class PluginsPage(BasePage):
             text="Stable Mode",
             width=110,
             command=self._apply_stable_mode,
-            fg_color="#735c18",
-            hover_color="#5f4b14",
+            fg_color=theme.WARNING_BUTTON,
+            hover_color=theme.HOVER_REVIEW,
             corner_radius=8,
             height=34,
         )
         stable_mode_btn.pack(side="right", padx=(5, 0))
 
-        # Plugin count
         self.count_label = ctk.CTkLabel(self, text="",
-                                        font=ctk.CTkFont(size=12),
-                                        text_color="#888888", anchor="w")
+                                        font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+                                        text_color=theme.TEXT_DIM, anchor="w")
         self.count_label.pack(fill="x", padx=32, pady=(0, 6))
 
         settings = self.app.config_manager.settings
@@ -99,7 +98,7 @@ class PluginsPage(BasePage):
             text="Use plugin names",
             variable=self._friendly_names_var,
             command=self._toggle_friendly_names,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
         ).pack(side="left", padx=(0, 14))
 
         ctk.CTkCheckBox(
@@ -107,7 +106,7 @@ class PluginsPage(BasePage):
             text="Show descriptions",
             variable=self._show_descriptions_var,
             command=self._toggle_show_descriptions,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
         ).pack(side="left")
 
         self._reset_names_btn = ctk.CTkButton(
@@ -116,26 +115,24 @@ class PluginsPage(BasePage):
             width=150,
             height=28,
             corner_radius=6,
-            fg_color="#333352",
-            hover_color="#444470",
-            font=ctk.CTkFont(size=11),
+            fg_color=theme.BTN_TERTIARY,
+            hover_color=theme.HOVER_TERTIARY,
+            font=ctk.CTkFont(size=theme.FONT_BODY),
             command=self._reset_custom_names,
         )
         self._reset_names_btn.pack(side="right")
 
-        # Scrollable plugin list
         self.plugin_list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.plugin_list.pack(fill="both", expand=True, padx=25, pady=(0, 10))
 
-        # Warning note
-        note_frame = ctk.CTkFrame(self, fg_color="#2e2020", corner_radius=8)
+        note_frame = ctk.CTkFrame(self, fg_color=theme.BG_WARNING_NOTE, corner_radius=8)
         note_frame.pack(fill="x", padx=30, pady=(5, 15))
 
         ctk.CTkLabel(
             note_frame,
             text="\u26a0  Disabling required plugins (like ARCropolis) will prevent mods from loading.",
-            font=ctk.CTkFont(size=11),
-            text_color="#e94560",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.ACCENT,
         ).pack(fill="x", padx=15, pady=8)
 
     def on_show(self):
@@ -182,7 +179,7 @@ class PluginsPage(BasePage):
         if not plugins:
             ctk.CTkLabel(self.plugin_list,
                          text="No plugins found in the plugins directory.",
-                         font=ctk.CTkFont(size=13), text_color="#666666",
+                         font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_DISABLED,
                          ).pack(pady=40)
             return
 
@@ -192,7 +189,6 @@ class PluginsPage(BasePage):
         logger.info("Plugins", f"Rendered {len(plugins)} plugins")
 
     def _render_plugin_row(self, plugin):
-        """Render one plugin row with mods-style compact height."""
         is_enabled = plugin.status == PluginStatus.ENABLED
         is_required = bool(plugin.known_info and plugin.known_info.required)
         use_friendly_names = self._friendly_names_var.get()
@@ -200,17 +196,17 @@ class PluginsPage(BasePage):
         risk_report = classify_plugin_filename(self._base_plugin_filename(plugin))
         risk_text, risk_color = PLUGIN_RISK_BADGES.get(
             risk_report.level.value,
-            ("REVIEW", "#b08a2a"),
+            ("REVIEW", theme.WARNING_ALT),
         )
 
         row_height = 44
-        row = tk.Frame(self.plugin_list, bg="#1c1c34", height=row_height)
+        row = tk.Frame(self.plugin_list, bg=theme.BG_ROW, height=row_height)
         row.pack(fill="x", pady=1, padx=2)
         row.pack_propagate(False)
 
-        accent_color = "#1f538d" if is_enabled else "#3a3a4a"
+        accent_color = theme.PRIMARY if is_enabled else theme.ACCENT_STRIPE_DISABLED
         if is_required and is_enabled:
-            accent_color = "#e94560"
+            accent_color = theme.ACCENT
         accent = tk.Frame(row, width=4, bg=accent_color)
         accent.pack(side="left", fill="y", padx=(3, 0), pady=4)
 
@@ -218,7 +214,7 @@ class PluginsPage(BasePage):
             row, text="", width=42, height=20,
             command=lambda p=plugin: self._on_toggle(p),
             onvalue=True, offvalue=False,
-            bg_color="#1c1c34",
+            bg_color=theme.BG_ROW,
         )
         switch.pack(side="left", padx=(8, 6))
         if is_enabled:
@@ -237,13 +233,13 @@ class PluginsPage(BasePage):
             if desc and desc != name:
                 display_text += f"  \u2014  {desc}"
 
-        name_color = "#d0d0e8" if is_enabled else "#454560"
+        name_color = theme.TEXT_BODY if is_enabled else theme.TEXT_VERY_DIM
         name_label = tk.Label(
             row,
             text=display_text,
-            font=("Segoe UI", 12),
+            font=("Segoe UI", theme.FONT_BODY_MEDIUM),
             fg=name_color,
-            bg="#1c1c34",
+            bg=theme.BG_ROW,
             anchor="w",
         )
         name_label.pack(side="left", fill="x", expand=True, padx=(2, 8))
@@ -251,9 +247,9 @@ class PluginsPage(BasePage):
         tk.Label(
             row,
             text=risk_text,
-            font=("Segoe UI", 9, "bold"),
-            fg=risk_color if is_enabled else "#4f4f63",
-            bg="#1c1c34",
+            font=("Segoe UI", theme.FONT_TINY, "bold"),
+            fg=risk_color if is_enabled else theme.TEXT_DISABLED_RISK,
+            bg=theme.BG_ROW,
             anchor="e",
         ).pack(side="right", padx=(0, 10))
 
@@ -261,9 +257,9 @@ class PluginsPage(BasePage):
             tk.Label(
                 row,
                 text="REQUIRED",
-                font=("Segoe UI", 10, "bold"),
-                fg="#e94560",
-                bg="#1c1c34",
+                font=("Segoe UI", theme.FONT_CAPTION, "bold"),
+                fg=theme.ACCENT,
+                bg=theme.BG_ROW,
                 anchor="e",
             ).pack(side="right", padx=(0, 6))
 
@@ -499,7 +495,6 @@ class PluginsPage(BasePage):
         return bool(overrides.get(self._base_plugin_filename(plugin), "").strip())
 
     def _bind_context_menu_recursive(self, widget, plugin):
-        """Attach right-click plugin actions to row and all descendants."""
         for seq in ("<ButtonRelease-3>", "<Button-2>", "<Control-Button-1>"):
             try:
                 widget.bind(seq,
@@ -518,13 +513,13 @@ class PluginsPage(BasePage):
         menu.withdraw()
         menu.overrideredirect(True)
         menu.attributes("-topmost", True)
-        menu.configure(fg_color="#101427")
+        menu.configure(fg_color=theme.BG_CONTEXT_MENU)
 
         frame = ctk.CTkFrame(
             menu,
-            fg_color="#171a31",
+            fg_color=theme.BG_CONTEXT_MENU_INNER,
             border_width=1,
-            border_color="#2f3f6a",
+            border_color=theme.BORDER_CONTEXT,
             corner_radius=8,
         )
         frame.pack(fill="both", expand=True)
@@ -571,7 +566,6 @@ class PluginsPage(BasePage):
         return "break"
 
     def _close_context_menu_on_global_click(self, event):
-        """Close plugin context menu when clicking outside it."""
         menu = self._context_menu
         if menu is None:
             return
@@ -602,8 +596,8 @@ class PluginsPage(BasePage):
             height=30,
             corner_radius=0,
             fg_color="transparent",
-            hover_color="#24375f",
-            font=ctk.CTkFont(size=12),
+            hover_color=theme.HOVER_CONTEXT,
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
             command=lambda cb=callback: self._invoke_context_action(cb),
         )
         btn.pack(fill="x")
@@ -686,14 +680,14 @@ class PluginsPage(BasePage):
         dialog.withdraw()
         dialog.title(title)
         dialog.resizable(False, False)
-        dialog.configure(fg_color="#0f1327")
+        dialog.configure(fg_color=theme.BG_DIALOG)
 
         shell = ctk.CTkFrame(
             dialog,
-            fg_color="#151b36",
+            fg_color=theme.BG_DIALOG_SHELL,
             corner_radius=10,
             border_width=1,
-            border_color="#304378",
+            border_color=theme.BORDER_DIALOG,
         )
         shell.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -701,7 +695,7 @@ class PluginsPage(BasePage):
             shell,
             text=title,
             anchor="w",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
         ctk.CTkLabel(
@@ -709,8 +703,8 @@ class PluginsPage(BasePage):
             text=subtitle,
             anchor="w",
             justify="left",
-            font=ctk.CTkFont(size=12),
-            text_color="#b9bfd8",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_SOFT,
         ).pack(fill="x", padx=14)
 
         entry = ctk.CTkEntry(shell, height=32)
@@ -734,8 +728,8 @@ class PluginsPage(BasePage):
             text="Cancel",
             width=96,
             height=30,
-            fg_color="#2f3557",
-            hover_color="#3f476f",
+            fg_color=theme.BTN_SECONDARY,
+            hover_color=theme.HOVER_SECONDARY,
             command=lambda: close_with(None),
         ).pack(side="right")
 
@@ -744,8 +738,8 @@ class PluginsPage(BasePage):
             text="Save",
             width=96,
             height=30,
-            fg_color="#1f538d",
-            hover_color="#163b6a",
+            fg_color=theme.PRIMARY,
+            hover_color=theme.HOVER_PRIMARY,
             command=lambda: close_with(entry.get()),
         ).pack(side="right", padx=(0, 8))
 
@@ -782,7 +776,7 @@ class PluginsPage(BasePage):
     def _copy_plugin_risk_details(self, plugin):
         base = self._base_plugin_filename(plugin)
         report = classify_plugin_filename(base)
-        badge_text, _color = PLUGIN_RISK_BADGES.get(report.level.value, ("REVIEW", "#b08a2a"))
+        badge_text, _color = PLUGIN_RISK_BADGES.get(report.level.value, ("REVIEW", theme.WARNING_ALT))
         lines = [
             f"Plugin: {base}",
             f"Online Risk: {report.level.value} ({badge_text})",

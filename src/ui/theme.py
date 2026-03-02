@@ -1,0 +1,274 @@
+"""Centralized UI theme: colors, fonts, spacing, sizing, and timing constants."""
+
+
+# ---------------------------------------------------------------------------
+# Colors – Backgrounds
+# ---------------------------------------------------------------------------
+
+BG_DEEPEST = "#0c0c18"
+BG_APP = "#12121e"
+BG_SIDEBAR = "#0e0e1a"
+BG_TOOLBAR = "#14142a"
+BG_CARD = "#242438"
+BG_CARD_INNER = "#1e1e38"
+BG_CARD_DEEP = "#1a1a30"
+BG_ROW = "#1c1c34"
+BG_ROW_HEADER = "#181830"
+BG_INPUT = "#151528"
+BG_DIALOG = "#0f1327"
+BG_DIALOG_SHELL = "#151b36"
+BG_LISTBOX = "#1e1e2e"
+BG_CONTEXT_MENU = "#101427"
+BG_CONTEXT_MENU_INNER = "#171a31"
+BG_OPTIONS_FRAME = "#10162c"
+BG_AUTH_FRAME = "#11182f"
+BG_GETTING_STARTED = "#141430"
+
+BG_SUCCESS_TINT = "#142820"
+BG_SUCCESS_RESULT = "#1a2e22"
+BG_ERROR_TINT = "#2a1820"
+BG_ERROR_RESULT = "#2e1a1a"
+BG_WARNING_TINT = "#2e2a1a"
+BG_WARNING_NOTE = "#2e2020"
+BG_INFO_TINT = "#1a2a2e"
+
+# ---------------------------------------------------------------------------
+# Colors – Text
+# ---------------------------------------------------------------------------
+
+TEXT_PRIMARY = "#ffffff"
+TEXT_BODY = "#d0d0e8"
+TEXT_SECONDARY = "#cccccc"
+TEXT_SOFT = "#b9bfd8"
+TEXT_LOG = "#b0b0cc"
+TEXT_DETAIL = "#bbbbcc"
+TEXT_MUTED = "#999999"
+TEXT_DIM = "#888888"
+TEXT_HINT = "#aaaaaa"
+TEXT_SUBTLE = "#7a7a9a"
+TEXT_FAINT = "#6a6a8a"
+TEXT_DISABLED = "#666666"
+TEXT_INACTIVE = "#555570"
+TEXT_VERY_DIM = "#454560"
+TEXT_DISABLED_RISK = "#4f4f63"
+TEXT_GHOST = "#353550"
+TEXT_HEADING_DIM = "#3a3a55"
+TEXT_DISABLED_CATEGORY = "#3a3a50"
+TEXT_DISABLED_SAVE = "#3a5a3a"
+TEXT_CATEGORY = "#6a6a88"
+TEXT_TAB = "#777799"
+TEXT_VERSION = "#777777"
+TEXT_SCAN_HINT = "#7f88a5"
+TEXT_MERGED = "#8e97bc"
+
+# ---------------------------------------------------------------------------
+# Colors – Accent / Brand
+# ---------------------------------------------------------------------------
+
+ACCENT = "#e94560"
+PRIMARY = "#1f538d"
+PURPLE = "#7a3fb0"
+PURPLE_CATEGORY = "#9b59b6"
+BLUE_CATEGORY = "#3498db"
+TEAL_CATEGORY = "#1abc9c"
+ORANGE_CATEGORY = "#e67e22"
+GRAY_CATEGORY = "#95a5a6"
+
+# ---------------------------------------------------------------------------
+# Colors – Status
+# ---------------------------------------------------------------------------
+
+SUCCESS = "#2fa572"
+SUCCESS_ALT = "#27ae60"
+SUCCESS_HOVER_ALT = "#2ecc71"
+SUCCESS_BUTTON = "#2e6b3e"
+SUCCESS_DETAIL = "#88bb88"
+SUCCESS_RULE = "#669966"
+
+WARNING = "#d4a017"
+WARNING_ALT = "#b08a2a"
+WARNING_MEDIUM = "#f0a030"
+WARNING_BUTTON = "#735c18"
+WARNING_FAVORITES = "#d0b071"
+WARNING_DETAIL = "#bbaa66"
+
+DANGER = "#b02a2a"
+DANGER_CRITICAL = "#ff2222"
+DANGER_BUTTON = "#8b2e2e"
+DANGER_CLEAR = "#7a2f3a"
+DANGER_DETAIL = "#bb8888"
+
+INFO = "#6688bb"
+INFO_BORDER = "#4488aa"
+INFO_DETAIL = "#6699aa"
+INFO_SUB = "#5599bb"
+INFO_LIST = "#88bbcc"
+INFO_EMU = "#8899aa"
+INFO_WORKFLOW = "#8899bb"
+INFO_SUMMARY = "#8f97bb"
+INFO_QUEUE = "#8fb2ff"
+
+# ---------------------------------------------------------------------------
+# Colors – Buttons
+# ---------------------------------------------------------------------------
+
+BTN_NEUTRAL = "#555555"
+BTN_SECONDARY = "#2f3557"
+BTN_TERTIARY = "#333352"
+BTN_UPGRADE = "#3a5a8a"
+BTN_STAGE = "#38405d"
+BTN_VANILLA = "#3f4f76"
+BTN_DISABLED = "#1a2a1e"
+BTN_DISABLED_TEXT = "#4a4a5a"
+
+# ---------------------------------------------------------------------------
+# Colors – Hover States
+# ---------------------------------------------------------------------------
+
+HOVER_SUCCESS = "#106a43"
+HOVER_SUCCESS_ALT = "#248a5d"
+HOVER_SUCCESS_ALL = "#245530"
+HOVER_PRIMARY = "#163b6a"
+HOVER_PRIMARY_ALT = "#163d6a"
+HOVER_DANGER = "#8a1f1f"
+HOVER_DANGER_ALL = "#6e2424"
+HOVER_DANGER_CLEAR = "#5f2530"
+HOVER_NEUTRAL = "#444444"
+HOVER_SECONDARY = "#3f476f"
+HOVER_TERTIARY = "#444470"
+HOVER_CONTEXT = "#24375f"
+HOVER_MUTED = "#666688"
+HOVER_SETTINGS = "#333355"
+HOVER_WARNING = "#8a6a1a"
+HOVER_WARNING_ALT = "#8a6b1f"
+HOVER_REVIEW = "#5f4b14"
+HOVER_PURPLE = "#633292"
+HOVER_STAGE = "#495276"
+HOVER_VANILLA = "#4f6088"
+HOVER_UPGRADE = "#2a4a7a"
+
+# ---------------------------------------------------------------------------
+# Colors – Borders / Separators
+# ---------------------------------------------------------------------------
+
+BORDER_DIALOG = "#304378"
+BORDER_CONTEXT = "#2f3f6a"
+BORDER_INPUT = "#3a3a55"
+BORDER_SEPARATOR = "#1e1e34"
+
+# ---------------------------------------------------------------------------
+# Colors – Slider / Progress / Miscellaneous
+# ---------------------------------------------------------------------------
+
+PROGRESS_TRACK = "#2a2a45"
+TOOLBAR_HOVER = "#2a2a4a"
+QUICK_ACTION = "#2a2a44"
+DISABLED_DISCARD = "#2a2a38"
+SLIDER_BUTTON = "#4488cc"
+SLIDER_HOVER = "#5599dd"
+ACCENT_STRIPE_DISABLED = "#3a3a4a"
+SIDEBAR_ACTIVE = "#162850"
+
+# ---------------------------------------------------------------------------
+# Font Sizes
+# ---------------------------------------------------------------------------
+
+FONT_TINY = 9
+FONT_CAPTION = 10
+FONT_BODY = 11
+FONT_BODY_MEDIUM = 12
+FONT_BODY_EMPHASIS = 13
+FONT_CARD_HEADING = 14
+FONT_SECTION_HEADING = 16
+FONT_SECTION_LARGE = 17
+FONT_SUBSECTION = 18
+FONT_PAGE_TITLE = 24
+FONT_BRAND = 26
+FONT_LARGE = 28
+FONT_XLARGE = 32
+
+# ---------------------------------------------------------------------------
+# Corner Radii
+# ---------------------------------------------------------------------------
+
+RADIUS_NONE = 0
+RADIUS_MINIMAL = 2
+RADIUS_SMALL = 6
+RADIUS_MEDIUM = 8
+RADIUS_LARGE = 10
+RADIUS_XLARGE = 12
+RADIUS_STAT_CARD = 14
+
+# ---------------------------------------------------------------------------
+# Standard Widget Heights
+# ---------------------------------------------------------------------------
+
+HEIGHT_TINY_BUTTON = 22
+HEIGHT_MINI_BUTTON = 26
+HEIGHT_SMALL_BUTTON = 28
+HEIGHT_COMPACT = 30
+HEIGHT_ENTRY = 32
+HEIGHT_BUTTON = 34
+HEIGHT_NAV_ROW = 36
+HEIGHT_TOOLBAR = 40
+HEIGHT_SPACER = 8
+HEIGHT_ACCENT_STRIP = 4
+HEIGHT_SLIDER = 14
+HEIGHT_PROGRESS = 4
+
+# ---------------------------------------------------------------------------
+# Standard Widget Widths
+# ---------------------------------------------------------------------------
+
+WIDTH_ICON_BUTTON = 24
+WIDTH_SMALL_ICON = 30
+WIDTH_NARROW_BUTTON = 80
+WIDTH_DIALOG_BUTTON = 96
+WIDTH_BUTTON = 100
+WIDTH_MEDIUM_BUTTON = 110
+WIDTH_WIDE_BUTTON = 120
+WIDTH_ACTION_BUTTON = 130
+WIDTH_EXPORT_BUTTON = 140
+WIDTH_DROPDOWN = 150
+WIDTH_RESET_BUTTON = 160
+WIDTH_LARGE_BUTTON = 180
+WIDTH_PATH_ENTRY = 480
+
+# ---------------------------------------------------------------------------
+# Padding
+# ---------------------------------------------------------------------------
+
+PAD_TIGHT = 5
+PAD_COMPACT = 8
+PAD_SMALL = 10
+PAD_MEDIUM = 12
+PAD_CONTENT = 14
+PAD_INNER = 15
+PAD_PAGE = 30
+
+# ---------------------------------------------------------------------------
+# Timing (milliseconds)
+# ---------------------------------------------------------------------------
+
+DELAY_IMMEDIATE = 0
+DELAY_SCROLL_UPDATE = 5
+DELAY_POINTER_REFRESH = 8
+DELAY_DIALOG_LAYOUT = 10
+DELAY_IDLE_REFRESH = 14
+DELAY_SEARCH_DEBOUNCE = 150
+DELAY_ZOOM_HIDE = 28
+DELAY_LEADING_GAP = 30
+DELAY_ANIMATION_TICK = 40
+DELAY_DEFERRED_CALLBACK = 52
+DELAY_SAFE_NEUTRALIZE = 80
+DELAY_SCROLL_SPEED_PATCH = 100
+DELAY_SASH_INIT = 120
+DELAY_RESULTS_CHECK = 22
+DELAY_WINDOW_VISIBLE = 250
+DELAY_AUTO_SAVE = 300
+DELAY_COPY_TOAST = 2000
+
+TIMEOUT_FFMPEG = 30
+TIMEOUT_SPOTIFY_AUTH = 180
+TIMEOUT_AUDIO_KILL = 0.8
+TIMEOUT_AUDIO_KILL_SHORT = 0.5

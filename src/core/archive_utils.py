@@ -14,6 +14,11 @@ _COMMON_7Z_PATHS = (
     Path(r"C:\Program Files (x86)\7-Zip\7z.exe"),
 )
 
+# Column offsets in `7z l -ba` output format
+_7Z_ATTR_START = 20
+_7Z_ATTR_END = 25
+_7Z_FILENAME_START = 53
+
 
 @dataclass(frozen=True)
 class ArchiveMember:
@@ -67,10 +72,10 @@ def list_archive_members(archive_path: Path) -> list[ArchiveMember]:
     for line in proc.stdout.splitlines():
         if not line.strip():
             continue
-        path = (line[53:].strip() if len(line) > 53 else line.strip()).replace("\\", "/")
+        path = (line[_7Z_FILENAME_START:].strip() if len(line) > _7Z_FILENAME_START else line.strip()).replace("\\", "/")
         if not path:
             continue
-        attrs = line[20:25] if len(line) >= 25 else ""
+        attrs = line[_7Z_ATTR_START:_7Z_ATTR_END] if len(line) >= _7Z_ATTR_END else ""
         members.append(ArchiveMember(path=path, is_dir="D" in attrs))
     return members
 

@@ -51,6 +51,8 @@ _VARIANT_NAME_DEMOTIONS = (
     "css",
 )
 
+_NO_SLOT_SENTINEL = 999
+
 _CLIMBER = {"popo", "nana"}
 _TRAINER = {"ptrainer", "ptrainer_low", "pzenigame", "pfushigisou", "plizardon"}
 _AEGIS = {"element", "eflame", "elight"}
@@ -248,8 +250,8 @@ def choose_primary_variant_root(
                 priority = idx
                 break
         demotion = 1 if any(marker in text for marker in _VARIANT_NAME_DEMOTIONS) else 0
-        slot = analysis.primary_slot if analysis and analysis.primary_slot is not None else 999
-        slot_count = analysis.slot_count if analysis else 999
+        slot = analysis.primary_slot if analysis and analysis.primary_slot is not None else _NO_SLOT_SENTINEL
+        slot_count = analysis.slot_count if analysis else _NO_SLOT_SENTINEL
         return (priority, demotion, slot, slot_count, target_name.lower())
 
     return min(candidates, key=score)
@@ -496,6 +498,7 @@ def _is_visual_slot_categories(categories: frozenset[str] | set[str]) -> bool:
 # ---------------------------------------------------------------------------
 _BNTX_MAGIC = b"BNTX"
 _STRX_MAGIC = b"_STR"  # String table section magic (first 4 bytes of "_STRX")
+_BNTX_STR_SCAN_REGION = 256
 _BNTX_PORTRAIT_RE = re.compile(
     r"^chara_\d_[a-z_]+_\d{2}$", re.IGNORECASE
 )
@@ -506,8 +509,8 @@ def _extract_bntx_internal_name(data: bytes) -> str | None:
     idx = data.find(b"_STR")
     if idx < 0:
         return None
-    # Scan ~200 bytes past the _STR header for printable ASCII strings.
-    region = data[idx : idx + 256]
+    # Scan past the _STR header for printable ASCII strings.
+    region = data[idx : idx + _BNTX_STR_SCAN_REGION]
     current: list[int] = []
     best: str = ""
     for b in region:
@@ -551,7 +554,6 @@ def patch_bntx_internal_name(filepath: Path, expected_name: str | None = None) -
     old_bytes = current_name.encode("ascii")
     new_bytes = expected_name.encode("ascii")
 
-    # Replace all occurrences that are null-terminated in the binary.
     old_terminated = old_bytes + b"\x00"
     new_terminated = new_bytes + b"\x00"
 
@@ -563,7 +565,6 @@ def patch_bntx_internal_name(filepath: Path, expected_name: str | None = None) -
         )
         return False
 
-    # Pad to the same byte count as the old terminated string.
     padded = new_terminated + b"\x00" * (len(old_terminated) - len(new_terminated))
 
     patched = data.replace(old_terminated, padded)

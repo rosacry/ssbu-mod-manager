@@ -7,6 +7,7 @@ from src.core.spotify_manager import (
     SPOTIFY_REDIRECT_URI_DOC,
 )
 from src.ui.base_page import BasePage
+from src.ui import theme
 from src.constants import VANILLA_STAGES, COMPETITIVE_STAGES
 from src.utils.logger import logger
 from src.utils.audio_player import audio_player
@@ -68,51 +69,49 @@ class MusicPage(BasePage):
         self._build_ui()
 
     def _build_ui(self):
-        # Header
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(20, 5))
 
         title = ctk.CTkLabel(header_frame, text="Music",
-                             font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
+                             font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE, weight="bold"), anchor="w")
         title.pack(side="left")
 
         scan_btn = ctk.CTkButton(header_frame, text="Rescan Tracks", width=130,
                                  command=self._force_scan,
-                                 fg_color="#555555", hover_color="#444444",
+                                 fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                                  corner_radius=8, height=34)
         scan_btn.pack(side="right")
 
-        # Summary row
         info_frame = ctk.CTkFrame(self, fg_color="transparent")
         info_frame.pack(fill="x", padx=30, pady=(2, 5))
 
         self.summary_label = ctk.CTkLabel(
             info_frame, text="Configure which music tracks play on which stages.",
-            font=ctk.CTkFont(size=12), text_color="#999999", anchor="w",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
         )
         self.summary_label.pack(side="left")
 
         self.loading_label = ctk.CTkLabel(
             info_frame, text="",
-            font=ctk.CTkFont(size=12), text_color="#888888",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_DIM,
         )
         self.loading_label.pack(side="right")
 
         # Main 3-column layout using PanedWindow for resizable splitters
         content = tk.PanedWindow(
             self, orient=tk.HORIZONTAL, sashwidth=6,
-            bg="#12121e", sashpad=0, opaqueresize=True,
+            bg=theme.BG_APP, sashpad=0, opaqueresize=True,
             borderwidth=0, relief="flat",
         )
         content.pack(fill="both", expand=True, padx=30, pady=(0, 10))
         self._paned = content  # store for sash positioning
 
         # === LEFT COLUMN: Stage list ===
-        left = ctk.CTkFrame(content, width=420, fg_color="#242438", corner_radius=10)
+        left = ctk.CTkFrame(content, width=420, fg_color=theme.BG_CARD, corner_radius=10)
         content.add(left, minsize=280, stretch="never", width=420)
 
         ctk.CTkLabel(left, text="Stages",
-                     font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=10, pady=(10, 5))
 
         self.stage_search_var = tk.StringVar()
@@ -121,21 +120,19 @@ class MusicPage(BasePage):
                      textvariable=self.stage_search_var, height=30,
                      corner_radius=6).pack(fill="x", padx=10, pady=5)
 
-        # Competitive-only filter
         self.competitive_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             left, text="Competitive only", variable=self.competitive_var,
-            command=self._schedule_stage_filter, font=ctk.CTkFont(size=11),
+            command=self._schedule_stage_filter, font=ctk.CTkFont(size=theme.FONT_BODY),
         ).pack(fill="x", padx=12, pady=(2, 4))
 
-        # Stage list with scrollbar
         stage_list_frame = ctk.CTkFrame(left, fg_color="transparent")
         stage_list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 5))
 
-        self.stage_listbox = tk.Listbox(stage_list_frame, bg="#1e1e2e", fg="#cccccc",
-                                        selectbackground="#1f538d",
+        self.stage_listbox = tk.Listbox(stage_list_frame, bg=theme.BG_LISTBOX, fg=theme.TEXT_SECONDARY,
+                                        selectbackground=theme.PRIMARY,
                                         selectforeground="white",
-                                        font=("Segoe UI", 10),
+                                        font=("Segoe UI", theme.FONT_CAPTION),
                                         relief="flat", bd=0, highlightthickness=0,
                                         activestyle="none", cursor="arrow")
         stage_scroll = ctk.CTkScrollbar(stage_list_frame, command=self.stage_listbox.yview)
@@ -144,45 +141,43 @@ class MusicPage(BasePage):
         stage_scroll.pack(side="right", fill="y")
         self.stage_listbox.bind("<<ListboxSelect>>", self._on_stage_select)
 
-        # Bulk buttons
         bulk_frame = ctk.CTkFrame(left, fg_color="transparent")
         bulk_frame.pack(fill="x", padx=10, pady=(0, 5))
 
         ctk.CTkButton(bulk_frame, text="All -> All Legacy Stages",
                       command=self._assign_all_to_all,
-                      fg_color="#2fa572", hover_color="#106a43",
-                      font=ctk.CTkFont(size=11), height=28, corner_radius=6,
+                      fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS,
+                      font=ctk.CTkFont(size=theme.FONT_BODY), height=28, corner_radius=6,
                       ).pack(fill="x", pady=1)
 
         ctk.CTkButton(bulk_frame, text="Clear All Legacy Stages",
                       command=self._clear_all_stages,
-                      fg_color="#b02a2a", hover_color="#8a1f1f",
-                      font=ctk.CTkFont(size=11), height=28, corner_radius=6,
+                      fg_color=theme.DANGER, hover_color=theme.HOVER_DANGER,
+                      font=ctk.CTkFont(size=theme.FONT_BODY), height=28, corner_radius=6,
                       ).pack(fill="x", pady=1)
 
-        # Exclude vanilla option in stage column
         self.exclude_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             left, text="Exclude vanilla tracks", variable=self.exclude_var,
-            command=self._on_exclude_change, font=ctk.CTkFont(size=11),
+            command=self._on_exclude_change, font=ctk.CTkFont(size=theme.FONT_BODY),
         ).pack(fill="x", padx=12, pady=(4, 10))
 
         # === MIDDLE COLUMN: Stage music workflows ===
-        middle = ctk.CTkFrame(content, fg_color="#242438", corner_radius=10)
+        middle = ctk.CTkFrame(content, fg_color=theme.BG_CARD, corner_radius=10)
         content.add(middle, minsize=200, stretch="always", width=300)
 
         playlist_header = ctk.CTkFrame(middle, fg_color="transparent")
         playlist_header.pack(fill="x", padx=12, pady=(10, 5))
 
         self.playlist_label = ctk.CTkLabel(playlist_header, text="Select a stage",
-                                           font=ctk.CTkFont(size=14, weight="bold"), anchor="w")
+                                           font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"), anchor="w")
         self.playlist_label.pack(side="left")
 
         self.playlist_count = ctk.CTkLabel(playlist_header, text="",
-                                            font=ctk.CTkFont(size=11), text_color="#888888")
+                                            font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM)
         self.playlist_count.pack(side="right")
 
-        self.stage_tabs = ctk.CTkTabview(middle, fg_color="#242438")
+        self.stage_tabs = ctk.CTkTabview(middle, fg_color=theme.BG_CARD)
         self.stage_tabs.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         safe_tab = self.stage_tabs.add("Safe Slots")
         playlist_tab = self.stage_tabs.add("Legacy Playlist")
@@ -193,8 +188,8 @@ class MusicPage(BasePage):
                 "Replace an existing discovered slot instead of adding a new one. "
                 "This is the safer community workflow for online play."
             ),
-            font=ctk.CTkFont(size=11),
-            text_color="#b9bfd8",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.TEXT_SOFT,
             justify="left",
             wraplength=320,
             anchor="w",
@@ -204,8 +199,8 @@ class MusicPage(BasePage):
         self.safe_slot_source = ctk.CTkLabel(
             safe_tab,
             text="",
-            font=ctk.CTkFont(size=10),
-            text_color="#777799",
+            font=ctk.CTkFont(size=theme.FONT_CAPTION),
+            text_color=theme.TEXT_TAB,
             anchor="w",
         )
         self.safe_slot_source.pack(fill="x", padx=10, pady=(0, 6))
@@ -219,12 +214,12 @@ class MusicPage(BasePage):
             safe_btns,
             text="Clear Safe Replacements",
             width=150,
-            fg_color="#b02a2a",
-            hover_color="#8a1f1f",
+            fg_color=theme.DANGER,
+            hover_color=theme.HOVER_DANGER,
             command=self._clear_stage_replacements,
             height=28,
             corner_radius=6,
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=theme.FONT_BODY),
         ).pack(side="right")
 
         ctk.CTkLabel(
@@ -233,8 +228,8 @@ class MusicPage(BasePage):
                 "Legacy playlist editing can append extra stage entries and modify the "
                 "stage database. Use this only when you intentionally want that behavior."
             ),
-            font=ctk.CTkFont(size=11),
-            text_color="#d0b071",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.WARNING_FAVORITES,
             justify="left",
             wraplength=320,
             anchor="w",
@@ -247,29 +242,29 @@ class MusicPage(BasePage):
         playlist_btns.pack(fill="x", padx=10, pady=(0, 8))
 
         ctk.CTkButton(playlist_btns, text="Clear Stage", width=100,
-                      fg_color="#b02a2a", hover_color="#8a1f1f",
+                      fg_color=theme.DANGER, hover_color=theme.HOVER_DANGER,
                       command=self._clear_stage, height=28, corner_radius=6,
-                      font=ctk.CTkFont(size=11),
+                      font=ctk.CTkFont(size=theme.FONT_BODY),
                       ).pack(side="right")
 
         ctk.CTkButton(playlist_btns, text="Add All", width=80,
-                      fg_color="#2fa572", hover_color="#106a43",
+                      fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS,
                       command=self._add_all_to_stage, height=28, corner_radius=6,
-                      font=ctk.CTkFont(size=11),
+                      font=ctk.CTkFont(size=theme.FONT_BODY),
                       ).pack(side="right", padx=5)
 
         # === RIGHT COLUMN: Available tracks ===
-        right = ctk.CTkFrame(content, width=550, fg_color="#242438", corner_radius=10)
+        right = ctk.CTkFrame(content, width=550, fg_color=theme.BG_CARD, corner_radius=10)
         content.add(right, minsize=350, stretch="never", width=550)
 
         avail_header = ctk.CTkFrame(right, fg_color="transparent")
         avail_header.pack(fill="x", padx=10, pady=(10, 5))
 
         ctk.CTkLabel(avail_header, text="Available Tracks",
-                     font=ctk.CTkFont(size=14, weight="bold"), anchor="w").pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"), anchor="w").pack(side="left")
 
         self.track_count_label = ctk.CTkLabel(avail_header, text="",
-                                              font=ctk.CTkFont(size=11), text_color="#888888")
+                                              font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM)
         self.track_count_label.pack(side="right")
 
         self.track_search_var = tk.StringVar()
@@ -287,24 +282,24 @@ class MusicPage(BasePage):
             text="Favorites only",
             variable=self.favorites_only_var,
             command=self._render_available_tracks,
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=theme.FONT_BODY),
         ).pack(side="left")
 
         ctk.CTkLabel(
             track_filter_row,
             text="Ctrl-click to multi-select",
-            font=ctk.CTkFont(size=10),
-            text_color="#666688",
+            font=ctk.CTkFont(size=theme.FONT_CAPTION),
+            text_color=theme.HOVER_MUTED,
         ).pack(side="right")
 
         # Available tracks list
         track_frame = ctk.CTkFrame(right, fg_color="transparent")
         track_frame.pack(fill="both", expand=True, padx=10, pady=(0, 5))
 
-        self.track_listbox = tk.Listbox(track_frame, bg="#1e1e2e", fg="#cccccc",
-                                         selectbackground="#1f538d",
+        self.track_listbox = tk.Listbox(track_frame, bg=theme.BG_LISTBOX, fg=theme.TEXT_SECONDARY,
+                                         selectbackground=theme.PRIMARY,
                                          selectforeground="white",
-                                         font=("Segoe UI", 10),
+                                         font=("Segoe UI", theme.FONT_CAPTION),
                                          relief="flat", bd=0, highlightthickness=0,
                                          activestyle="none", cursor="arrow",
                                          selectmode=tk.EXTENDED,
@@ -314,19 +309,17 @@ class MusicPage(BasePage):
         self.track_listbox.pack(side="left", fill="both", expand=True)
         track_scroll.pack(side="right", fill="y")
 
-        # Double-click to add
         self.track_listbox.bind("<Double-1>", lambda e: self._add_selected_track())
         # Single-click to auto-play when already playing
         self.track_listbox.bind("<<ListboxSelect>>", self._on_track_selection_changed)
 
-        # Audio player controls: play/stop toggle + volume, right-aligned near track list
-        player_frame = ctk.CTkFrame(right, fg_color="#1e1e30", corner_radius=6)
+        player_frame = ctk.CTkFrame(right, fg_color=theme.BG_CARD_INNER, corner_radius=6)
         player_frame.pack(fill="x", padx=10, pady=(2, 4))
 
         # Keep now-playing status above controls so it remains visible.
         self.player_status = ctk.CTkLabel(
             player_frame, text="",
-            font=ctk.CTkFont(size=10), text_color="#2fa572",
+            font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.SUCCESS,
             anchor="w",
         )
         self.player_status.pack(fill="x", padx=8, pady=(5, 0))
@@ -334,8 +327,8 @@ class MusicPage(BasePage):
         self.queue_status = ctk.CTkLabel(
             player_frame,
             text=self._QUEUE_EMPTY_TEXT,
-            font=ctk.CTkFont(size=10),
-            text_color="#888888",
+            font=ctk.CTkFont(size=theme.FONT_CAPTION),
+            text_color=theme.TEXT_DIM,
             anchor="w",
         )
         self.queue_status.pack(fill="x", padx=8, pady=(2, 0))
@@ -343,19 +336,17 @@ class MusicPage(BasePage):
         player_inner = ctk.CTkFrame(player_frame, fg_color="transparent")
         player_inner.pack(fill="x", padx=8, pady=5)
 
-        # Single play/stop toggle button
         self._is_playing = False
         self.play_toggle_btn = ctk.CTkButton(
             player_inner, text="Play", width=80, height=28,
-            fg_color="#2fa572", hover_color="#106a43",
-            font=ctk.CTkFont(size=11), corner_radius=6,
+            fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS,
+            font=ctk.CTkFont(size=theme.FONT_BODY), corner_radius=6,
             command=self._toggle_playback,
         )
         self.play_toggle_btn.pack(side="left", padx=(0, 6))
 
-        # Volume slider
         vol_label = ctk.CTkLabel(player_inner, text="Vol",
-                                 font=ctk.CTkFont(size=10), text_color="#888888")
+                                 font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.TEXT_DIM)
         vol_label.pack(side="left", padx=(0, 3))
         self.volume_slider = ctk.CTkSlider(
             player_inner, from_=0, to=100, width=90, height=14,
@@ -364,23 +355,22 @@ class MusicPage(BasePage):
         self.volume_slider.set(int(self._DEFAULT_VOLUME * self._MAX_PERCENT))
         self.volume_slider.pack(side="left", padx=(0, 6))
 
-        # Seek timeline
         self.seek_label = ctk.CTkLabel(player_inner, text=self._ZERO_TIME_TEXT,
-                                       font=ctk.CTkFont(size=10), text_color="#555555")
+                                       font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.BTN_NEUTRAL)
         self.seek_label.pack(side="left", padx=(4, 2))
         self._seek_dragging = False
         self.seek_slider = ctk.CTkSlider(
             player_inner, from_=0, to=100, width=120, height=14,
             command=self._on_seek_drag,
-            fg_color="#2a2a4a", progress_color="#1f538d",
-            button_color="#4488cc", button_hover_color="#5599dd",
+            fg_color=theme.TOOLBAR_HOVER, progress_color=theme.PRIMARY,
+            button_color=theme.SLIDER_BUTTON, button_hover_color=theme.SLIDER_HOVER,
         )
         self.seek_slider.set(self._ZERO_DELAY_MS)
         self.seek_slider.pack(side="left", padx=(0, 2))
         self.seek_slider.bind("<ButtonPress-1>", lambda e: setattr(self, '_seek_dragging', True))
         self.seek_slider.bind("<ButtonRelease-1>", self._on_seek_release)
         self.seek_duration_label = ctk.CTkLabel(player_inner, text=self._ZERO_TIME_TEXT,
-                                                 font=ctk.CTkFont(size=10), text_color="#555555")
+                                                 font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.BTN_NEUTRAL)
         self.seek_duration_label.pack(side="left", padx=(2, 6))
 
         queue_controls = ctk.CTkFrame(player_frame, fg_color="transparent")
@@ -391,9 +381,9 @@ class MusicPage(BasePage):
             text="Play Filtered",
             width=110,
             height=26,
-            fg_color="#1f538d",
-            hover_color="#163b6a",
-            font=ctk.CTkFont(size=11),
+            fg_color=theme.PRIMARY,
+            hover_color=theme.HOVER_PRIMARY,
+            font=ctk.CTkFont(size=theme.FONT_BODY),
             command=lambda: self._start_queue_from_source("filtered"),
         ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
@@ -401,9 +391,9 @@ class MusicPage(BasePage):
             text="Play Favorites",
             width=110,
             height=26,
-            fg_color="#3f4f76",
-            hover_color="#4f6088",
-            font=ctk.CTkFont(size=11),
+            fg_color=theme.BTN_VANILLA,
+            hover_color=theme.HOVER_VANILLA,
+            font=ctk.CTkFont(size=theme.FONT_BODY),
             command=lambda: self._start_queue_from_source("favorites"),
         ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
@@ -411,9 +401,9 @@ class MusicPage(BasePage):
             text="Prev",
             width=60,
             height=26,
-            fg_color="#2f3557",
-            hover_color="#3f476f",
-            font=ctk.CTkFont(size=11),
+            fg_color=theme.BTN_SECONDARY,
+            hover_color=theme.HOVER_SECONDARY,
+            font=ctk.CTkFont(size=theme.FONT_BODY),
             command=lambda: self._step_queue(-1),
         ).pack(side="right")
         ctk.CTkButton(
@@ -421,31 +411,30 @@ class MusicPage(BasePage):
             text="Next",
             width=60,
             height=26,
-            fg_color="#2f3557",
-            hover_color="#3f476f",
-            font=ctk.CTkFont(size=11),
+            fg_color=theme.BTN_SECONDARY,
+            hover_color=theme.HOVER_SECONDARY,
+            font=ctk.CTkFont(size=theme.FONT_BODY),
             command=lambda: self._step_queue(1),
         ).pack(side="right", padx=(0, 4))
 
-        # Add track button
         add_btn_frame = ctk.CTkFrame(right, fg_color="transparent")
         add_btn_frame.pack(fill="x", padx=10, pady=(0, 10))
 
         ctk.CTkButton(add_btn_frame, text="+ Add Selected Tracks",
                       command=self._add_selected_track,
-                      fg_color="#2fa572", hover_color="#106a43",
-                      height=30, corner_radius=6, font=ctk.CTkFont(size=12),
+                      fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS,
+                      height=30, corner_radius=6, font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
                       ).pack(fill="x", pady=(0, 4))
 
         self.favorite_selected_btn = ctk.CTkButton(
             add_btn_frame,
             text="Favorite Selected",
             command=self._toggle_selected_favorites,
-            fg_color="#b08a2a",
-            hover_color="#8a6b1f",
+            fg_color=theme.WARNING_ALT,
+            hover_color=theme.HOVER_WARNING_ALT,
             height=30,
             corner_radius=6,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
             state="disabled",
         )
         self.favorite_selected_btn.pack(fill="x", pady=(0, 4))
@@ -454,11 +443,11 @@ class MusicPage(BasePage):
             add_btn_frame,
             text="Spotify Export (Experimental)...",
             command=self._open_spotify_export_dialog,
-            fg_color="#1f538d",
-            hover_color="#163b6a",
+            fg_color=theme.PRIMARY,
+            hover_color=theme.HOVER_PRIMARY,
             height=30,
             corner_radius=6,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
         )
         self.spotify_export_btn.pack(fill="x")
 
@@ -473,11 +462,9 @@ class MusicPage(BasePage):
                 self._update_summary()
                 self._render_available_tracks()
                 self._populate_stages()
-                # Re-render the playlist if a stage was previously selected
                 if self._selected_stage:
                     self._render_playlist()
                     self._render_stage_slots()
-        # Sync play button state with actual audio player
         self._refresh_spotify_button_state()
         self._sync_play_state()
 
@@ -540,12 +527,12 @@ class MusicPage(BasePage):
             if not self._is_playing:
                 self._is_playing = True
                 self.play_toggle_btn.configure(
-                    text="Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+                    text="Stop", fg_color=theme.DANGER, hover_color=theme.HOVER_DANGER)
         else:
             if self._is_playing:
                 self._is_playing = False
                 self.play_toggle_btn.configure(
-                    text="Play", fg_color="#2fa572", hover_color="#106a43")
+                    text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
                 self.player_status.configure(text="")
 
     def _start_spinner(self, text: str = "Loading"):
@@ -735,14 +722,14 @@ class MusicPage(BasePage):
                 parts.append(f"{favorite_count} favorites")
             self.summary_label.configure(
                 text=" | ".join(parts),
-                text_color="#2fa572")
+                text_color=theme.SUCCESS)
         else:
             text = "Select a stage to manage safe slots or legacy playlist entries."
             if favorite_count:
                 text += f" {favorite_count} favorite track(s) saved."
             self.summary_label.configure(
                 text=text,
-                text_color="#999999")
+                text_color=theme.TEXT_MUTED)
 
     def _get_effective_safe_count(self, stage_id: str) -> int:
         safe_count = len(self.app.music_manager.replacement_assignments.get(stage_id, {}))
@@ -795,7 +782,6 @@ class MusicPage(BasePage):
             self.stage_listbox.insert(tk.END, f"{prefix}{stage.stage_name}{suffix}")
             self._stage_ids.append(stage.stage_id)
 
-        # Always show Main Menu first
         if menu_stage:
             _insert_stage(menu_stage)
 
@@ -872,12 +858,12 @@ class MusicPage(BasePage):
         if not tracks:
             ctk.CTkLabel(self.playlist_frame,
                          text="No legacy playlist entries.\n\nSelect tracks from the right panel\nand click '+ Add Selected Tracks'.",
-                         text_color="#666666", font=ctk.CTkFont(size=12),
+                         text_color=theme.TEXT_DISABLED, font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
                          justify="center").pack(pady=30)
             return
 
         for i, track in enumerate(tracks):
-            row = ctk.CTkFrame(self.playlist_frame, fg_color="#1e1e38", corner_radius=6,
+            row = ctk.CTkFrame(self.playlist_frame, fg_color=theme.BG_CARD_INNER, corner_radius=6,
                                height=36)
             row.pack(fill="x", pady=1)
             row.pack_propagate(False)
@@ -885,41 +871,37 @@ class MusicPage(BasePage):
             inner = ctk.CTkFrame(row, fg_color="transparent")
             inner.pack(fill="x", padx=8, pady=2)
 
-            # Track number
             ctk.CTkLabel(inner, text=f"{i+1}.",
-                         font=ctk.CTkFont(size=11), text_color="#666666",
+                         font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DISABLED,
                          width=24).pack(side="left")
 
-            # Track info
             display = track.display_name if track.display_name else track.track_id
             ctk.CTkLabel(inner, text=display,
-                         font=ctk.CTkFont(size=12), text_color="white",
+                         font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color="white",
                          anchor="w").pack(side="left", fill="x", expand=True)
 
-            # Source mod
             if track.source_mod:
                 ctk.CTkLabel(inner, text=track.source_mod,
-                             font=ctk.CTkFont(size=10), text_color="#555555",
+                             font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.BTN_NEUTRAL,
                              ).pack(side="left", padx=(0, 5))
 
-            # Action buttons
             btn_frame = ctk.CTkFrame(inner, fg_color="transparent")
             btn_frame.pack(side="right")
 
             if i > 0:
                 ctk.CTkButton(btn_frame, text="Up", width=24, height=22,
-                              fg_color="#3a3a4a", hover_color="#555555",
-                              font=ctk.CTkFont(size=10),
+                              fg_color=theme.ACCENT_STRIPE_DISABLED, hover_color=theme.BTN_NEUTRAL,
+                              font=ctk.CTkFont(size=theme.FONT_CAPTION),
                               command=lambda t=track: self._move_up(t)).pack(side="left", padx=1)
             if i < len(tracks) - 1:
                 ctk.CTkButton(btn_frame, text="Dn", width=24, height=22,
-                              fg_color="#3a3a4a", hover_color="#555555",
-                              font=ctk.CTkFont(size=10),
+                              fg_color=theme.ACCENT_STRIPE_DISABLED, hover_color=theme.BTN_NEUTRAL,
+                              font=ctk.CTkFont(size=theme.FONT_CAPTION),
                               command=lambda t=track: self._move_down(t)).pack(side="left", padx=1)
 
             ctk.CTkButton(btn_frame, text="X", width=24, height=22,
-                          fg_color="#b02a2a", hover_color="#8a1f1f",
-                          font=ctk.CTkFont(size=10),
+                          fg_color=theme.DANGER, hover_color=theme.HOVER_DANGER,
+                          font=ctk.CTkFont(size=theme.FONT_CAPTION),
                           command=lambda t=track: self._remove_from_stage(t)).pack(side="left", padx=1)
 
         # Re-patch scroll speeds for the newly created playlist widgets
@@ -951,8 +933,8 @@ class MusicPage(BasePage):
                     "Add or point the app at a mod containing both "
                     "ui_stage_db.prc and ui_bgm_db.prc to enable safe slot replacement."
                 ),
-                text_color="#666666",
-                font=ctk.CTkFont(size=12),
+                text_color=theme.TEXT_DISABLED,
+                font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
                 justify="center",
                 wraplength=320,
             ).pack(pady=30)
@@ -962,8 +944,8 @@ class MusicPage(BasePage):
             ctk.CTkLabel(
                 self.safe_slot_frame,
                 text="This stage has no likely-vanilla slots in the discovered database.",
-                text_color="#666666",
-                font=ctk.CTkFont(size=12),
+                text_color=theme.TEXT_DISABLED,
+                font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
                 justify="center",
                 wraplength=320,
             ).pack(pady=30)
@@ -971,13 +953,13 @@ class MusicPage(BasePage):
 
         for slot in safe_slots:
             assignment, using_legacy_menu_fallback = self._get_effective_slot_assignment(slot)
-            row = ctk.CTkFrame(self.safe_slot_frame, fg_color="#1e1e38", corner_radius=6)
+            row = ctk.CTkFrame(self.safe_slot_frame, fg_color=theme.BG_CARD_INNER, corner_radius=6)
             row.pack(fill="x", pady=2)
 
             title = slot.display_name or slot.filename or slot.ui_bgm_id
             meta = slot.filename or slot.ui_bgm_id
             assigned_text = assignment.display_name if assignment else "No replacement assigned"
-            assigned_color = "#2fa572" if assignment else "#888888"
+            assigned_color = theme.SUCCESS if assignment else theme.TEXT_DIM
             title_text = title if assignment is None else f"{title} -> {assigned_text}"
             status_text = "Default slot"
             if assignment is not None:
@@ -988,20 +970,20 @@ class MusicPage(BasePage):
             ctk.CTkLabel(
                 row,
                 text=title_text,
-                font=ctk.CTkFont(size=12, weight="bold"),
+                font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM, weight="bold"),
                 anchor="w",
             ).pack(fill="x", padx=10, pady=(8, 0))
             ctk.CTkLabel(
                 row,
                 text=f"{meta} | incidence {slot.incidence} | {status_text}",
-                font=ctk.CTkFont(size=10),
-                text_color="#777799",
+                font=ctk.CTkFont(size=theme.FONT_CAPTION),
+                text_color=theme.TEXT_TAB,
                 anchor="w",
             ).pack(fill="x", padx=10, pady=(0, 2))
             ctk.CTkLabel(
                 row,
                 text=f"{title} -> {assigned_text}" if assignment else "No replacement assigned",
-                font=ctk.CTkFont(size=11),
+                font=ctk.CTkFont(size=theme.FONT_BODY),
                 text_color=assigned_color,
                 anchor="w",
             ).pack(fill="x", padx=10, pady=(0, 6))
@@ -1013,9 +995,9 @@ class MusicPage(BasePage):
                 text="Use Selected",
                 width=110,
                 height=26,
-                fg_color="#2fa572",
-                hover_color="#106a43",
-                font=ctk.CTkFont(size=11),
+                fg_color=theme.SUCCESS,
+                hover_color=theme.HOVER_SUCCESS,
+                font=ctk.CTkFont(size=theme.FONT_BODY),
                 command=lambda s=slot: self._assign_selected_track_to_slot(s),
             ).pack(side="left")
             ctk.CTkButton(
@@ -1023,9 +1005,9 @@ class MusicPage(BasePage):
                 text="Clear",
                 width=70,
                 height=26,
-                fg_color="#555570",
-                hover_color="#666688",
-                font=ctk.CTkFont(size=11),
+                fg_color=theme.TEXT_INACTIVE,
+                hover_color=theme.HOVER_MUTED,
+                font=ctk.CTkFont(size=theme.FONT_BODY),
                 command=lambda s=slot: self._clear_slot_replacement(s),
             ).pack(side="left", padx=(6, 0))
 
@@ -1426,15 +1408,15 @@ class MusicPage(BasePage):
             self.spotify_export_btn.configure(
                 text="Spotify Export (Experimental)...",
                 state="normal",
-                fg_color="#1f538d",
-                hover_color="#163b6a",
+                fg_color=theme.PRIMARY,
+                hover_color=theme.HOVER_PRIMARY,
             )
         else:
             self.spotify_export_btn.configure(
                 text="Spotify Export Disabled in Settings",
                 state="disabled",
-                fg_color="#2a2a38",
-                hover_color="#2a2a38",
+                fg_color=theme.DISABLED_DISCARD,
+                hover_color=theme.DISABLED_DISCARD,
             )
 
     def _resolve_track_by_id(self, track_id: str):
@@ -1445,11 +1427,11 @@ class MusicPage(BasePage):
 
     def _update_queue_status(self):
         if not self._queue_track_ids or self._queue_index < 0:
-            self.queue_status.configure(text=self._QUEUE_EMPTY_TEXT, text_color="#888888")
+            self.queue_status.configure(text=self._QUEUE_EMPTY_TEXT, text_color=theme.TEXT_DIM)
             return
         self.queue_status.configure(
             text=f"Queue: {self._queue_name} {self._queue_index + 1}/{len(self._queue_track_ids)}",
-            text_color="#8fb2ff",
+            text_color=theme.INFO_QUEUE,
         )
 
     def _prime_queue(self, tracks, queue_name: str, preferred_track_id: str = ""):
@@ -1484,7 +1466,7 @@ class MusicPage(BasePage):
             queue_name = "Filtered Tracks"
 
         if not tracks:
-            self.player_status.configure(text="No tracks available for that queue.", text_color="#e94560")
+            self.player_status.configure(text="No tracks available for that queue.", text_color=theme.ACCENT)
             return
 
         selected = self._get_selected_track()
@@ -1497,19 +1479,19 @@ class MusicPage(BasePage):
             self._update_queue_status()
             return
         if index < 0 or index >= len(self._queue_track_ids):
-            self.player_status.configure(text="Reached the end of the queue.", text_color="#888888")
+            self.player_status.configure(text="Reached the end of the queue.", text_color=theme.TEXT_DIM)
             return
         self._queue_index = index
         track = self._resolve_track_by_id(self._queue_track_ids[index])
         if track is None:
-            self.player_status.configure(text="Queued track is no longer available.", text_color="#e94560")
+            self.player_status.configure(text="Queued track is no longer available.", text_color=theme.ACCENT)
             return
         self._select_visible_track(track.track_id)
         self._play_track(track)
 
     def _step_queue(self, direction: int):
         if not self._queue_track_ids:
-            self.player_status.configure(text="Start a queue first.", text_color="#888888")
+            self.player_status.configure(text="Start a queue first.", text_color=theme.TEXT_DIM)
             return
         self._play_queue_index(self._queue_index + direction)
 
@@ -1534,15 +1516,15 @@ class MusicPage(BasePage):
         dialog.withdraw()
         dialog.title("Spotify Export (Experimental)")
         dialog.resizable(False, False)
-        dialog.configure(fg_color="#0f1327")
+        dialog.configure(fg_color=theme.BG_DIALOG)
         self._spotify_dialog = dialog
 
         shell = ctk.CTkFrame(
             dialog,
-            fg_color="#151b36",
+            fg_color=theme.BG_DIALOG_SHELL,
             corner_radius=10,
             border_width=1,
-            border_color="#304378",
+            border_color=theme.BORDER_DIALOG,
         )
         shell.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -1550,7 +1532,7 @@ class MusicPage(BasePage):
             shell,
             text="Spotify Export (Experimental)",
             anchor="w",
-            font=ctk.CTkFont(size=17, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_SECTION_LARGE, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
         ctk.CTkLabel(
@@ -1561,8 +1543,8 @@ class MusicPage(BasePage):
             ),
             anchor="w",
             justify="left",
-            font=ctk.CTkFont(size=11),
-            text_color="#b9bfd8",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.TEXT_SOFT,
         ).pack(fill="x", padx=14, pady=(0, 10))
 
         settings = self.app.config_manager.settings
@@ -1579,14 +1561,14 @@ class MusicPage(BasePage):
         new_playlist_var = tk.StringVar(value="")
         public_var = ctk.BooleanVar(value=False)
 
-        auth_frame = ctk.CTkFrame(shell, fg_color="#11182f", corner_radius=8)
+        auth_frame = ctk.CTkFrame(shell, fg_color=theme.BG_AUTH_FRAME, corner_radius=8)
         auth_frame.pack(fill="x", padx=14, pady=(0, 8))
 
         ctk.CTkLabel(
             auth_frame,
             text="Spotify Connection",
             anchor="w",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"),
         ).pack(fill="x", padx=10, pady=(10, 6))
 
         client_row = ctk.CTkFrame(auth_frame, fg_color="transparent")
@@ -1604,8 +1586,8 @@ class MusicPage(BasePage):
             text="Connect",
             width=96,
             height=30,
-            fg_color="#2fa572",
-            hover_color="#106a43",
+            fg_color=theme.SUCCESS,
+            hover_color=theme.HOVER_SUCCESS,
         )
         connect_btn.pack(side="left", padx=(0, 6))
 
@@ -1614,8 +1596,8 @@ class MusicPage(BasePage):
             text="Disconnect",
             width=96,
             height=30,
-            fg_color="#555570",
-            hover_color="#666688",
+            fg_color=theme.TEXT_INACTIVE,
+            hover_color=theme.HOVER_MUTED,
         )
         disconnect_btn.pack(side="left")
 
@@ -1624,19 +1606,19 @@ class MusicPage(BasePage):
             text="",
             anchor="w",
             justify="left",
-            font=ctk.CTkFont(size=11),
-            text_color="#888888",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.TEXT_DIM,
         )
         auth_status.pack(fill="x", padx=10, pady=(0, 10))
 
-        export_frame = ctk.CTkFrame(shell, fg_color="#11182f", corner_radius=8)
+        export_frame = ctk.CTkFrame(shell, fg_color=theme.BG_AUTH_FRAME, corner_radius=8)
         export_frame.pack(fill="x", padx=14, pady=(0, 8))
 
         ctk.CTkLabel(
             export_frame,
             text="Playlist Export",
             anchor="w",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS, weight="bold"),
         ).pack(fill="x", padx=10, pady=(10, 6))
 
         source_counts = ctk.CTkLabel(
@@ -1646,8 +1628,8 @@ class MusicPage(BasePage):
                 f"Favorite tracks: {len(self.app.music_manager.get_favorite_tracks())}"
             ),
             anchor="w",
-            font=ctk.CTkFont(size=11),
-            text_color="#b9bfd8",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.TEXT_SOFT,
         )
         source_counts.pack(fill="x", padx=10, pady=(0, 6))
 
@@ -1655,7 +1637,7 @@ class MusicPage(BasePage):
         source_row.pack(fill="x", padx=10, pady=(0, 8))
 
         ctk.CTkLabel(source_row, text="Export source",
-                     font=ctk.CTkFont(size=11), width=110, anchor="w").pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_BODY), width=110, anchor="w").pack(side="left")
         source_menu = ctk.CTkOptionMenu(
             source_row,
             values=["Selected Tracks", "Favorite Tracks"],
@@ -1668,7 +1650,7 @@ class MusicPage(BasePage):
         playlist_row.pack(fill="x", padx=10, pady=(0, 8))
 
         ctk.CTkLabel(playlist_row, text="Existing playlist",
-                     font=ctk.CTkFont(size=11), width=110, anchor="w").pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_BODY), width=110, anchor="w").pack(side="left")
         playlist_menu = ctk.CTkOptionMenu(
             playlist_row,
             values=["Connect Spotify first"],
@@ -1682,8 +1664,8 @@ class MusicPage(BasePage):
             text="Refresh",
             width=84,
             height=28,
-            fg_color="#333352",
-            hover_color="#444470",
+            fg_color=theme.BTN_TERTIARY,
+            hover_color=theme.HOVER_TERTIARY,
         )
         refresh_btn.pack(side="left")
 
@@ -1691,7 +1673,7 @@ class MusicPage(BasePage):
         new_playlist_row.pack(fill="x", padx=10, pady=(0, 8))
 
         ctk.CTkLabel(new_playlist_row, text="New playlist",
-                     font=ctk.CTkFont(size=11), width=110, anchor="w").pack(side="left")
+                     font=ctk.CTkFont(size=theme.FONT_BODY), width=110, anchor="w").pack(side="left")
         ctk.CTkEntry(
             new_playlist_row,
             textvariable=new_playlist_var,
@@ -1703,7 +1685,7 @@ class MusicPage(BasePage):
             export_frame,
             text="Create new playlist as public",
             variable=public_var,
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=theme.FONT_BODY),
         ).pack(anchor="w", padx=10, pady=(0, 10))
 
         status_label = ctk.CTkLabel(
@@ -1711,8 +1693,8 @@ class MusicPage(BasePage):
             text="",
             anchor="w",
             justify="left",
-            font=ctk.CTkFont(size=11),
-            text_color="#888888",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.TEXT_DIM,
             wraplength=580,
         )
         status_label.pack(fill="x", padx=14, pady=(0, 8))
@@ -1725,8 +1707,8 @@ class MusicPage(BasePage):
             text="Export",
             width=96,
             height=30,
-            fg_color="#1f538d",
-            hover_color="#163b6a",
+            fg_color=theme.PRIMARY,
+            hover_color=theme.HOVER_PRIMARY,
         )
         export_btn.pack(side="right", padx=(8, 0))
 
@@ -1735,8 +1717,8 @@ class MusicPage(BasePage):
             text="Close",
             width=96,
             height=30,
-            fg_color="#2f3557",
-            hover_color="#3f476f",
+            fg_color=theme.BTN_SECONDARY,
+            hover_color=theme.HOVER_SECONDARY,
         )
         close_btn.pack(side="right")
 
@@ -1753,7 +1735,7 @@ class MusicPage(BasePage):
 
         close_btn.configure(command=_close_dialog)
 
-        def _set_status(text: str, color: str = "#888888") -> None:
+        def _set_status(text: str, color: str = theme.TEXT_DIM) -> None:
             status_label.configure(text=text, text_color=color)
 
         def _set_busy(busy: bool) -> None:
@@ -1771,14 +1753,14 @@ class MusicPage(BasePage):
                 name = current.spotify_display_name or current.spotify_user_id or "Connected"
                 auth_status.configure(
                     text=f"Connected as {name}",
-                    text_color="#2fa572",
+                    text_color=theme.SUCCESS,
                 )
                 connect_btn.configure(text="Reconnect")
                 disconnect_btn.configure(state="normal" if not state["busy"] else "disabled")
             else:
                 auth_status.configure(
                     text="Not connected",
-                    text_color="#888888",
+                    text_color=theme.TEXT_DIM,
                 )
                 connect_btn.configure(text="Connect")
                 disconnect_btn.configure(state="disabled" if not state["busy"] else "disabled")
@@ -1825,7 +1807,7 @@ class MusicPage(BasePage):
                         self._ZERO_DELAY_MS,
                         lambda err=str(exc): (
                             _set_busy(False),
-                            _set_status(err, "#e94560"),
+                            _set_status(err, theme.ACCENT),
                             _refresh_auth_ui(),
                         ),
                     )
@@ -1839,7 +1821,7 @@ class MusicPage(BasePage):
                         _refresh_auth_ui(),
                         _set_status(
                             f"Loaded {len(pls)} owned Spotify playlist(s).",
-                            "#2fa572",
+                            theme.SUCCESS,
                         ),
                     ),
                 )
@@ -1849,7 +1831,7 @@ class MusicPage(BasePage):
         def _connect_async() -> None:
             cleaned_client_id = client_id_var.get().strip()
             if not cleaned_client_id:
-                _set_status("Enter a Spotify client ID first.", "#e94560")
+                _set_status("Enter a Spotify client ID first.", theme.ACCENT)
                 return
 
             _set_busy(True)
@@ -1865,7 +1847,7 @@ class MusicPage(BasePage):
                         lambda err=str(exc): (
                             _set_busy(False),
                             _refresh_auth_ui(),
-                            _set_status(err, "#e94560"),
+                            _set_status(err, theme.ACCENT),
                         ),
                     )
                     return
@@ -1876,7 +1858,7 @@ class MusicPage(BasePage):
                     _apply_playlists(playlists)
                     _set_status(
                         f"Connected as {profile.display_name}. Loaded {len(playlists)} playlist(s).",
-                        "#2fa572",
+                        theme.SUCCESS,
                     )
 
                 self.after(self._ZERO_DELAY_MS, _done)
@@ -1887,23 +1869,23 @@ class MusicPage(BasePage):
             self.app.spotify_manager.disconnect()
             _apply_playlists([])
             _refresh_auth_ui()
-            _set_status("Spotify connection removed.", "#888888")
+            _set_status("Spotify connection removed.", theme.TEXT_DIM)
 
         def _export_async() -> None:
             source = source_var.get()
             tracks = self._tracks_for_spotify_source(source)
             if not tracks:
-                _set_status(f"No tracks available for '{source}'.", "#e94560")
+                _set_status(f"No tracks available for '{source}'.", theme.ACCENT)
                 return
             if not self.app.spotify_manager.is_authenticated():
-                _set_status("Connect a Spotify account first.", "#e94560")
+                _set_status("Connect a Spotify account first.", theme.ACCENT)
                 return
 
             new_playlist_name = new_playlist_var.get().strip()
             selected_label = playlist_var.get().strip()
             selected_playlist = state["playlist_map"].get(selected_label)
             if not new_playlist_name and selected_playlist is None:
-                _set_status("Select an existing playlist or enter a new playlist name.", "#e94560")
+                _set_status("Select an existing playlist or enter a new playlist name.", theme.ACCENT)
                 return
 
             _set_busy(True)
@@ -1927,7 +1909,7 @@ class MusicPage(BasePage):
                         self._ZERO_DELAY_MS,
                         lambda err=str(exc): (
                             _set_busy(False),
-                            _set_status(err, "#e94560"),
+                            _set_status(err, theme.ACCENT),
                         ),
                     )
                     return
@@ -1936,7 +1918,7 @@ class MusicPage(BasePage):
                     _set_busy(False)
                     _set_status(
                         f"Spotify export finished for '{report.playlist_name}'.",
-                        "#2fa572",
+                        theme.SUCCESS,
                     )
                     messagebox.showinfo(
                         "Spotify Export Complete",
@@ -2018,7 +2000,7 @@ class MusicPage(BasePage):
     def _play_selected(self):
         track = self._get_selected_track()
         if not track:
-            self.player_status.configure(text="Select a track first", text_color="#e94560")
+            self.player_status.configure(text="Select a track first", text_color=theme.ACCENT)
             self.after(
                 self._PLAYBACK_STATUS_CLEAR_MS,
                 lambda: self.player_status.configure(text=""),
@@ -2056,7 +2038,7 @@ class MusicPage(BasePage):
         self._play_generation += 1
         current_gen = self._play_generation
 
-        self.player_status.configure(text="Loading...", text_color="#888888")
+        self.player_status.configure(text="Loading...", text_color=theme.TEXT_DIM)
         self.update_idletasks()
 
         def _play_bg():
@@ -2076,12 +2058,12 @@ class MusicPage(BasePage):
     def _on_play_result(self, result, track):
         """Handle play result on the main thread."""
         success, msg = result
-        color = "#2fa572" if success else "#e94560"
+        color = theme.SUCCESS if success else theme.ACCENT
         self.player_status.configure(text=msg, text_color=color)
         if success:
             self._is_playing = True
             self.play_toggle_btn.configure(
-                text="Stop", fg_color="#b02a2a", hover_color="#8a1f1f")
+                text="Stop", fg_color=theme.DANGER, hover_color=theme.HOVER_DANGER)
             self._update_queue_status()
             # Start polling for end-of-track to reset button state
             self._poll_playback_end()
@@ -2109,12 +2091,12 @@ class MusicPage(BasePage):
             ):
                 self._is_playing = False
                 self.play_toggle_btn.configure(
-                    text="Play", fg_color="#2fa572", hover_color="#106a43")
+                    text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
                 self._play_queue_index(self._queue_index + 1)
                 return
             self._is_playing = False
             self.play_toggle_btn.configure(
-                text="Play", fg_color="#2fa572", hover_color="#106a43")
+                text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
             self.player_status.configure(text="")
             return
         self._poll_after_id = self.after(self._PLAYBACK_POLL_MS, self._poll_playback_end)
@@ -2125,8 +2107,8 @@ class MusicPage(BasePage):
         self._is_playing = False
         self._cancel_playback_timers()
         self.play_toggle_btn.configure(
-            text="Play", fg_color="#2fa572", hover_color="#106a43")
-        self.player_status.configure(text="Stopped", text_color="#888888")
+            text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
+        self.player_status.configure(text="Stopped", text_color=theme.TEXT_DIM)
         self.seek_slider.set(self._ZERO_DELAY_MS)
         self.seek_label.configure(text=self._ZERO_TIME_TEXT)
         self.seek_duration_label.configure(text=self._ZERO_TIME_TEXT)

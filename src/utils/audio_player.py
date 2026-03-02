@@ -6,6 +6,12 @@ import shutil
 import subprocess
 import time
 
+DEFAULT_VOLUME = 0.7
+MS_PER_SECOND = 1000.0
+OPUS_HEADER_PROBE_BYTES = 48
+# ~192 kbps average for compressed audio; used for rough duration estimation
+APPROX_BYTES_PER_SECOND = 24000.0
+
 _pygame_available = False
 _pygame_error = ""
 _pygame_initialized = False
@@ -109,7 +115,7 @@ class AudioPlayer:
         self._current_file: Optional[Path] = None
         self._playing = False
         self._paused = False
-        self._volume = 0.7
+        self._volume = DEFAULT_VOLUME
         self._seek_offset = 0.0       # track position (seconds) at last seek/play
         self._raw_pos_at_anchor = 0.0  # get_pos() value (seconds) at last seek/play
 
@@ -157,7 +163,7 @@ class AudioPlayer:
             pass
         try:
             size = file_path.stat().st_size
-            return size / 24000.0
+            return size / APPROX_BYTES_PER_SECOND
         except Exception:
             return 0.0
 
@@ -285,7 +291,7 @@ class AudioPlayer:
         if file_path.suffix.lower() == ".ogg":
             try:
                 with open(file_path, "rb") as f:
-                    header = f.read(48)
+                    header = f.read(OPUS_HEADER_PROBE_BYTES)
                 if b"OpusHead" in header:
                     wav_result = self._try_ffmpeg_fallback(file_path)
                     if wav_result:
@@ -455,7 +461,7 @@ class AudioPlayer:
         if not _pygame_initialized or not _pygame_available:
             return 0.0
         try:
-            raw = pygame.mixer.music.get_pos() / 1000.0
+            raw = pygame.mixer.music.get_pos() / MS_PER_SECOND
             if raw < 0:
                 return 0.0
             return max(0.0, self._seek_offset + (raw - self._raw_pos_at_anchor))
@@ -480,11 +486,9 @@ class AudioPlayer:
                     return wf.getnframes() / wf.getframerate()
         except Exception:
             pass
-        # Rough estimate from file size for other formats
         try:
             size = self._current_file.stat().st_size
-            # ~192 kbps average for compressed audio
-            return size / 24000.0
+            return size / APPROX_BYTES_PER_SECOND
         except Exception:
             return 0.0
 
@@ -512,7 +516,7 @@ class AudioPlayer:
             # Record raw get_pos() right after seek so get_position()
             # can compute elapsed time relative to this anchor.
             try:
-                self._raw_pos_at_anchor = pygame.mixer.music.get_pos() / 1000.0
+                self._raw_pos_at_anchor = pygame.mixer.music.get_pos() / MS_PER_SECOND
             except Exception:
                 self._raw_pos_at_anchor = 0.0
         except Exception:

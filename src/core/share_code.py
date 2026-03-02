@@ -15,6 +15,8 @@ from src.models.plugin import Plugin
 
 class ShareCodeManager:
     EMBED_SIZE_LIMIT = 256 * 1024  # 256KB
+    FILE_HASH_CHUNK_SIZE = 8192
+    HASH_HEX_PREFIX_LENGTH = 16
 
     @staticmethod
     def _base_plugin_filename(filename: str) -> str:
@@ -202,9 +204,9 @@ class ShareCodeManager:
         try:
             h = hashlib.sha256()
             with open(path, 'rb') as f:
-                for chunk in iter(lambda: f.read(8192), b''):
+                for chunk in iter(lambda: f.read(self.FILE_HASH_CHUNK_SIZE), b''):
                     h.update(chunk)
-            return f"sha256:{h.hexdigest()[:16]}"
+            return f"sha256:{h.hexdigest()[:self.HASH_HEX_PREFIX_LENGTH]}"
         except (PermissionError, OSError):
             return ""
 

@@ -1,6 +1,6 @@
-"""Reusable search bar widget."""
 import tkinter as tk
 import customtkinter as ctk
+from src.ui import theme
 
 
 class SearchBar(ctk.CTkFrame):
@@ -16,7 +16,7 @@ class SearchBar(ctk.CTkFrame):
             placeholder_text=placeholder,
             textvariable=self.search_var,
             height=35,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
         )
         self.entry.pack(fill="x")
 

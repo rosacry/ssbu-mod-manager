@@ -1,11 +1,12 @@
 """Mod card widget for the mods page."""
 import customtkinter as ctk
 from src.models.mod import Mod, ModStatus
+from src.ui import theme
 
 
 class ModCard(ctk.CTkFrame):
     def __init__(self, parent, mod: Mod, on_toggle=None, on_details=None, **kwargs):
-        super().__init__(parent, fg_color="#242438", corner_radius=8, **kwargs)
+        super().__init__(parent, fg_color=theme.BG_CARD, corner_radius=theme.RADIUS_MEDIUM, **kwargs)
         self.mod = mod
         self._on_toggle = on_toggle
         self._on_details = on_details
@@ -34,10 +35,10 @@ class ModCard(ctk.CTkFrame):
         info.pack(side="left", fill="x", expand=True)
 
         # Name
-        name_color = "white" if mod.status == ModStatus.ENABLED else "#666666"
+        name_color = theme.TEXT_PRIMARY if mod.status == ModStatus.ENABLED else theme.TEXT_DISABLED
         self.name_label = ctk.CTkLabel(
             info, text=mod.original_name,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"),
             text_color=name_color, anchor="w",
         )
         self.name_label.pack(anchor="w")
@@ -52,8 +53,8 @@ class ModCard(ctk.CTkFrame):
         if details_parts:
             self.details_label = ctk.CTkLabel(
                 info, text=" | ".join(details_parts),
-                font=ctk.CTkFont(size=11),
-                text_color="#888888", anchor="w",
+                font=ctk.CTkFont(size=theme.FONT_BODY),
+                text_color=theme.TEXT_DIM, anchor="w",
             )
             self.details_label.pack(anchor="w")
 
@@ -64,8 +65,8 @@ class ModCard(ctk.CTkFrame):
                 conflict_text += f" +{len(mod.conflicts_with) - 3} more"
             conflict_label = ctk.CTkLabel(
                 info, text=conflict_text,
-                font=ctk.CTkFont(size=11),
-                text_color="#e94560", anchor="w",
+                font=ctk.CTkFont(size=theme.FONT_BODY),
+                text_color=theme.ACCENT, anchor="w",
             )
             conflict_label.pack(anchor="w")
 
@@ -75,14 +76,14 @@ class ModCard(ctk.CTkFrame):
         try:
             if self.winfo_exists():
                 if self.mod.status == ModStatus.ENABLED:
-                    self.name_label.configure(text_color="white")
+                    self.name_label.configure(text_color=theme.TEXT_PRIMARY)
                 else:
-                    self.name_label.configure(text_color="#666666")
+                    self.name_label.configure(text_color=theme.TEXT_DISABLED)
         except Exception:
             pass
 
     def update_card(self):
-        name_color = "white" if self.mod.status == ModStatus.ENABLED else "#666666"
+        name_color = theme.TEXT_PRIMARY if self.mod.status == ModStatus.ENABLED else theme.TEXT_DISABLED
         self.name_label.configure(text_color=name_color)
         if self.mod.status == ModStatus.ENABLED:
             self.switch.select()

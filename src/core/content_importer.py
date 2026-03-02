@@ -73,6 +73,22 @@ _SUPPORT_KIND_LABELS = {
     "effect": "effect pack",
     "camera": "camera pack",
 }
+
+# SSBU ships 8 base costume slots per fighter (c00–c07).
+_BASE_COSTUME_SLOT_COUNT = 8
+
+# Tolerance for comparing file modification timestamps (seconds).
+_MTIME_TOLERANCE = 1e-6
+
+# Nintendo Switch title IDs are 16 hex characters.
+_SWITCH_TITLE_ID_HEX_LENGTH = 16
+
+# How many nested wrapper directories to unwrap when searching for mod content.
+_MAX_WRAPPER_DEPTH = 4
+
+# Display caps for user-facing warning messages.
+_MAX_SKIPPED_DISPLAY = 5
+_MAX_OVERLAP_DISPLAY = 4
 _MSG_NAME_ENTRY_PATTERN = re.compile(r"^nam_chr(?P<tier>[12])_(?P<slot>\d{2})_(?P<name_id>[a-z0-9_]+)$", re.IGNORECASE)
 _PRCXML_CHARACALL_PATTERN = re.compile(
     r'characall_label_c(?P<slot>\d{2})"\s*>\s*vc_narration_characall_(?P<identifier>[^<]+)<',
@@ -326,7 +342,7 @@ def apply_mod_support_pack_scope(
             raise ValueError(f"Choose a target slot for single-slot {normalized_kind} assignment.")
         target_slots = [int(target_slot)]
     elif normalized_mode == "character_wide":
-        target_slots = list(range(8))
+        target_slots = list(range(_BASE_COSTUME_SLOT_COUNT))
     else:
         raise ValueError(f"Unsupported {normalized_kind} pack mode.")
 
@@ -641,7 +657,7 @@ def import_mod_package(
         _invalidate_arcropolis_mod_cache(mods_path)
 
     if summary.items_imported == 0:
-        skipped = ", ".join(summary.skipped_items[:5]) if summary.skipped_items else ""
+        skipped = ", ".join(summary.skipped_items[:_MAX_SKIPPED_DISPLAY]) if summary.skipped_items else ""
         if skipped:
             raise ValueError(f"Nothing was imported. Skipped items: {skipped}")
         raise ValueError("Nothing was imported. The selected folder may already be in use.")
@@ -1375,7 +1391,7 @@ def _build_slot_index(mods_path: Path) -> dict[str, dict[int, list[str]]]:
 
 def _available_base_slots(slot_index: dict[str, dict[int, list[str]]], fighter: str) -> list[int]:
     used = set(slot_index.get(fighter, {}).keys())
-    return [slot for slot in range(8) if slot not in used]
+    return [slot for slot in range(_BASE_COSTUME_SLOT_COUNT) if slot not in used]
 
 
 def _disable_conflicting_mod(
@@ -1724,7 +1740,7 @@ def _find_single_nested_content_child(mod_path: Path) -> Path | None:
     return child if _contains_mod_content(child) else None
 
 
-def _unwrap_single_wrapper(folder: Path, max_depth: int = 4) -> Path:
+def _unwrap_single_wrapper(folder: Path, max_depth: int = _MAX_WRAPPER_DEPTH) -> Path:
     current = folder
     for _ in range(max_depth):
         if _contains_mod_content(current):
@@ -1934,7 +1950,7 @@ def _resolve_installed_exact_overlaps(
 
         summary.remaining_exact_overlaps += 1
         summary.warnings.append(
-            f"Remaining exact overlap for '{rel}' across {', '.join(name for name, _path in current[:4])}"
+            f"Remaining exact overlap for '{rel}' across {', '.join(name for name, _path in current[:_MAX_OVERLAP_DISPLAY])}"
             f"{'...' if len(current) > 4 else ''}. Automatic repair skipped because the files differ."
         )
 
@@ -2083,7 +2099,7 @@ def _looks_like_generated_ui_stock_icon(size_map: dict[int, Path], target_path: 
             source_stat = source_path.stat()
         except OSError:
             continue
-        if abs(source_stat.st_mtime - target_stat.st_mtime) > 1e-6:
+        if abs(source_stat.st_mtime - target_stat.st_mtime) > _MTIME_TOLERANCE:
             continue
         try:
             if source_path.read_bytes() == target_bytes:
@@ -2819,7 +2835,7 @@ def _is_fighter_slot_manifest_file(relative_path: str, fighter: str, slot: int) 
 
 
 def _is_unnecessary_base_slot_manifest_path(relative_path: str, fighter: str, slot: int) -> bool:
-    if int(slot) > 7:
+    if int(slot) >= _BASE_COSTUME_SLOT_COUNT:
         return False
     rel = relative_path.replace("\\", "/").lower()
     fighter_name = str(fighter or "").lower()
@@ -3286,7 +3302,7 @@ def _prune_empty_parents(path: Path, stop_at: Path) -> None:
 def _candidate_roots(source_dir: Path) -> list[Path]:
     roots = [source_dir]
     current = source_dir
-    for _ in range(4):
+    for _ in range(_MAX_WRAPPER_DEPTH):
         children = [d for d in _iter_visible_dirs(current)]
         if len(children) != 1:
             break
@@ -3305,7 +3321,7 @@ def _candidate_roots(source_dir: Path) -> list[Path]:
 
 
 def _looks_like_title_id(name: str) -> bool:
-    return len(name) == 16 and all(c in "0123456789abcdefABCDEF" for c in name)
+    return len(name) == _SWITCH_TITLE_ID_HEX_LENGTH and all(c in "0123456789abcdefABCDEF" for c in name)
 
 
 def _is_plugin_binary(name: str) -> bool:

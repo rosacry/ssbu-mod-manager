@@ -6,6 +6,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+_KB = 1024
+_MB = _KB * 1024
+_GB = _MB * 1024
+
 
 def open_folder(path) -> None:
     """Open a folder in the system file manager. Cross-platform."""
@@ -52,14 +56,14 @@ def get_dir_size(path: Path) -> int:
 
 def format_size(size_bytes: int) -> str:
     """Format bytes into human-readable string."""
-    if size_bytes < 1024:
+    if size_bytes < _KB:
         return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    elif size_bytes < 1024 * 1024 * 1024:
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    elif size_bytes < _MB:
+        return f"{size_bytes / _KB:.1f} KB"
+    elif size_bytes < _GB:
+        return f"{size_bytes / _MB:.1f} MB"
     else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+        return f"{size_bytes / _GB:.1f} GB"
 
 def count_files(path: Path) -> int:
     """Count files in a directory recursively."""

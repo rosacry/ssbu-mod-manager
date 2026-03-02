@@ -1,5 +1,6 @@
 """Main window with sidebar navigation, toolbar, and page container."""
 import customtkinter as ctk
+from src.ui import theme
 from src.ui.sidebar import Sidebar
 from src.ui.widgets.status_bar import StatusBar
 from src.utils.action_history import action_history
@@ -32,17 +33,15 @@ class MainWindow(ctk.CTkFrame):
         self.sidebar = Sidebar(self, on_navigate=app.navigate)
         self.sidebar.pack(side="left", fill="y")
 
-        # Subtle vertical separator between sidebar and content
         import tkinter as tk
-        sep = tk.Frame(self, width=1, bg="#1a1a30")
+        sep = tk.Frame(self, width=1, bg=theme.BG_CARD_DEEP)
         sep.pack(side="left", fill="y")
 
         # Right side: toolbar + content + status bar
-        right = ctk.CTkFrame(self, fg_color="#12121e", corner_radius=0)
+        right = ctk.CTkFrame(self, fg_color=theme.BG_APP, corner_radius=0)
         right.pack(side="left", fill="both", expand=True)
 
-        # Toolbar with undo/redo - sleeker design
-        self.toolbar = ctk.CTkFrame(right, height=40, fg_color="#14142a", corner_radius=0)
+        self.toolbar = ctk.CTkFrame(right, height=40, fg_color=theme.BG_TOOLBAR, corner_radius=0)
         self.toolbar.pack(fill="x", side="top")
         self.toolbar.pack_propagate(False)
 
@@ -51,45 +50,43 @@ class MainWindow(ctk.CTkFrame):
 
         self.undo_btn = ctk.CTkButton(
             toolbar_inner, text="\u21b6 Undo", width=80, height=30,
-            fg_color="#1e1e38", hover_color="#2a2a4a",
-            font=ctk.CTkFont(size=11), corner_radius=6,
+            fg_color=theme.BG_CARD_INNER, hover_color=theme.TOOLBAR_HOVER,
+            font=ctk.CTkFont(size=theme.FONT_BODY), corner_radius=6,
             state="disabled", command=self._undo,
-            text_color="#8888aa",
+            text_color=theme.TEXT_SUBTLE,
         )
         self.undo_btn.pack(side="left", padx=(0, 4))
 
         self.redo_btn = ctk.CTkButton(
             toolbar_inner, text="\u21b7 Redo", width=80, height=30,
-            fg_color="#1e1e38", hover_color="#2a2a4a",
-            font=ctk.CTkFont(size=11), corner_radius=6,
+            fg_color=theme.BG_CARD_INNER, hover_color=theme.TOOLBAR_HOVER,
+            font=ctk.CTkFont(size=theme.FONT_BODY), corner_radius=6,
             state="disabled", command=self._redo,
-            text_color="#8888aa",
+            text_color=theme.TEXT_SUBTLE,
         )
         self.redo_btn.pack(side="left", padx=(0, 12))
 
-        # Action label (between undo/redo and save/discard)
         self.action_label = ctk.CTkLabel(
             toolbar_inner, text="",
-            font=ctk.CTkFont(size=11), text_color="#666666",
+            font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DISABLED,
         )
         self.action_label.pack(side="left")
 
-        # Save & Discard buttons — right-aligned
         self.save_btn = ctk.CTkButton(
             toolbar_inner, text="\u2713 Save", width=80, height=30,
-            fg_color="#27ae60", hover_color="#2ecc71",
-            font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6,
+            fg_color=theme.SUCCESS_ALT, hover_color=theme.SUCCESS_HOVER_ALT,
+            font=ctk.CTkFont(size=theme.FONT_BODY, weight="bold"), corner_radius=6,
             state="disabled", command=self._save,
-            text_color="#ffffff",
+            text_color=theme.TEXT_PRIMARY,
         )
         self.save_btn.pack(side="right", padx=(4, 0))
 
         self.discard_btn = ctk.CTkButton(
             toolbar_inner, text="\u2716 Discard", width=90, height=30,
-            fg_color="#555570", hover_color="#666688",
-            font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6,
+            fg_color=theme.TEXT_INACTIVE, hover_color=theme.HOVER_MUTED,
+            font=ctk.CTkFont(size=theme.FONT_BODY, weight="bold"), corner_radius=6,
             state="disabled", command=self._discard,
-            text_color="#ffffff",
+            text_color=theme.TEXT_PRIMARY,
         )
         self.discard_btn.pack(side="right", padx=(0, 4))
 
@@ -112,19 +109,17 @@ class MainWindow(ctk.CTkFrame):
         parent.bind("<Control-s>", _skip_if_text(self._save))
         parent.bind("<Control-S>", _skip_if_text(self._save))
 
-        # Listen for action history changes
         action_history.add_listener(self._update_undo_redo)
-        # Listen for unsaved changes
         self._unsaved_listener_id = None
 
-        self.content = ctk.CTkFrame(right, fg_color="#12121e", corner_radius=0)
+        self.content = ctk.CTkFrame(right, fg_color=theme.BG_APP, corner_radius=0)
         self.content.pack(fill="both", expand=True)
-        self._nav_overlay = ctk.CTkFrame(self.content, fg_color="#12121e", corner_radius=0)
+        self._nav_overlay = ctk.CTkFrame(self.content, fg_color=theme.BG_APP, corner_radius=0)
         self._nav_overlay_label = ctk.CTkLabel(
             self._nav_overlay,
             text="",
-            font=ctk.CTkFont(size=13),
-            text_color="#6a6a8a",
+            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
+            text_color=theme.TEXT_FAINT,
         )
         self._nav_overlay_label.place(relx=0.5, rely=0.5, anchor="center")
 
@@ -161,13 +156,12 @@ class MainWindow(ctk.CTkFrame):
         try:
             desc = action_history.undo()
         except Exception as e:
-            self.action_label.configure(text=f"Undo failed: {e}", text_color="#e94560")
+            self.action_label.configure(text=f"Undo failed: {e}", text_color=theme.ACCENT)
             self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
             return
         if desc:
-            self.action_label.configure(text=f"Undone: {desc}", text_color="#e94560")
+            self.action_label.configure(text=f"Undone: {desc}", text_color=theme.ACCENT)
             self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
-            # Refresh current page
             if self.current_page and self.current_page in self.pages:
                 page = self.pages[self.current_page]
                 if hasattr(page, '_loaded'):
@@ -178,11 +172,11 @@ class MainWindow(ctk.CTkFrame):
         try:
             desc = action_history.redo()
         except Exception as e:
-            self.action_label.configure(text=f"Redo failed: {e}", text_color="#e94560")
+            self.action_label.configure(text=f"Redo failed: {e}", text_color=theme.ACCENT)
             self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
             return
         if desc:
-            self.action_label.configure(text=f"Redone: {desc}", text_color="#2fa572")
+            self.action_label.configure(text=f"Redone: {desc}", text_color=theme.SUCCESS)
             self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
             if self.current_page and self.current_page in self.pages:
                 page = self.pages[self.current_page]
@@ -194,14 +188,12 @@ class MainWindow(ctk.CTkFrame):
         """Invoke save on the current page (if it has unsaved changes)."""
         if not self.app._has_unsaved_changes:
             return
-        # Try current page first
         if self.current_page and self.current_page in self.pages:
             page = self.pages[self.current_page]
             if hasattr(page, 'save_changes') and callable(page.save_changes):
                 page.save_changes()
                 self.update_save_discard()
                 return
-        # Fallback: try all pages that have unsaved changes
         for page_id, page in self.pages.items():
             if hasattr(page, 'save_changes') and callable(page.save_changes):
                 page.save_changes()
@@ -218,7 +210,6 @@ class MainWindow(ctk.CTkFrame):
             return
         self.app.mark_saved()
         self.update_save_discard()
-        # Reload current page
         if self.current_page and self.current_page in self.pages:
             page = self.pages[self.current_page]
             if hasattr(page, "discard_changes") and callable(page.discard_changes):
@@ -229,7 +220,7 @@ class MainWindow(ctk.CTkFrame):
             if hasattr(page, '_loaded'):
                 page._loaded = False
             page.on_show()
-        self.action_label.configure(text="Changes discarded", text_color="#e94560")
+        self.action_label.configure(text="Changes discarded", text_color=theme.ACCENT)
         self._safe_after(self.ACTION_MESSAGE_DURATION_MS, lambda: self.action_label.configure(text=""))
 
     def update_save_discard(self):
@@ -240,18 +231,18 @@ class MainWindow(ctk.CTkFrame):
         try:
             if self.app._has_unsaved_changes:
                 self.save_btn.configure(state="normal",
-                                        fg_color="#27ae60",
-                                        text_color="#ffffff")
+                                        fg_color=theme.SUCCESS_ALT,
+                                        text_color=theme.TEXT_PRIMARY)
                 self.discard_btn.configure(state="normal",
-                                           fg_color="#555570",
-                                           text_color="#ffffff")
+                                           fg_color=theme.TEXT_INACTIVE,
+                                           text_color=theme.TEXT_PRIMARY)
             else:
                 self.save_btn.configure(state="disabled",
-                                        fg_color="#1a2a1e",
-                                        text_color="#3a5a3a")
+                                        fg_color=theme.BTN_DISABLED,
+                                        text_color=theme.TEXT_DISABLED_SAVE)
                 self.discard_btn.configure(state="disabled",
-                                           fg_color="#2a2a38",
-                                           text_color="#4a4a5a")
+                                           fg_color=theme.DISABLED_DISCARD,
+                                           text_color=theme.BTN_DISABLED_TEXT)
         except Exception:
             pass
 
@@ -260,7 +251,7 @@ class MainWindow(ctk.CTkFrame):
         self._safe_after(self.ZERO_DELAY_MS, self._update_undo_redo_impl)
 
     def _update_undo_redo_impl(self):
-        """Actually update undo/redo button states on the main thread."""
+        """Update undo/redo button states on the main thread."""
         try:
             if action_history.can_undo():
                 self.undo_btn.configure(state="normal")

@@ -9,6 +9,11 @@ from src.core.prc_handler import PRCHandler
 from src.core.msbt_handler import MSBTHandler
 from src.utils.logger import logger
 
+HIDDEN_DISP_ORDER = -1
+DEFAULT_COLOR_NUM = 8
+SIGNED_BYTE_MAX = 127
+UNSIGNED_BYTE_RANGE = 256
+
 
 class CSSManager:
     def __init__(self, prc_handler: PRCHandler, msbt_handler: MSBTHandler):
@@ -62,7 +67,7 @@ class CSSManager:
                 "disp_order": disp_order,
                 "Name (Normal)": name_normal,
                 "Name (Uppercase)": name_upper,
-                "color_num": chara['color_num'].value if 'color_num' in chara else 8,
+                "color_num": chara['color_num'].value if 'color_num' in chara else DEFAULT_COLOR_NUM,
                 "c00_index": chara['c00_index'].value if 'c00_index' in chara else 0,
                 "c01_index": chara['c01_index'].value if 'c01_index' in chara else 1,
                 "c02_index": chara['c02_index'].value if 'c02_index' in chara else 2,
@@ -124,7 +129,7 @@ class CSSManager:
             "ui_chara_id": base_chara["ui_chara_id"] + "_copy",
             "name_id": base_chara["name_id"] + "_copy",
             "fighter_kind": base_chara["fighter_kind"],
-            "disp_order": -1,
+            "disp_order": HIDDEN_DISP_ORDER,
             "Name (Normal)": base_chara["Name (Normal)"] + " Copy",
             "Name (Uppercase)": base_chara["Name (Uppercase)"] + " COPY",
             "color_num": base_chara["color_num"],
@@ -151,9 +156,9 @@ class CSSManager:
         return new_chara
 
     def hide_character(self, chara: dict) -> None:
-        """Hide a character by setting disp_order to -1."""
-        chara["disp_order"] = -1
-        chara['chara_ref']['disp_order'].value = -1
+        """Hide a character from the CSS."""
+        chara["disp_order"] = HIDDEN_DISP_ORDER
+        chara['chara_ref']['disp_order'].value = HIDDEN_DISP_ORDER
 
     def delete_character(self, index: int) -> None:
         """Delete a character from the database."""
@@ -218,9 +223,9 @@ class CSSManager:
 
         for chara in self.characters:
             d = chara['disp_order']
-            if d == -1:
+            if d == HIDDEN_DISP_ORDER:
                 continue
-            logical_d = d if d >= 0 else d + 256
+            logical_d = d if d >= 0 else d + UNSIGNED_BYTE_RANGE
             if not self.is_custom_character(chara):
                 if logical_d > vanilla_max_logical:
                     vanilla_max_logical = logical_d
@@ -235,7 +240,7 @@ class CSSManager:
 
         for i, chara in enumerate(custom_visible):
             new_logical = start_disp + i
-            new_signed = new_logical if new_logical <= 127 else new_logical - 256
+            new_signed = new_logical if new_logical <= SIGNED_BYTE_MAX else new_logical - UNSIGNED_BYTE_RANGE
             chara['disp_order'] = new_signed
             self.prc_handler.safe_set_value(chara['chara_ref'], 'disp_order', new_signed)
 
@@ -263,7 +268,7 @@ class CSSManager:
                 continue
 
             if chara['name_id'] in installed_name_ids:
-                if chara['disp_order'] == -1:
+                if chara['disp_order'] == HIDDEN_DISP_ORDER:
                     chara['disp_order'] = 0
                     try:
                         chara['chara_ref']['disp_order'].value = 0
@@ -271,9 +276,9 @@ class CSSManager:
                         logger.warn("CSS", f"Failed to set disp_order for {chara.get('name_id', '?')}: {e}")
                     shown_count += 1
             else:
-                if chara['disp_order'] != -1:
-                    chara['disp_order'] = -1
-                    chara['chara_ref']['disp_order'].value = -1
+                if chara['disp_order'] != HIDDEN_DISP_ORDER:
+                    chara['disp_order'] = HIDDEN_DISP_ORDER
+                    chara['chara_ref']['disp_order'].value = HIDDEN_DISP_ORDER
                     hidden_count += 1
 
         self.resort_custom_characters()
@@ -571,12 +576,10 @@ class CSSManager:
 
             if is_custom:
                 if name_id in detected_name_ids:
-                    # Show this character
-                    if chara['disp_order'].value == -1:
+                    if chara['disp_order'].value == HIDDEN_DISP_ORDER:
                         self.prc_handler.safe_set_value(chara, 'disp_order', 0)
                     shown_count += 1
 
-                    # Update display name if we detected one
                     info = detected_characters[name_id]
                     if info.get("display_name"):
                         self.msbt_handler.set_entry(template_msbt, f"nam_chr1_00_{name_id}", info["display_name"])
@@ -592,8 +595,7 @@ class CSSManager:
                             if field_name in chara:
                                 self.prc_handler.safe_set_value(chara, field_name, slot_val)
                 else:
-                    # Hide this character
-                    chara['disp_order'].value = -1
+                    chara['disp_order'].value = HIDDEN_DISP_ORDER
                     hidden_count += 1
 
         # Resort custom characters alphabetically
@@ -601,9 +603,9 @@ class CSSManager:
         custom_visible = []
         for chara in list(template_db_root):
             d = chara['disp_order'].value
-            if d == -1:
+            if d == HIDDEN_DISP_ORDER:
                 continue
-            logical = d if d >= 0 else d + 256
+            logical = d if d >= 0 else d + UNSIGNED_BYTE_RANGE
             name_id = str(chara['name_id'].value)
             fk = str(chara['fighter_kind'].value)
             fk_name = fk.replace('fighter_kind_', '') if fk.startswith('fighter_kind_') else fk
@@ -622,10 +624,9 @@ class CSSManager:
         custom_visible.sort(key=get_display)
         for i, ch in enumerate(custom_visible):
             new_logical = vanilla_max + 1 + i
-            new_signed = new_logical if new_logical <= 127 else new_logical - 256
+            new_signed = new_logical if new_logical <= SIGNED_BYTE_MAX else new_logical - UNSIGNED_BYTE_RANGE
             self.prc_handler.safe_set_value(ch, 'disp_order', new_signed)
 
-        # Save the template files
         self.prc_handler.save(template_prc_root, Path(template_prc_path))
         self.msbt_handler.save(template_msbt, Path(template_msbt_path))
 

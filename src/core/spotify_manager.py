@@ -34,6 +34,15 @@ SPOTIFY_SEARCH_LIMIT = 10
 SPOTIFY_PLAYLIST_WRITE_CHUNK = 100
 SPOTIFY_TIMEOUT_SECONDS = 30
 SPOTIFY_AUTH_TIMEOUT_SECONDS = 180
+SPOTIFY_HIGH_CONFIDENCE_THRESHOLD = 0.92
+SPOTIFY_AMBIGUOUS_CEILING = 0.90
+SPOTIFY_SIMILARITY_WEIGHT = 0.7
+SPOTIFY_OVERLAP_WEIGHT = 0.3
+SPOTIFY_EXACT_MATCH_BONUS = 0.12
+SPOTIFY_SERIES_HINT_BONUS = 0.06
+SPOTIFY_QUERY_MATCH_BONUS = 0.04
+SPOTIFY_DEFAULT_TOKEN_LIFETIME = 3600
+SPOTIFY_MIN_TOKEN_LIFETIME = 60
 SPOTIFY_SCOPES = (
     "playlist-read-private",
     "playlist-modify-private",
@@ -396,7 +405,7 @@ class SpotifyManager:
                 if len(scored_matches) > 1:
                     second_best_score = max(second_best_score, scored_matches[1].score)
 
-            if best_match and best_match.score >= 0.92:
+            if best_match and best_match.score >= SPOTIFY_HIGH_CONFIDENCE_THRESHOLD:
                 break
 
         if best_match is None:
@@ -406,7 +415,7 @@ class SpotifyManager:
         if (
             second_best_score
             and (best_match.score - second_best_score) < SPOTIFY_AMBIGUOUS_MARGIN
-            and best_match.score < 0.90
+            and best_match.score < SPOTIFY_AMBIGUOUS_CEILING
         ):
             return None, "low_confidence"
         return best_match, "matched"
@@ -577,8 +586,8 @@ class SpotifyManager:
         if refresh_token:
             settings.spotify_refresh_token = refresh_token
 
-        expires_in = int(payload.get("expires_in", 3600) or 3600)
-        settings.spotify_token_expires_at = int(time.time()) + max(60, expires_in)
+        expires_in = int(payload.get("expires_in", SPOTIFY_DEFAULT_TOKEN_LIFETIME) or SPOTIFY_DEFAULT_TOKEN_LIFETIME)
+        settings.spotify_token_expires_at = int(time.time()) + max(SPOTIFY_MIN_TOKEN_LIFETIME, expires_in)
         self.config_manager.save(settings)
 
     @staticmethod
@@ -650,19 +659,19 @@ class SpotifyManager:
         if target_tokens:
             overlap = len(target_tokens & result_tokens) / len(target_tokens)
 
-        score = (similarity * 0.7) + (overlap * 0.3)
+        score = (similarity * SPOTIFY_SIMILARITY_WEIGHT) + (overlap * SPOTIFY_OVERLAP_WEIGHT)
         if normalized_target == normalized_name:
-            score += 0.12
+            score += SPOTIFY_EXACT_MATCH_BONUS
 
         series_hint = self._series_hint(track)
         searchable_context = self._normalize_match_text(
             " ".join(artist_names) + " " + album_name
         )
         if series_hint and series_hint in searchable_context:
-            score += 0.06
+            score += SPOTIFY_SERIES_HINT_BONUS
 
         if self._normalize_match_text(query) == normalized_name:
-            score += 0.04
+            score += SPOTIFY_QUERY_MATCH_BONUS
 
         return SpotifyTrackMatch(
             uri=uri,

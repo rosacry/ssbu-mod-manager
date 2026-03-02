@@ -151,6 +151,8 @@ KNOWN_OPTIONAL_PLUGINS = frozenset({
 
 SAFE_PLUGIN_PREFIXES = ("libarc_", "libui_", "libskin_", "libvisual_", "libcss_")
 
+DEFAULT_MAX_REASON_EXAMPLES = 12
+
 # Source-backed references used for rule auditability.
 _EVIDENCE_URLS: dict[str, str] = {
     "safe_metadata": "https://github.com/Raytwo/ARCropolis",
@@ -325,7 +327,7 @@ def is_gameplay_affecting_mod_file(relative_path: str, strict_audio_sync: bool =
 def classify_mod_path(
     mod_path: Path,
     strict_audio_sync: bool = False,
-    max_reason_examples: int = 12,
+    max_reason_examples: int = DEFAULT_MAX_REASON_EXAMPLES,
 ) -> ModDesyncReport:
     """Scan a mod directory and return a summarized desync risk report."""
     gameplay_reasons: list[RiskReason] = []

@@ -98,13 +98,11 @@ class ModManager:
                     status=status,
                 )
 
-                # Lightweight category detection
                 mod.metadata.categories = self._quick_categorize(folder)
                 self._apply_online_risk(mod)
 
                 mods.append(mod)
 
-            # Also scan disabled_mods directory (sibling of mods folder)
             disabled_dir = self.mods_path.parent / "disabled_mods"
             if disabled_dir.exists() and disabled_dir.is_dir():
                 for folder in sorted(disabled_dir.iterdir()):
@@ -175,7 +173,6 @@ class ModManager:
                         categories.add(_DIR_CATEGORIES[name_lower])
                     if name_lower == "stream":
                         categories.add("Audio")
-                    # Check for fighter subdirectories (indicates moveset/character mod)
                     if name_lower == "fighter":
                         has_fighter_content = True
                 elif child.is_file():
@@ -187,7 +184,6 @@ class ModManager:
         except (PermissionError, OSError):
             pass
 
-        # Name-based heuristic: check mod folder name for strong category hints
         name_hint = None
         for pattern, cat in _NAME_PATTERNS:
             if pattern.search(mod_path.name):
@@ -198,11 +194,9 @@ class ModManager:
         if not categories:
             return ["Other"]
 
-        # Determine primary category with smart prioritization
         primary = self._determine_primary_category(
             categories, mod_path.name, has_fighter_content, has_config_json, name_hint)
 
-        # Build sorted list with primary first
         result = [primary]
         for cat in sorted(categories):
             if cat != primary:
@@ -213,24 +207,19 @@ class ModManager:
                                      has_fighter: bool, has_config: bool,
                                      name_hint: Optional[str] = None) -> str:
         """Determine the primary (most important) category for grouping."""
-        # If name strongly hints at a category, use that
         if name_hint and name_hint in categories:
             return name_hint
 
-        # If mod has fighter directory + config.json, it's almost certainly a character mod
         if has_fighter and has_config and "Character" in categories:
             return "Character"
 
-        # If Character is present with Audio/Camera/Effect, Character is primary
-        # (movesets are character mods that include audio/camera/effect assets)
+        # Character mods that bundle audio/camera/effect assets are still primarily Character
         if "Character" in categories and len(categories) > 1:
             return "Character"
 
-        # If only Audio-related categories ("Audio" only), it's a music/sound mod
         if categories == {"Audio"}:
             return "Audio"
 
-        # Use priority order
         for cat in _CATEGORY_PRIORITY:
             if cat in categories:
                 return cat
@@ -403,8 +392,6 @@ class ModManager:
             self.get_mod_details(mod)
         return mod.metadata.categories
 
-    # ---------- Subfolder nesting detection & flattening ----------
-
     # Directories that indicate actual SSBU mod content
     _CONTENT_DIRS = {
         "fighter", "sound", "stage", "ui", "effect", "camera",
@@ -443,16 +430,13 @@ class ModManager:
         except (PermissionError, OSError):
             return False
 
-        # Already has content directly? Not nested.
         if self._is_content_dir(mod_path):
             return False
 
-        # Find subdirectories (exclude hidden/meta dirs)
         subdirs = [c for c in children if c.is_dir() and not c.name.startswith(".")]
         if len(subdirs) != 1:
             return False
 
-        # The single subfolder should contain actual mod content
         sole_subdir = subdirs[0]
         return self._is_content_dir(sole_subdir)
 
@@ -468,20 +452,16 @@ class ModManager:
                    if c.is_dir() and not c.name.startswith(".")]
         sole_subdir = subdirs[0]
 
-        # Move everything from the sole subfolder up to mod root
         for item in sole_subdir.iterdir():
             dest = mod.path / item.name
             if dest.exists():
-                # Conflict - skip to avoid data loss
                 continue
             item.rename(dest)
 
-        # Remove the now-empty subfolder
         try:
             if sole_subdir.exists() and not any(sole_subdir.iterdir()):
                 sole_subdir.rmdir()
             elif sole_subdir.exists():
-                # Some items remain (conflicts) - leave it
                 pass
         except OSError:
             pass

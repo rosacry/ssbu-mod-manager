@@ -22,6 +22,9 @@ COMPAT_CODE_PREFIX_V2 = "SSBU-COMPAT-v2:"
 COMPAT_CODE_PREFIX_V3 = "SSBU-COMPAT-v3:"
 GAMEPLAY_KEY_VARIANT_SEPARATOR = "::"
 
+FILE_HASH_CHUNK_SIZE = 65_536
+DIGEST_HEX_LENGTH = 32
+
 # ExeFS files that indicate framework-level hooks.
 EXEFS_GAMEPLAY_FILES = frozenset({"subsdk9", "subsdk0", "main.npdm"})
 
@@ -63,7 +66,7 @@ class CompatFingerprint:
         h.update(self.game_version.encode("utf-8"))
         h.update(b"1" if self.strict_audio_sync else b"0")
         h.update(b"1" if self.strict_environment_match else b"0")
-        self.digest = h.hexdigest()[:32]
+        self.digest = h.hexdigest()[:DIGEST_HEX_LENGTH]
         return self.digest
 
 
@@ -103,7 +106,7 @@ def _hash_file(path: Path) -> str:
     h = hashlib.sha256()
     try:
         with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
+            for chunk in iter(lambda: f.read(FILE_HASH_CHUNK_SIZE), b""):
                 h.update(chunk)
     except (OSError, PermissionError):
         return "error"

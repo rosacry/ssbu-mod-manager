@@ -20,6 +20,7 @@ from src.core.conflict_resolver import ConflictResolver
 from src.models.mod import ModStatus
 from src.models.plugin import PluginStatus
 
+from src.ui import theme
 from src.ui.main_window import MainWindow
 
 
@@ -107,7 +108,6 @@ class ModManagerApp(ctk.CTk):
         self.geometry(f"{self._BASE_WIDTH}x{self._BASE_HEIGHT}")
         self.minsize(self._MIN_WIDTH, self._MIN_HEIGHT)
 
-        # Shutdown flag for background threads
         self._shutting_down = False
         self._has_unsaved_changes = False
         self._resize_after_id = None
@@ -157,12 +157,9 @@ class ModManagerApp(ctk.CTk):
         self._status_refresh_thread_active = False
         self._status_refresh_pending = False
 
-        # Initialize customtkinter
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
-
-        # Set consistent dark background
-        self.configure(fg_color="#0e0e1a")
+        self.configure(fg_color=theme.BG_SIDEBAR)
 
         # Patch CTkScrollbar drag behavior so grabbing the thumb doesn't
         # jump/recenter to the cursor position on first movement.
@@ -232,7 +229,6 @@ class ModManagerApp(ctk.CTk):
                 logger.info("App", "ParamLabels.csv loaded successfully")
         threading.Thread(target=_load_labels_bg, daemon=True).start()
 
-        # Initialize config
         self.config_manager = ConfigManager()
         settings = self.config_manager.load()
 
@@ -241,7 +237,6 @@ class ModManagerApp(ctk.CTk):
         logger.info("App", "SSBU Mod Manager starting up...")
         logger.info("App", f"Config loaded - debug_mode={settings.debug_mode}")
 
-        # Initialize action history
         self.action_history = action_history
 
         # Auto-detect emulator path if configured and not set
@@ -294,20 +289,15 @@ class ModManagerApp(ctk.CTk):
         logger.info("App", "All managers initialized")
         _dbg("managers initialized")
 
-        # Build UI
         _dbg("building MainWindow...")
         self.main_window = MainWindow(self, self)
         self.main_window.pack(fill="both", expand=True)
         _dbg("MainWindow built")
 
-        # Lazy page registry - pages are created on first navigation
         self._page_classes = {}
         self._register_page_classes()
 
-        # Update status bar in background
         self.after(100, self._update_status)
-
-        # Handle window close properly
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Resize handler intentionally not bound. Keeping this hot path free
@@ -502,16 +492,13 @@ class ModManagerApp(ctk.CTk):
 
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
-        # Get screen dimensions to cap window size
         screen_w, screen_h = self._get_primary_screen_size()
 
-        # Scale the base dimensions
         scaled_w = int(self._BASE_WIDTH * scale)
         scaled_h = int(self._BASE_HEIGHT * scale)
         min_w = int(self._MIN_WIDTH * scale)
         min_h = int(self._MIN_HEIGHT * scale)
 
-        # Cap to screen size (leave margin for taskbar)
         scaled_w = min(scaled_w, screen_w - 40)
         scaled_h = min(scaled_h, screen_h - 80)
         min_w = min(min_w, screen_w - 40)
@@ -530,7 +517,6 @@ class ModManagerApp(ctk.CTk):
             self._current_scale = scale
             self._prune_invalid_scaling_callbacks()
             ctk.set_widget_scaling(scale)
-            # Update minimum window size for new scale
             screen_w, screen_h = self._get_primary_screen_size()
             min_w = min(int(self._MIN_WIDTH * scale), screen_w - 40)
             min_h = min(int(self._MIN_HEIGHT * scale), screen_h - 80)
@@ -629,14 +615,14 @@ class ModManagerApp(ctk.CTk):
             if self._zoom_overlay is None or not bool(self._zoom_overlay.winfo_exists()):
                 self._zoom_overlay = ctk.CTkFrame(
                     self.main_window.content,
-                    fg_color="#12121e",
+                    fg_color=theme.BG_APP,
                     corner_radius=0,
                 )
                 self._zoom_overlay_label = ctk.CTkLabel(
                     self._zoom_overlay,
                     text="",
-                    font=ctk.CTkFont(size=13),
-                    text_color="#7a7a9a",
+                    font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
+                    text_color=theme.TEXT_SUBTLE,
                 )
                 self._zoom_overlay_label.place(relx=0.5, rely=0.5, anchor="center")
             if self._zoom_overlay_label is not None and bool(self._zoom_overlay_label.winfo_exists()):
@@ -2306,19 +2292,15 @@ class ModManagerApp(ctk.CTk):
         """Final cleanup after optional close animation."""
         self._cancel_window_fade()
 
-        # Stop audio playback
         try:
             audio_player.cleanup()
         except Exception:
             pass
 
-        # Clear action history
         try:
             action_history.clear()
         except Exception:
             pass
-
-        # Cancel any pending after() callbacks
         try:
             if self._resize_after_id:
                 self.after_cancel(self._resize_after_id)
@@ -2380,7 +2362,6 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
-        # Destroy the window
         try:
             self.quit()
             self.destroy()
@@ -2510,7 +2491,6 @@ class ModManagerApp(ctk.CTk):
         if self._shutting_down:
             return
         self._note_user_activity()
-        # Lazy page creation
         if page_id not in self.main_window.pages:
             self._create_page(page_id)
         logger.info("App", f"Navigate to: {page_id}")

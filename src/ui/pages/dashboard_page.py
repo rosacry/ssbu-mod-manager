@@ -3,6 +3,7 @@ import threading
 import customtkinter as ctk
 from tkinter import messagebox
 from src.ui.base_page import BasePage
+from src.ui import theme
 from src.models.mod import ModStatus
 from src.models.plugin import PluginStatus
 from src.utils.logger import logger
@@ -31,78 +32,73 @@ class DashboardPage(BasePage):
         scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=0, pady=0)
 
-        # Header
         header_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(25, 5))
 
         title = ctk.CTkLabel(header_frame, text="Dashboard",
-                             font=ctk.CTkFont(family="Segoe UI", size=28, weight="bold"),
+                             font=ctk.CTkFont(family="Segoe UI", size=theme.FONT_LARGE, weight="bold"),
                              anchor="w")
         title.pack(side="left")
 
         self.loading_label = ctk.CTkLabel(header_frame, text="",
-                                          font=ctk.CTkFont(size=12), text_color="#6a6a8a")
+                                          font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_FAINT)
         self.loading_label.pack(side="right")
 
         desc = ctk.CTkLabel(scroll,
                             text="Manage your Super Smash Bros. Ultimate mods, plugins, music, and more.",
-                            font=ctk.CTkFont(size=13), text_color="#7a7a9a", anchor="w")
+                            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_SUBTLE, anchor="w")
         desc.pack(fill="x", padx=30, pady=(0, 18))
 
-        # Stats cards row
         stats_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         stats_frame.pack(fill="x", padx=28, pady=(0, 18))
 
         self.stat_cards = {}
         stats = [
-            ("mods_enabled", "Mods Enabled", "0", "#2fa572", "\u25a3"),
-            ("mods_disabled", "Mods Disabled", "0", "#555570", "\u25a2"),
-            ("plugins", "Plugins Active", "0", "#1f538d", "\u2699"),
-            ("conflicts", "Text Conflicts", "0", "#e94560", "\u26a0"),
+            ("mods_enabled", "Mods Enabled", "0", theme.SUCCESS, "\u25a3"),
+            ("mods_disabled", "Mods Disabled", "0", theme.TEXT_INACTIVE, "\u25a2"),
+            ("plugins", "Plugins Active", "0", theme.PRIMARY, "\u2699"),
+            ("conflicts", "Text Conflicts", "0", theme.ACCENT, "\u26a0"),
         ]
 
         for i, (key, title_text, value, color, icon) in enumerate(stats):
-            card = ctk.CTkFrame(stats_frame, fg_color="#1a1a30", corner_radius=14)
+            card = ctk.CTkFrame(stats_frame, fg_color=theme.BG_CARD_DEEP, corner_radius=14)
             card.grid(row=0, column=i, padx=6, pady=5, sticky="nsew")
             stats_frame.columnconfigure(i, weight=1)
 
-            # Colored left accent
             accent = ctk.CTkFrame(card, width=4, fg_color=color, corner_radius=2)
             accent.pack(side="left", fill="y", padx=(6, 0), pady=10)
 
             card_inner = ctk.CTkFrame(card, fg_color="transparent")
             card_inner.pack(fill="both", expand=True, padx=(10, 16), pady=12)
 
-            # Icon + value row
             top_row = ctk.CTkFrame(card_inner, fg_color="transparent")
             top_row.pack(fill="x")
 
             ctk.CTkLabel(top_row, text=icon,
-                         font=ctk.CTkFont(size=18), text_color=color,
+                         font=ctk.CTkFont(size=theme.FONT_SUBSECTION), text_color=color,
                          ).pack(side="left", padx=(0, 8))
 
             val_label = ctk.CTkLabel(top_row, text=value,
-                                     font=ctk.CTkFont(size=32, weight="bold"),
+                                     font=ctk.CTkFont(size=theme.FONT_XLARGE, weight="bold"),
                                      text_color=color)
             val_label.pack(side="left")
 
             title_label = ctk.CTkLabel(card_inner, text=title_text,
-                                       font=ctk.CTkFont(size=11),
-                                       text_color="#6a6a8a", anchor="w")
+                                       font=ctk.CTkFont(size=theme.FONT_BODY),
+                                       text_color=theme.TEXT_FAINT, anchor="w")
             title_label.pack(fill="x", pady=(2, 0))
 
             self.stat_cards[key] = val_label
 
-        # Quick Actions
         actions_label = ctk.CTkLabel(scroll, text="Quick Actions",
-                                     font=ctk.CTkFont(size=18, weight="bold"), anchor="w")
+                                     font=ctk.CTkFont(size=theme.FONT_SUBSECTION, weight="bold"), anchor="w")
         actions_label.pack(fill="x", padx=30, pady=(5, 10))
 
         actions_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         actions_frame.pack(fill="x", padx=30)
 
         btn_style = {"height": 40, "corner_radius": 10,
-                     "font": ctk.CTkFont(family="Segoe UI", size=13)}
+                     "font": ctk.CTkFont(family="Segoe UI", size=theme.FONT_BODY_EMPHASIS)}
 
         scan_btn = ctk.CTkButton(actions_frame, text="\u26a0  Scan Conflicts",
                                  command=self._go_to_conflicts, width=170, **btn_style)
@@ -110,38 +106,36 @@ class DashboardPage(BasePage):
 
         fix_btn = ctk.CTkButton(actions_frame, text="\u2714  Fix Text Conflicts",
                                 command=self._fix_xmsbt_conflicts, width=180,
-                                fg_color="#b08a2a", hover_color="#8a6a1a", **btn_style)
+                                fg_color=theme.WARNING_ALT, hover_color=theme.HOVER_WARNING, **btn_style)
         fix_btn.pack(side="left", padx=(0, 8))
 
         refresh_btn = ctk.CTkButton(actions_frame, text="\u27f3  Refresh All",
                                     command=self._force_refresh, width=130,
-                                    fg_color="#2a2a44", hover_color="#3a3a55", **btn_style)
+                                    fg_color=theme.QUICK_ACTION, hover_color=theme.BORDER_INPUT, **btn_style)
         refresh_btn.pack(side="left", padx=(0, 8))
 
         open_btn = ctk.CTkButton(actions_frame, text="\u2750  Mods Folder",
                                  command=self._open_mods_folder, width=140,
-                                 fg_color="#2a2a44", hover_color="#3a3a55", **btn_style)
+                                 fg_color=theme.QUICK_ACTION, hover_color=theme.BORDER_INPUT, **btn_style)
         open_btn.pack(side="left", padx=(0, 8))
 
-        # Conflict info banner
-        self.info_frame = ctk.CTkFrame(scroll, fg_color="#1e1e30", corner_radius=12)
+        self.info_frame = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD_INNER, corner_radius=12)
         self.info_frame.pack(fill="x", padx=30, pady=(15, 0))
 
         self.xmsbt_info = ctk.CTkLabel(
             self.info_frame, text="Click 'Refresh All' to scan your mod setup.",
-            font=ctk.CTkFont(size=13), text_color="#7a7a9a", anchor="w", wraplength=900,
+            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_SUBTLE, anchor="w", wraplength=900,
         )
         self.xmsbt_info.pack(fill="x", padx=20, pady=14)
 
-        # Getting started section (shows when not configured)
-        self.getting_started = ctk.CTkFrame(scroll, fg_color="#141430", corner_radius=12)
+        self.getting_started = ctk.CTkFrame(scroll, fg_color=theme.BG_GETTING_STARTED, corner_radius=12)
         self.getting_started.pack(fill="x", padx=30, pady=(15, 20))
 
         gs_inner = ctk.CTkFrame(self.getting_started, fg_color="transparent")
         gs_inner.pack(fill="x", padx=20, pady=15)
 
         ctk.CTkLabel(gs_inner, text="Getting Started",
-                     font=ctk.CTkFont(size=16, weight="bold"),
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"),
                      anchor="w").pack(fill="x")
 
         steps = [
@@ -153,7 +147,7 @@ class DashboardPage(BasePage):
         ]
         for step in steps:
             ctk.CTkLabel(gs_inner, text=step,
-                         font=ctk.CTkFont(size=12), text_color="#7a7a9a",
+                         font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_SUBTLE,
                          anchor="w").pack(fill="x", pady=1)
 
     def _start_spinner(self, text: str = "Loading"):
@@ -186,7 +180,6 @@ class DashboardPage(BasePage):
                 pass
         delay = 260 if self._conflict_cache is None else 40
         self._stats_refresh_after_id = self.after(delay, self._refresh_stats_fast)
-        # Auto-scan conflicts in background if we haven't yet
         if self._conflict_cache is None and not self._startup_scan_scheduled:
             # Delay heavy startup scan so initial interaction stays responsive.
             self._startup_scan_scheduled = True
@@ -250,7 +243,6 @@ class DashboardPage(BasePage):
             settings = self.app.config_manager.settings
             configured = bool(settings.eden_sdmc_path)
 
-            # Show/hide getting started based on config state
             if configured:
                 self.getting_started.pack_forget()
             else:
@@ -312,7 +304,6 @@ class DashboardPage(BasePage):
         self._start_spinner("Scanning")
         logger.info("Dashboard", "Starting full refresh...")
 
-        # Invalidate mod cache
         self.app.mod_manager.invalidate_cache()
 
         def scan():
@@ -321,7 +312,6 @@ class DashboardPage(BasePage):
                 count = 0
                 locale_count = 0
                 if settings.mods_path and settings.mods_path.exists():
-                    # Check for already-merged files
                     merged_dir = settings.mods_path / "_MergedResources"
                     merged_files = set()
                     if merged_dir.exists():
@@ -333,7 +323,6 @@ class DashboardPage(BasePage):
                     count = sum(1 for c in conflicts
                                if c.is_mergeable and c.relative_path not in merged_files)
 
-                    # Also detect locale-specific MSBT files
                     locale_msbts = self.app.conflict_resolver.detect_locale_msbts()
                     locale_count = len(locale_msbts)
                     logger.info("Dashboard", f"Conflict scan: {count} unresolved conflicts, {locale_count} locale MSBT(s) found")
@@ -366,7 +355,7 @@ class DashboardPage(BasePage):
         self.stat_cards["conflicts"].configure(text=str(total_issues))
 
         if total_issues > 0:
-            self.info_frame.configure(fg_color="#2a1820")
+            self.info_frame.configure(fg_color=theme.BG_ERROR_TINT)
             parts = []
             if conflict_count > 0:
                 parts.append(f"{conflict_count} text file conflict(s)")
@@ -375,12 +364,12 @@ class DashboardPage(BasePage):
             issue_text = " and ".join(parts)
             self.xmsbt_info.configure(
                 text=f"\u26a0  Found {issue_text}. Click 'Fix Text Conflicts' to auto-resolve.",
-                text_color="#e94560")
+                text_color=theme.ACCENT)
         else:
-            self.info_frame.configure(fg_color="#142820")
+            self.info_frame.configure(fg_color=theme.BG_SUCCESS_TINT)
             self.xmsbt_info.configure(
                 text="\u2714  No text file conflicts detected. Your mods are compatible.",
-                text_color="#2fa572")
+                text_color=theme.SUCCESS)
 
         self._refresh_stats_fast()
 
@@ -400,7 +389,6 @@ class DashboardPage(BasePage):
             try:
                 conflicts = self.app.conflict_detector.detect_conflicts(settings.mods_path)
 
-                # Check which are already merged
                 merged_dir = settings.mods_path / "_MergedResources"
                 merged_files = set()
                 if merged_dir.exists():
@@ -411,7 +399,6 @@ class DashboardPage(BasePage):
                 mergeable = [c for c in conflicts
                             if c.is_mergeable and c.relative_path not in merged_files]
 
-                # Also detect locale-specific MSBT files
                 locale_msbts = self.app.conflict_resolver.detect_locale_msbts()
 
                 logger.info("Dashboard", f"Found {len(mergeable)} mergeable conflicts, {len(locale_msbts)} locale MSBTs")
@@ -444,28 +431,30 @@ class DashboardPage(BasePage):
             self._conflict_cache = 0
             self._locale_msbt_cache = 0
             self.stat_cards["conflicts"].configure(text="0")
-            self.info_frame.configure(fg_color="#142820")
+            self.info_frame.configure(fg_color=theme.BG_SUCCESS_TINT)
             self.xmsbt_info.configure(
                 text="\u2714  No text file conflicts detected. Your mods are compatible.",
-                text_color="#2fa572",
+                text_color=theme.SUCCESS,
             )
             return
 
-        # Build description of what will be fixed
         desc_parts = []
         if mergeable:
-            files_list = "\n".join(
-                "  \u2022 "
-                f"{getattr(c, 'display_path', '') or c.relative_path}"
-                f"{f' | {getattr(c, \"slot_summary\", \"\")}' if getattr(c, 'slot_summary', '') else ''}\n"
-                "     Mods: "
-                + ", ".join(
-                    f"{mod} [{getattr(c, 'mod_display_labels', {}).get(mod)}]"
-                    if getattr(c, "mod_display_labels", {}).get(mod)
-                    else mod
-                    for mod in c.mods_involved
+            conflict_lines = []
+            for c in mergeable[:10]:
+                display = getattr(c, 'display_path', '') or c.relative_path
+                slot = getattr(c, 'slot_summary', '')
+                slot_part = f' | {slot}' if slot else ''
+                mod_labels = getattr(c, 'mod_display_labels', {})
+                mod_parts = []
+                for mod in c.mods_involved:
+                    label = mod_labels.get(mod)
+                    mod_parts.append(f"{mod} [{label}]" if label else mod)
+                mods_str = ", ".join(mod_parts)
+                conflict_lines.append(
+                    f"  \u2022 {display}{slot_part}\n     Mods: {mods_str}"
                 )
-                for c in mergeable[:10])
+            files_list = "\n".join(conflict_lines)
             if len(mergeable) > 10:
                 files_list += f"\n  ... and {len(mergeable) - 10} more"
             desc_parts.append(f"{len(mergeable)} XMSBT text conflict(s):\n\n{files_list}")
@@ -541,13 +530,13 @@ class DashboardPage(BasePage):
         self.stat_cards["conflicts"].configure(text=str(failed))
 
         if failed == 0:
-            self.info_frame.configure(fg_color="#142820")
-            self.xmsbt_info.configure(text="\u2714  All text conflicts resolved.", text_color="#2fa572")
+            self.info_frame.configure(fg_color=theme.BG_SUCCESS_TINT)
+            self.xmsbt_info.configure(text="\u2714  All text conflicts resolved.", text_color=theme.SUCCESS)
         else:
-            self.info_frame.configure(fg_color="#2a1820")
+            self.info_frame.configure(fg_color=theme.BG_ERROR_TINT)
             self.xmsbt_info.configure(
                 text=f"{failed} conflict(s) remain (XMSBT auto-merge output disabled).",
-                text_color="#e94560")
+                text_color=theme.ACCENT)
 
         msg_parts = []
         if locale_renamed > 0:

@@ -1,48 +1,46 @@
 """Bottom status bar widget."""
 import customtkinter as ctk
 from src import __version__
+from src.ui import theme
 
 
 class StatusBar(ctk.CTkFrame):
     def __init__(self, parent, **kwargs):
-        super().__init__(parent, height=32, fg_color="#0c0c18", corner_radius=0, **kwargs)
+        super().__init__(parent, height=32, fg_color=theme.BG_DEEPEST, corner_radius=0, **kwargs)
         self.pack_propagate(False)
 
-        # Left separator accent
-        ctk.CTkFrame(self, width=3, fg_color="#e94560",
+        ctk.CTkFrame(self, width=3, fg_color=theme.ACCENT,
                      corner_radius=0).pack(side="left", fill="y")
 
         self.status_label = ctk.CTkLabel(
             self,
             text="\u2022  Ready",
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#6a6a8a",
+            font=ctk.CTkFont(family="Segoe UI", size=theme.FONT_BODY),
+            text_color=theme.TEXT_FAINT,
         )
         self.status_label.pack(side="left", padx=12)
 
-        # Version label
         ver_label = ctk.CTkLabel(
             self,
             text=f"SSBU Mod Manager v{__version__}",
-            font=ctk.CTkFont(size=10),
-            text_color="#353550",
+            font=ctk.CTkFont(size=theme.FONT_CAPTION),
+            text_color=theme.TEXT_GHOST,
         )
         ver_label.pack(side="right", padx=12)
 
-        # Zoom indicator
         self.zoom_label = ctk.CTkLabel(
             self,
             text="",
-            font=ctk.CTkFont(size=10),
-            text_color="#555570",
+            font=ctk.CTkFont(size=theme.FONT_CAPTION),
+            text_color=theme.TEXT_INACTIVE,
         )
         self.zoom_label.pack(side="right", padx=(0, 4))
 
         self.stats_label = ctk.CTkLabel(
             self,
             text="",
-            font=ctk.CTkFont(size=11),
-            text_color="#6a6a8a",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.TEXT_FAINT,
         )
         self.stats_label.pack(side="right", padx=8)
 

@@ -1,9 +1,10 @@
-"""Settings page - path configuration and preferences."""
+"""Settings page."""
 import re
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from src.ui.base_page import BasePage
+from src.ui import theme
 from src.paths import (auto_detect_sdmc, auto_detect_all_emulators,
                        derive_mods_path, derive_plugins_path, validate_sdmc_path)
 from src.utils.logger import logger
@@ -38,23 +39,23 @@ class SettingsPage(BasePage):
 
     def _build_ui(self):
         title = ctk.CTkLabel(self, text="Settings",
-                             font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
+                             font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE, weight="bold"), anchor="w")
         title.pack(fill="x", padx=30, pady=(25, 20))
 
         scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=30)
 
-        # Emulator SDMC Path
-        sdmc_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        sdmc_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         sdmc_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(sdmc_section, text="Emulator SDMC Path",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(sdmc_section,
                      text="The root SDMC directory where your emulator stores SSBU mod data. "
                           "Supports Eden, Ryujinx, Yuzu, Suyu, Sudachi, Citron, and others.",
-                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w", wraplength=700,
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED,
+                     anchor="w", wraplength=700,
                      ).pack(fill="x", padx=15, pady=(0, 5))
 
         path_frame = ctk.CTkFrame(sdmc_section, fg_color="transparent")
@@ -73,24 +74,22 @@ class SettingsPage(BasePage):
         ctk.CTkButton(path_frame, text="Auto-Detect", width=110,
                       command=self._auto_detect, height=34, corner_radius=8).pack(side="left")
 
-        # Detected emulators display
         self.detected_frame = ctk.CTkFrame(sdmc_section, fg_color="transparent")
         self.detected_frame.pack(fill="x", padx=15, pady=(5, 5))
 
         self.sdmc_status = ctk.CTkLabel(sdmc_section, text="",
-                                        font=ctk.CTkFont(size=12), anchor="w")
+                                        font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), anchor="w")
         self.sdmc_status.pack(fill="x", padx=15, pady=(0, 15))
 
-        # CSS Mod Folder
-        css_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        css_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         css_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(css_section, text="CSS Mod Folder",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(css_section,
                      text="Mod folder containing ui_chara_db.prc and msg_name.msbt.",
-                     font=ctk.CTkFont(size=12), text_color="#999999", anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w"
                      ).pack(fill="x", padx=15, pady=(0, 5))
 
         css_frame = ctk.CTkFrame(css_section, fg_color="transparent")
@@ -102,16 +101,14 @@ class SettingsPage(BasePage):
         ctk.CTkButton(css_frame, text="Browse", width=80,
                       command=self._browse_css, height=34, corner_radius=8).pack(side="left")
 
-        # Mod Disable Method — no longer configurable; "move" is the
-        # only method that actually prevents ARCropolis from loading.
+        # "move" is the only method that prevents ARCropolis from loading.
         self.method_var = ctk.StringVar(value="move")
 
-        # General options
-        gen_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        gen_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         gen_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(gen_section, text="General",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
 
         self.auto_detect_var = ctk.BooleanVar(value=settings.auto_detect_eden)
@@ -122,19 +119,18 @@ class SettingsPage(BasePage):
         ctk.CTkCheckBox(gen_section, text="Create backup before merge operations",
                         variable=self.backup_var).pack(fill="x", padx=15, pady=(3, 15))
 
-        # Online compatibility metadata (used by compatibility codes).
-        online_meta = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        online_meta = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         online_meta.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(online_meta, text="Online Compatibility Metadata",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(
             online_meta,
             text="Optional but recommended: include exact emulator build and SSBU game update "
                  "so compatibility checks can enforce environment parity.",
-            font=ctk.CTkFont(size=12),
-            text_color="#999999",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_MUTED,
             anchor="w",
             wraplength=760,
             justify="left",
@@ -170,19 +166,19 @@ class SettingsPage(BasePage):
         self.online_meta_status = ctk.CTkLabel(
             online_meta,
             text="",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=theme.FONT_BODY),
             anchor="w",
         )
         self.online_meta_status.pack(fill="x", padx=15, pady=(0, 10))
         self._refresh_online_metadata_status()
 
-        experimental_section = ctk.CTkFrame(scroll, fg_color="#242438", corner_radius=10)
+        experimental_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         experimental_section.pack(fill="x", pady=(0, 15))
 
         ctk.CTkLabel(
             experimental_section,
             text="Experimental",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"),
             anchor="w",
         ).pack(fill="x", padx=15, pady=(15, 5))
         ctk.CTkLabel(
@@ -191,8 +187,8 @@ class SettingsPage(BasePage):
                 "Spotify playlist export is optional and remains behind an explicit "
                 "experimental toggle."
             ),
-            font=ctk.CTkFont(size=12),
-            text_color="#999999",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_MUTED,
             anchor="w",
             wraplength=760,
             justify="left",
@@ -207,15 +203,13 @@ class SettingsPage(BasePage):
             variable=self.experimental_spotify_var,
         ).pack(fill="x", padx=15, pady=(0, 15))
 
-        # Reset button (auto-save replaces save button)
         btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(5, 20))
 
         ctk.CTkButton(btn_frame, text="Reset to Defaults", width=160,
-                      fg_color="#555555", hover_color="#444444",
+                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                       command=self._reset, height=38, corner_radius=8).pack(side="left")
 
-        # Auto-save: trace all settings variables
         self._auto_save_active = True
         self.sdmc_var.trace_add("write", lambda *_: self._auto_save())
         self.css_var.trace_add("write", lambda *_: self._auto_save())
@@ -226,10 +220,8 @@ class SettingsPage(BasePage):
         self.experimental_spotify_var.trace_add("write", lambda *_: self._auto_save())
 
     def _auto_save(self):
-        """Auto-save settings whenever any value changes."""
         if not self._auto_save_active:
             return
-        # Debounce: cancel any pending auto-save and schedule a new one
         if hasattr(self, '_auto_save_id') and self._auto_save_id:
             try:
                 self.after_cancel(self._auto_save_id)
@@ -247,24 +239,23 @@ class SettingsPage(BasePage):
         if not build and not game:
             self.online_meta_status.configure(
                 text="Optional: fill both values for stronger online compatibility checks.",
-                text_color="#888888",
+                text_color=theme.TEXT_DIM,
             )
             return
 
         if not is_valid_game_version(game):
             self.online_meta_status.configure(
                 text="Game version format looks invalid. Use values like 13.0.1.",
-                text_color="#e94560",
+                text_color=theme.ACCENT,
             )
             return
 
         self.online_meta_status.configure(
             text="Metadata format looks good. Values will be included in compatibility codes.",
-            text_color="#2fa572",
+            text_color=theme.SUCCESS,
         )
 
     def _do_auto_save(self):
-        """Actually persist the settings."""
         self._auto_save_id = None
         self._save_settings(quiet=True)
 
@@ -280,15 +271,16 @@ class SettingsPage(BasePage):
         if detected:
             label = ctk.CTkLabel(self.detected_frame,
                                  text="Detected emulators:",
-                                 font=ctk.CTkFont(size=12), text_color="#999999", anchor="w")
+                                 font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+                                 text_color=theme.TEXT_MUTED, anchor="w")
             label.pack(anchor="w")
             for emu_name, emu_path in detected:
                 btn = ctk.CTkButton(
                     self.detected_frame,
                     text=f"{emu_name}: {emu_path}",
-                    fg_color="transparent", hover_color="#333355",
-                    anchor="w", height=28, font=ctk.CTkFont(size=11),
-                    text_color="#6688bb",
+                    fg_color="transparent", hover_color=theme.HOVER_SETTINGS,
+                    anchor="w", height=28, font=ctk.CTkFont(size=theme.FONT_BODY),
+                    text_color=theme.INFO,
                     command=lambda p=str(emu_path): self._select_emulator(p),
                 )
                 btn.pack(fill="x", pady=1)
@@ -323,7 +315,7 @@ class SettingsPage(BasePage):
     def _validate_sdmc(self):
         path_str = self.sdmc_var.get()
         if not path_str:
-            self.sdmc_status.configure(text="Not configured", text_color="#888888")
+            self.sdmc_status.configure(text="Not configured", text_color=theme.TEXT_DIM)
             return
 
         path = Path(path_str)
@@ -336,9 +328,9 @@ class SettingsPage(BasePage):
                 mod_count = 0
             self.sdmc_status.configure(
                 text=f"Valid - {mod_count} mods detected | {msg}",
-                text_color="#2fa572")
+                text_color=theme.SUCCESS)
         else:
-            self.sdmc_status.configure(text=msg, text_color="#e94560")
+            self.sdmc_status.configure(text=msg, text_color=theme.ACCENT)
 
     def _save_settings(self, quiet: bool = False):
         settings = self.app.config_manager.settings
@@ -350,7 +342,6 @@ class SettingsPage(BasePage):
             settings.mods_path = derive_mods_path(sdmc)
             settings.plugins_path = derive_plugins_path(sdmc)
 
-            # Detect which emulator this path belongs to
             detected = auto_detect_all_emulators()
             for emu_name, emu_path in detected:
                 if str(emu_path) == sdmc_str:
@@ -380,7 +371,7 @@ class SettingsPage(BasePage):
 
     def _reset(self):
         from src.models.settings import AppSettings
-        self._auto_save_active = False  # Prevent traces from firing during reset
+        self._auto_save_active = False
         self.app.config_manager.save(AppSettings())
         self.sdmc_var.set("")
         self.css_var.set("")
@@ -390,8 +381,7 @@ class SettingsPage(BasePage):
         self.emu_version_var.set("")
         self.game_version_var.set("")
         self.experimental_spotify_var.set(False)
-        self.sdmc_status.configure(text="Reset to defaults", text_color="#888888")
-        # Sync logger state with the reset debug_mode (False)
+        self.sdmc_status.configure(text="Reset to defaults", text_color=theme.TEXT_DIM)
         logger.enabled = False
         self.app._update_managers()
         self._auto_save_active = True

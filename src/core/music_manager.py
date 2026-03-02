@@ -956,7 +956,6 @@ class MusicManager:
             "replacement_output_mod": "",
         }
 
-        # Save the JSON config for persistence
         self._save_assignment_config(mods_root)
         self._save_replacement_config()
         result["config_saved"] = True
@@ -976,19 +975,16 @@ class MusicManager:
         replacement_result = self._apply_replacement_overlays(mods_root)
         result.update(replacement_result)
 
-        # Find the music source mod that has ui_bgm_db.prc and ui_stage_db.prc
         source_mod = self._find_music_source_mod(mods_root)
 
         if source_mod:
-            # Update the PRC files in the source mod
             prc_result = self._apply_prc_assignments(source_mod, mods_root)
             result.update(prc_result)
         else:
-            # No source mod with PRC files found - create a standalone config mod
+            # No source mod with PRC files — create a standalone config mod
             config_mod = self._create_config_mod(mods_root)
             result["output_mod"] = str(config_mod)
 
-        # Count assignments
         for stage_id, playlist in self.stage_playlists.items():
             if playlist.tracks:
                 result["stages_configured"] += 1
@@ -1145,14 +1141,11 @@ class MusicManager:
         try:
             import pyprc
 
-            # Backup originals
             backup_file(stage_db_path)
 
-            # Load the BGM database to get valid BGM IDs
             bgm_prc = pyprc.param(str(bgm_db_path))
             bgm_db = list(bgm_prc)[0][1]
 
-            # Build a set of all custom BGM IDs from the database
             custom_bgm_ids = []
             for entry in bgm_db:
                 try:
@@ -1164,11 +1157,9 @@ class MusicManager:
             if not custom_bgm_ids:
                 return result
 
-            # Load the stage database
             stage_prc = pyprc.param(str(stage_db_path))
             stage_db = list(stage_prc)[0][1]
 
-            # Update each stage's BGM list
             modified = False
             for stage_entry in stage_db:
                 try:
@@ -1176,7 +1167,6 @@ class MusicManager:
                 except (KeyError, AttributeError):
                     continue
 
-                # Find the matching stage in our playlists
                 target_stage = None
                 for sid in VANILLA_STAGES:
                     if sid in stage_id_val or stage_id_val in sid:
@@ -1186,7 +1176,6 @@ class MusicManager:
                 if not target_stage:
                     continue
 
-                # Get the BGM set list for this stage
                 try:
                     bgm_set_list = stage_entry['bgm_set_list']
                 except (KeyError, AttributeError):
@@ -1195,7 +1184,6 @@ class MusicManager:
                 assigned_tracks = self.get_tracks_for_stage(target_stage)
 
                 if assigned_tracks or self.exclude_vanilla:
-                    # Get track IDs that should be assigned
                     assigned_ids = set()
                     for track in assigned_tracks:
                         # Match track_id to a BGM ID in the database
@@ -1205,20 +1193,15 @@ class MusicManager:
                                 assigned_ids.add(bgm_id)
                                 break
 
-                    # If we have specific assignments, apply them
                     if assigned_ids:
-                        # Update the BGM set list entries
                         current_entries = list(bgm_set_list)
                         new_entries = []
 
                         if not self.exclude_vanilla:
-                            # Keep existing entries
                             new_entries = current_entries[:]
 
-                        # Add new entries by cloning the first entry and modifying
                         if current_entries:
                             for bgm_id in assigned_ids:
-                                # Check if already in list
                                 already_exists = False
                                 for existing in new_entries:
                                     try:
@@ -1319,7 +1302,6 @@ class MusicManager:
 
             self.exclude_vanilla = data.get("exclude_vanilla", False)
 
-            # Build a track lookup by track_id
             track_lookup = {t.track_id: t for t in self.tracks}
 
             for stage_id, track_ids in data.get("assignments", {}).items():

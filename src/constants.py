@@ -223,12 +223,4 @@ FILE_CATEGORIES = {
     "effect": ["effect/"],
 }
 
-# UI constants
 SIDEBAR_WIDTH = 200
-SIDEBAR_BG = "#1a1a2e"
-SIDEBAR_HOVER = "#16213e"
-SIDEBAR_ACTIVE = "#0f3460"
-ACCENT_COLOR = "#1f538d"
-SUCCESS_COLOR = "#2fa572"
-WARNING_COLOR = "#b08a2a"
-DANGER_COLOR = "#b02a2a"

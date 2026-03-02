@@ -1,7 +1,7 @@
 # SSBU Online Evidence Lock
 
 Locked on: 2026-02-26  
-Owner: chrig + Codex  
+Owner: chrig  
 Purpose: audit-ready evidence table for online behavior and desync policy decisions.
 
 ## Scope

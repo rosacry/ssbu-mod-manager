@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+DEFAULT_INCIDENCE = 50  # Default BGM incidence/weighting in SSBU
+
 
 @dataclass
 class MusicTrack:
@@ -34,7 +36,7 @@ class StageTrackSlot:
     ui_bgm_id: str
     filename: str
     display_name: str = ""
-    incidence: int = 50
+    incidence: int = DEFAULT_INCIDENCE
     order_number: int = 0
     is_likely_vanilla: bool = False
 
@@ -51,7 +53,7 @@ class MusicAssignment:
     track_id: str
     stage_id: str
     order_number: int = 0
-    incidence: int = 50
+    incidence: int = DEFAULT_INCIDENCE
 
 
 @dataclass

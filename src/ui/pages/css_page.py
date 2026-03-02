@@ -1,9 +1,10 @@
-"""CSS Editor page - refactored from original css_manager.py UI."""
+"""CSS Editor page."""
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import tkinter.simpledialog as sd
 import customtkinter as ctk
 from src.ui.base_page import BasePage
+from src.ui import theme
 from src.utils.logger import logger
 
 
@@ -16,70 +17,67 @@ class CSSPage(BasePage):
         self._build_ui()
 
     def _build_ui(self):
-        # Header
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=30, pady=(25, 5))
 
         title = ctk.CTkLabel(header_frame, text="CSS Editor",
-                             font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
+                             font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE, weight="bold"), anchor="w")
         title.pack(side="left")
 
         self.load_btn = ctk.CTkButton(header_frame, text="Load CSS Mod Folder",
                                       command=self.load_mod_folder,
-                                      fg_color="#555555", hover_color="#444444",
+                                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                                       corner_radius=8, height=34, width=160)
         self.load_btn.pack(side="right")
 
-        # Summary / status
         summary_frame = ctk.CTkFrame(self, fg_color="transparent")
         summary_frame.pack(fill="x", padx=30, pady=(2, 10))
 
         self.status_label = ctk.CTkLabel(summary_frame, text="No CSS mod loaded.",
-                                         font=ctk.CTkFont(size=12), text_color="#999999", anchor="w")
+                                         font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+                                         text_color=theme.TEXT_MUTED, anchor="w")
         self.status_label.pack(side="left", fill="x", expand=True)
 
-        # Main content frame with resizable splitter
         main_frame = tk.PanedWindow(
             self, orient=tk.HORIZONTAL, sashwidth=6,
-            bg="#12121e", sashpad=0, opaqueresize=True,
+            bg=theme.BG_APP, sashpad=0, opaqueresize=True,
             borderwidth=0, relief="flat",
         )
         main_frame.pack(fill="both", expand=True, padx=30, pady=(0, 10))
         self._paned = main_frame
 
-        # Left panel - character list
-        left_frame = ctk.CTkFrame(main_frame, width=560, fg_color="#242438", corner_radius=10)
+        # Left panel
+        left_frame = ctk.CTkFrame(main_frame, width=560, fg_color=theme.BG_CARD, corner_radius=10)
         main_frame.add(left_frame, minsize=340, stretch="never", width=560)
 
         ctk.CTkLabel(left_frame, text="Characters",
-                     font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=12, pady=(12, 5))
 
-        # Quick action buttons at top
         action_row = ctk.CTkFrame(left_frame, fg_color="transparent")
         action_row.pack(fill="x", padx=10, pady=(0, 5))
 
         self.one_click_btn = ctk.CTkButton(
             action_row, text="1-Click Add from Mod",
             command=self.one_click_add_character, state="disabled",
-            fg_color="#2fa572", hover_color="#106a43",
-            corner_radius=6, height=30, font=ctk.CTkFont(size=11),
+            fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS,
+            corner_radius=6, height=30, font=ctk.CTkFont(size=theme.FONT_BODY),
         )
         self.one_click_btn.pack(fill="x", pady=2)
 
         self.auto_hide_btn = ctk.CTkButton(
             action_row, text="Auto-Detect & Hide Unused",
             command=self.auto_hide_unused, state="disabled",
-            fg_color="#b08a2a", hover_color="#8a6b1f",
-            corner_radius=6, height=30, font=ctk.CTkFont(size=11),
+            fg_color=theme.WARNING_ALT, hover_color=theme.HOVER_WARNING_ALT,
+            corner_radius=6, height=30, font=ctk.CTkFont(size=theme.FONT_BODY),
         )
         self.auto_hide_btn.pack(fill="x", pady=2)
 
         self.gen_template_btn = ctk.CTkButton(
             action_row, text="Generate Custom CSS Template",
             command=self.generate_css_template, state="disabled",
-            fg_color="#1f538d", hover_color="#163d6a",
-            corner_radius=6, height=30, font=ctk.CTkFont(size=11),
+            fg_color=theme.PRIMARY, hover_color=theme.HOVER_PRIMARY_ALT,
+            corner_radius=6, height=30, font=ctk.CTkFont(size=theme.FONT_BODY),
         )
         self.gen_template_btn.pack(fill="x", pady=2)
 
@@ -92,10 +90,10 @@ class CSSPage(BasePage):
         listbox_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
         listbox_frame.pack(fill="both", expand=True, padx=10, pady=(0, 5))
 
-        self.listbox = tk.Listbox(listbox_frame, bg="#1e1e2e", fg="#cccccc",
-                                  selectbackground="#1f538d",
+        self.listbox = tk.Listbox(listbox_frame, bg=theme.BG_LISTBOX, fg=theme.TEXT_SECONDARY,
+                                  selectbackground=theme.PRIMARY,
                                   selectforeground="white",
-                                  font=("Segoe UI", 10),
+                                  font=("Segoe UI", theme.FONT_CAPTION),
                                   relief="flat", bd=0, highlightthickness=0,
                                   activestyle="none", exportselection=False)
         listbox_scroll = ctk.CTkScrollbar(listbox_frame, command=self.listbox.yview)
@@ -104,34 +102,33 @@ class CSSPage(BasePage):
         listbox_scroll.pack(side="right", fill="y")
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
 
-        # Bottom action buttons
         btn_row = ctk.CTkFrame(left_frame, fg_color="transparent")
         btn_row.pack(fill="x", padx=10, pady=(0, 10))
 
         self.add_btn = ctk.CTkButton(btn_row, text="Duplicate Selected",
                                      command=self.add_character, state="disabled",
-                                     fg_color="#555555", hover_color="#444444",
-                                     corner_radius=6, height=30, font=ctk.CTkFont(size=11))
+                                     fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
+                                     corner_radius=6, height=30, font=ctk.CTkFont(size=theme.FONT_BODY))
         self.add_btn.pack(fill="x", pady=2)
 
         self.hide_btn = ctk.CTkButton(btn_row, text="Hide Selected (disp_order = -1)",
                                       command=self.hide_character, state="disabled",
-                                      fg_color="#555555", hover_color="#444444",
-                                      corner_radius=6, height=30, font=ctk.CTkFont(size=11))
+                                      fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
+                                      corner_radius=6, height=30, font=ctk.CTkFont(size=theme.FONT_BODY))
         self.hide_btn.pack(fill="x", pady=2)
 
         self.delete_btn = ctk.CTkButton(btn_row, text="Delete Selected",
                                         command=self.delete_character, state="disabled",
-                                        fg_color="#b02a2a", hover_color="#8a1f1f",
-                                        corner_radius=6, height=30, font=ctk.CTkFont(size=11))
+                                        fg_color=theme.DANGER, hover_color=theme.HOVER_DANGER,
+                                        corner_radius=6, height=30, font=ctk.CTkFont(size=theme.FONT_BODY))
         self.delete_btn.pack(fill="x", pady=2)
 
-        # Right panel - character details
-        right_frame = ctk.CTkFrame(main_frame, fg_color="#242438", corner_radius=10)
+        # Right panel
+        right_frame = ctk.CTkFrame(main_frame, fg_color=theme.BG_CARD, corner_radius=10)
         main_frame.add(right_frame, minsize=360, stretch="always")
 
         ctk.CTkLabel(right_frame, text="Character Details",
-                     font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
+                     font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"), anchor="w"
                      ).pack(fill="x", padx=12, pady=(12, 5))
 
         details_frame = ctk.CTkScrollableFrame(right_frame, fg_color="transparent")
@@ -139,7 +136,6 @@ class CSSPage(BasePage):
         details_frame.grid_columnconfigure(0, weight=0)
         details_frame.grid_columnconfigure(1, weight=1)
 
-        # Form fields
         self.fields = {}
         field_names = [
             "ui_chara_id", "name_id", "fighter_kind", "disp_order",
@@ -149,7 +145,7 @@ class CSSPage(BasePage):
         ]
         for row, field in enumerate(field_names):
             lbl = ctk.CTkLabel(details_frame, text=field + ":",
-                               font=ctk.CTkFont(size=12), anchor="e")
+                               font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), anchor="e")
             lbl.grid(row=row, column=0, sticky="e", padx=(10, 5), pady=3)
 
             var = tk.StringVar()
@@ -161,7 +157,7 @@ class CSSPage(BasePage):
 
         self.autofill_btn = ctk.CTkButton(details_frame, text="Auto-Fill from config.json",
                                           command=self.auto_fill_from_config, state="disabled",
-                                          fg_color="#555555", hover_color="#444444",
+                                          fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                                           corner_radius=6, height=30)
         self.autofill_btn.grid(row=len(field_names), column=0, columnspan=2, pady=15)
 
@@ -179,7 +175,6 @@ class CSSPage(BasePage):
         return self.app.css_manager
 
     def on_show(self):
-        # Auto-load if css_mod_folder is set in settings
         settings = self.app.config_manager.settings
         if settings.css_mod_folder and not self.css_manager.mod_folder:
             folder = str(settings.css_mod_folder)
@@ -197,10 +192,9 @@ class CSSPage(BasePage):
             folder_name = folder.split('/')[-1].split('\\')[-1]
             self.status_label.configure(
                 text=f"Loaded: {folder_name} ({len(self.css_manager.characters)} characters)",
-                text_color="#2fa572")
+                text_color=theme.SUCCESS)
             self._update_listbox()
             self._enable_buttons()
-            # Save to settings
             from pathlib import Path
             self.app.config_manager.update_setting("css_mod_folder", Path(folder))
             logger.info("CSS", f"Loaded CSS mod folder: {folder}")
@@ -416,7 +410,6 @@ class CSSPage(BasePage):
                 else:
                     self.fields[f"c0{i}_index"].set(str(result["costumes"][0]))
             self._updating_fields = False
-            # Apply all values at once now
             chara = self.css_manager.characters[self.selected_index]
             for field in self.fields:
                 self.css_manager.update_field(chara, field, self.fields[field].get())
@@ -429,7 +422,6 @@ class CSSPage(BasePage):
             messagebox.showerror("Error", f"Failed to parse config.json: {e}")
 
     def generate_css_template(self):
-        """Generate a custom CSS template based on enabled character mods."""
         if not self.css_manager.mod_folder:
             messagebox.showwarning("Warning", "Load a CSS mod folder first.")
             return

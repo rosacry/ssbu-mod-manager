@@ -1,5 +1,5 @@
-"""Custom toggle switch widget."""
 import customtkinter as ctk
+from src.ui import theme
 
 
 class ToggleSwitch(ctk.CTkFrame):
@@ -14,7 +14,7 @@ class ToggleSwitch(ctk.CTkFrame):
             command=self._on_toggle,
             onvalue=True,
             offvalue=False,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
         )
         self.switch.pack(anchor="w")
 

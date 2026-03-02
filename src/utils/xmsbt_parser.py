@@ -9,6 +9,9 @@ from typing import Optional
 from xml.sax.saxutils import escape as xml_escape
 from src.utils.logger import logger
 
+# Highest vanilla BGM numeric suffix in SSBU v13.0.1
+VANILLA_BGM_MAX_ID = 1605
+
 
 def extract_entries_from_msbt(msbt_path: Path) -> dict[str, str]:
     """Extract all text entries from a binary MSBT file.
@@ -83,8 +86,7 @@ def filter_custom_entries(entries: dict[str, str], inclusive: bool = False) -> d
     Custom entries typically have alphanumeric label suffixes (e.g.
     bgm_title_25AR) while vanilla entries use purely numeric suffixes
     (e.g. bgm_title_0001).  A generic catch-all also handles labels
-    whose numeric suffix exceeds 1605 (the vanilla BGM ceiling in SSBU
-    v13.0.1).
+    whose numeric suffix exceeds VANILLA_BGM_MAX_ID.
 
     If ``inclusive`` is True, keep **all** entries unconditionally.
     This is essential for BGM-related MSBTs where mods replace the
@@ -114,7 +116,7 @@ def filter_custom_entries(entries: dict[str, str], inclusive: bool = False) -> d
             continue
         # Keep entries with very high numeric IDs (likely custom)
         try:
-            if int(suffix) > 1605:
+            if int(suffix) > VANILLA_BGM_MAX_ID:
                 custom[label] = text
         except ValueError:
             custom[label] = text

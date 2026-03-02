@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+DEFAULT_COSTUME_COUNT = 8   # Standard costume/color slots per fighter in SSBU
+HIDDEN_DISP_ORDER = -1      # Sentinel for hidden characters in db_fighter
+UNSIGNED_BYTE_WRAP = 256    # For converting signed byte disp_order to unsigned
+
 
 @dataclass
 class Character:
@@ -11,8 +15,8 @@ class Character:
     disp_order: int
     name_normal: str = ""
     name_upper: str = ""
-    color_num: int = 8
-    costume_indices: list[int] = field(default_factory=lambda: list(range(8)))
+    color_num: int = DEFAULT_COSTUME_COUNT
+    costume_indices: list[int] = field(default_factory=lambda: list(range(DEFAULT_COSTUME_COUNT)))
     chara_ref: Any = None
 
     @property
@@ -24,10 +28,10 @@ class Character:
 
     @property
     def logical_disp_order(self):
-        if self.disp_order == -1:
+        if self.disp_order == HIDDEN_DISP_ORDER:
             return "Hidden"
-        return self.disp_order if self.disp_order >= 0 else self.disp_order + 256
+        return self.disp_order if self.disp_order >= 0 else self.disp_order + UNSIGNED_BYTE_WRAP
 
     @property
     def is_hidden(self) -> bool:
-        return self.disp_order == -1
+        return self.disp_order == HIDDEN_DISP_ORDER

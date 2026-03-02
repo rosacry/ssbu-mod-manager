@@ -1,7 +1,7 @@
 # SSBU Online Desync Tracker
 
 Created: 2026-02-26
-Owner: chrig + Codex
+Owner: chrig
 Purpose: single source of truth for online compatibility/desync work, with clear done vs pending status.
 
 ## Status Legend

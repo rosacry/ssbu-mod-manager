@@ -91,16 +91,14 @@ class ConflictResolver:
         if not merged_entries:
             return None
 
-        # Backup originals before merge
         if create_backup:
             self.backup_originals(conflict)
 
-        # Write merged output
         output_path = self.merged_output_dir / conflict.relative_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
         write_xmsbt(output_path, merged_entries)
 
-        # Ensure _MergedResources has a config.json so ARCropolis loads it
+        # ARCropolis needs a config.json to load _MergedResources
         self._ensure_merged_config()
 
         if overlapping:
@@ -141,7 +139,6 @@ class ConflictResolver:
                 )
                 return None
 
-            # Backup before resolution
             if create_backup:
                 self.backup_originals(conflict)
 
@@ -165,7 +162,6 @@ class ConflictResolver:
             if winner_mod not in conflict.mods_involved:
                 return None
 
-            # Backup before resolution
             if create_backup:
                 self.backup_originals(conflict)
 
@@ -221,7 +217,6 @@ class ConflictResolver:
 
         originals_dir = self.merged_output_dir / ORIGINALS_DIRNAME
 
-        # Restore originals from _MergedResources/.originals/<mod_name>/<path>
         if originals_dir.exists():
             for mod_dir in originals_dir.iterdir():
                 if not mod_dir.is_dir():
@@ -245,10 +240,8 @@ class ConflictResolver:
                         logger.warn("ConflictResolver",
                                     f"Could not restore {rel} to {mod_name}: {e}")
 
-            # Clean up the .originals directory
             shutil.rmtree(str(originals_dir), ignore_errors=True)
 
-        # Also handle legacy .xmsbt.merged files from older versions
         for merged_file in self.mods_root.rglob(XMSBT_MERGED_GLOB):
             original_path = merged_file.parent / merged_file.name.replace(MERGED_SUFFIX, "")
             try:
@@ -261,7 +254,6 @@ class ConflictResolver:
             except OSError as e:
                 logger.warn("ConflictResolver", f"Could not restore {merged_file.name}: {e}")
 
-        # Restore .xmsbt.managed files (disabled by previous versions)
         for managed_file in self.mods_root.rglob(XMSBT_MANAGED_GLOB):
             original_path = managed_file.parent / managed_file.name.replace(MANAGED_SUFFIX, "")
             try:
@@ -277,7 +269,6 @@ class ConflictResolver:
                 logger.warn("ConflictResolver",
                             f"Could not restore {managed_file.name}: {e}")
 
-        # Clean up merged XMSBT files from _MergedResources
         if self.merged_output_dir.exists():
             for xmsbt_file in self.merged_output_dir.rglob(XMSBT_GLOB):
                 try:
@@ -285,10 +276,8 @@ class ConflictResolver:
                     count += 1
                 except OSError:
                     pass
-            # Remove empty directories
             self._cleanup_empty_dirs(self.merged_output_dir)
 
-        # Ensure legacy merged output folder is fully removed.
         count += self.cleanup_legacy_merged_resources()
         logger.info("ConflictResolver", f"Restored/cleaned {count} file(s)")
         return count

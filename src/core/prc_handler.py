@@ -9,6 +9,9 @@ except ImportError:
     pyprc = None
     _pyprc_available = False
 
+SIGNED_BYTE_MAX = 127
+UNSIGNED_BYTE_RANGE = 256
+
 
 class PRCHandler:
     def load(self, path: Path) -> Any:
@@ -35,10 +38,10 @@ class PRCHandler:
             ref[field].value = value
         except Exception as e:
             if "out of range" in str(e).lower():
-                if value > 127:
-                    ref[field].value = value - 256
+                if value > SIGNED_BYTE_MAX:
+                    ref[field].value = value - UNSIGNED_BYTE_RANGE
                 elif value < 0:
-                    ref[field].value = value + 256
+                    ref[field].value = value + UNSIGNED_BYTE_RANGE
 
     def set_hash_value(self, ref: Any, field: str, value: str) -> None:
         """Set a hash40 value on a PRC field."""

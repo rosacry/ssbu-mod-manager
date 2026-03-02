@@ -2,6 +2,8 @@
 import customtkinter as ctk
 import tkinter as tk
 
+from src.ui import theme
+
 
 # Scroll speed multiplier (higher = faster scrolling)
 SCROLL_SPEED = 5

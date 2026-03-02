@@ -1,19 +1,18 @@
-"""Plugin row widget for the plugins page."""
 import customtkinter as ctk
 from src.models.plugin import Plugin, PluginStatus
+from src.ui import theme
 from src.utils.file_utils import format_size
 
 
 class PluginRow(ctk.CTkFrame):
     def __init__(self, parent, plugin: Plugin, on_toggle=None, **kwargs):
-        super().__init__(parent, fg_color="#242438", corner_radius=8, **kwargs)
+        super().__init__(parent, fg_color=theme.BG_CARD, corner_radius=8, **kwargs)
         self.plugin = plugin
         self._on_toggle = on_toggle
 
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=8)
 
-        # Toggle switch
         self.switch = ctk.CTkSwitch(
             row, text="", width=45,
             command=self._toggle,
@@ -25,50 +24,44 @@ class PluginRow(ctk.CTkFrame):
         else:
             self.switch.deselect()
 
-        # Info section
         info = ctk.CTkFrame(row, fg_color="transparent")
         info.pack(side="left", fill="x", expand=True)
 
-        # Display name
-        name_color = "white" if plugin.status == PluginStatus.ENABLED else "#666666"
+        name_color = theme.TEXT_PRIMARY if plugin.status == PluginStatus.ENABLED else theme.TEXT_DISABLED
         ctk.CTkLabel(
             info, text=plugin.display_name,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"),
             text_color=name_color, anchor="w",
         ).pack(anchor="w")
 
-        # Filename (if different)
         clean_name = plugin.filename
         if clean_name.lower().endswith(".disabled"):
             clean_name = clean_name[:-len(".disabled")]
         if clean_name != plugin.display_name:
             ctk.CTkLabel(
                 info, text=clean_name,
-                font=ctk.CTkFont(size=11),
-                text_color="#666666", anchor="w",
+                font=ctk.CTkFont(size=theme.FONT_BODY),
+                text_color=theme.TEXT_DISABLED, anchor="w",
             ).pack(anchor="w")
 
-        # Description
         ctk.CTkLabel(
             info, text=plugin.description,
-            font=ctk.CTkFont(size=12),
-            text_color="#999999", anchor="w",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_MUTED, anchor="w",
             wraplength=500,
         ).pack(anchor="w", pady=(2, 0))
 
-        # Size
         ctk.CTkLabel(
             row, text=format_size(plugin.file_size),
-            font=ctk.CTkFont(size=12),
-            text_color="#888888",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_DIM,
         ).pack(side="right", padx=10)
 
-        # Required badge
         if plugin.known_info and plugin.known_info.required:
             ctk.CTkLabel(
                 row, text="REQUIRED",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                text_color="#e94560",
+                font=ctk.CTkFont(size=theme.FONT_CAPTION, weight="bold"),
+                text_color=theme.ACCENT,
             ).pack(side="right", padx=5)
 
     def _toggle(self):

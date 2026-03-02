@@ -25,6 +25,10 @@ from src.paths import (
 )
 from src.utils.logger import logger
 
+BYTES_PER_MB = 1024 * 1024
+MAX_TOLERABLE_ERRORS = 5
+PROGRESS_REPORT_INTERVAL = 50
+
 
 @dataclass
 class MigrationItem:
@@ -50,7 +54,7 @@ class MigrationPlan:
 
     @property
     def total_size_mb(self) -> float:
-        return self.total_size / (1024 * 1024)
+        return self.total_size / BYTES_PER_MB
 
 
 @dataclass
@@ -297,7 +301,7 @@ def execute_migration(
                             result.errors.append(f"Failed to copy {src_file}: {e}")
 
                         copied += 1
-                        if progress_callback and copied % 50 == 0:
+                        if progress_callback and copied % PROGRESS_REPORT_INTERVAL == 0:
                             progress_callback(
                                 f"Migrating {item.label}... ({copied}/{total})",
                                 copied / total,
@@ -313,10 +317,10 @@ def execute_migration(
         progress_callback("Migration complete!", 1.0)
 
     if result.errors:
-        result.success = len(result.errors) < 5  # Partial success if few errors
+        result.success = len(result.errors) < MAX_TOLERABLE_ERRORS
 
     logger.info("Migrator", f"Migration complete: {result.files_copied} files, "
-                f"{result.bytes_copied / (1024*1024):.1f} MB, "
+                f"{result.bytes_copied / BYTES_PER_MB:.1f} MB, "
                 f"{result.duration_seconds:.1f}s, {len(result.errors)} errors")
     return result
 
@@ -543,7 +547,7 @@ def direct_export_emulator_data(
                             result.errors.append(f"Failed to copy {src_file}: {e}")
 
                         copied += 1
-                        if progress_callback and copied % 50 == 0:
+                        if progress_callback and copied % PROGRESS_REPORT_INTERVAL == 0:
                             progress_callback(
                                 f"Exporting {item.label}... ({copied}/{total_files})",
                                 copied / total_files,
@@ -568,14 +572,14 @@ def direct_export_emulator_data(
         pass
 
     result.duration_seconds = time.time() - start
-    result.success = len(result.errors) < 5
+    result.success = len(result.errors) < MAX_TOLERABLE_ERRORS
 
     if progress_callback:
         progress_callback("Export complete!", 1.0)
 
     logger.info("Migrator",
         f"Direct export from {emulator_name}: {result.files_copied} files, "
-        f"{result.bytes_copied / (1024*1024):.1f} MB, "
+        f"{result.bytes_copied / BYTES_PER_MB:.1f} MB, "
         f"{result.duration_seconds:.1f}s")
 
     return result
@@ -677,7 +681,7 @@ def direct_import_emulator_data(
                         result.errors.append(f"Failed to copy {src_file}: {e}")
 
                     copied += 1
-                    if progress_callback and copied % 50 == 0:
+                    if progress_callback and copied % PROGRESS_REPORT_INTERVAL == 0:
                         progress_callback(
                             f"Importing {label}... ({copied}/{total_files})",
                             copied / total_files,
@@ -686,14 +690,14 @@ def direct_import_emulator_data(
             result.errors.append(f"Error importing {label}: {e}")
 
     result.duration_seconds = time.time() - start
-    result.success = len(result.errors) < 5
+    result.success = len(result.errors) < MAX_TOLERABLE_ERRORS
 
     if progress_callback:
         progress_callback("Import complete!", 1.0)
 
     logger.info("Migrator",
         f"Direct import to {emulator_name}: {result.files_copied} files, "
-        f"{result.bytes_copied / (1024*1024):.1f} MB, "
+        f"{result.bytes_copied / BYTES_PER_MB:.1f} MB, "
         f"{result.duration_seconds:.1f}s")
 
     return result
@@ -789,7 +793,7 @@ class UpgradePlan:
 
     @property
     def total_size_mb(self) -> float:
-        return self.total_size / (1024 * 1024)
+        return self.total_size / BYTES_PER_MB
 
 
 def scan_upgrade_data(
@@ -988,7 +992,7 @@ def execute_upgrade(
                             result.errors.append(f"Failed to copy {src_file}: {e}")
 
                         copied += 1
-                        if progress_callback and copied % 50 == 0:
+                        if progress_callback and copied % PROGRESS_REPORT_INTERVAL == 0:
                             progress_callback(
                                 f"Copying {item.label}... ({copied}/{total_files})",
                                 copied / total_files,
@@ -997,14 +1001,14 @@ def execute_upgrade(
             result.errors.append(f"Error copying {item.label}: {e}")
 
     result.duration_seconds = time.time() - start
-    result.success = len(result.errors) < 5
+    result.success = len(result.errors) < MAX_TOLERABLE_ERRORS
 
     if progress_callback:
         progress_callback("Upgrade complete!", 1.0)
 
     logger.info("Migrator",
         f"Upgrade {plan.emulator_name}: {result.files_copied} files, "
-        f"{result.bytes_copied / (1024*1024):.1f} MB, "
+        f"{result.bytes_copied / BYTES_PER_MB:.1f} MB, "
         f"{result.duration_seconds:.1f}s, "
         f"{len(result.errors)} errors")
 

@@ -34,7 +34,6 @@ ParamLabels.csv
 _MergedResources/
 
 # Temp files
-tmpclaude-*
 nul
 exe_error.log
 startup.log

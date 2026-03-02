@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox
 from collections import defaultdict
 from pathlib import Path
 from src.ui.base_page import BasePage
+from src.ui import theme
 from src.models.mod import Mod, ModStatus
 from src.core.content_importer import (
     MultiSlotPackSelectionInfo,
@@ -25,17 +26,17 @@ from src.utils.action_history import action_history, Action
 
 # Category colors for the left accent bar
 CATEGORY_COLORS = {
-    "Character": "#e94560",
-    "Audio": "#2fa572",
-    "Stage": "#1f538d",
-    "UI": "#b08a2a",
-    "Effect": "#9b59b6",
-    "Camera": "#3498db",
-    "Assist Trophy": "#e67e22",
-    "Item": "#1abc9c",
-    "Params": "#95a5a6",
-    "Music": "#2fa572",
-    "Other": "#555555",
+    "Character": theme.ACCENT,
+    "Audio": theme.SUCCESS,
+    "Stage": theme.PRIMARY,
+    "UI": theme.WARNING_ALT,
+    "Effect": theme.PURPLE_CATEGORY,
+    "Camera": theme.BLUE_CATEGORY,
+    "Assist Trophy": theme.ORANGE_CATEGORY,
+    "Item": theme.TEAL_CATEGORY,
+    "Params": theme.GRAY_CATEGORY,
+    "Music": theme.SUCCESS,
+    "Other": theme.BTN_NEUTRAL,
 }
 
 # Row heights
@@ -44,10 +45,10 @@ _MOD_ROW_HEIGHT = 44
 _ROW_PAD = 2
 
 MOD_RISK_BADGES = {
-    "desync_vulnerable": ("DESYNC", "#e94560"),
-    "conditionally_shared": ("CONDITIONAL", "#d4a017"),
-    "unknown_needs_review": ("REVIEW", "#b08a2a"),
-    "safe_client_only": ("SAFE", "#2fa572"),
+    "desync_vulnerable": ("DESYNC", theme.ACCENT),
+    "conditionally_shared": ("CONDITIONAL", theme.WARNING),
+    "unknown_needs_review": ("REVIEW", theme.WARNING_ALT),
+    "safe_client_only": ("SAFE", theme.SUCCESS),
 }
 
 SUPPORT_PACK_LABELS = {
@@ -84,7 +85,7 @@ class ModsPage(BasePage):
         header_frame.pack(fill="x", padx=30, pady=(20, 8))
 
         title = ctk.CTkLabel(header_frame, text="Mods",
-                             font=ctk.CTkFont(size=24, weight="bold"), anchor="w")
+                             font=ctk.CTkFont(size=theme.FONT_PAGE_TITLE, weight="bold"), anchor="w")
         title.pack(side="left")
 
         refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=100,
@@ -94,45 +95,45 @@ class ModsPage(BasePage):
 
         open_btn = ctk.CTkButton(header_frame, text="Open Folder", width=110,
                                  command=self._open_folder,
-                                 fg_color="#555555", hover_color="#444444",
+                                 fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
                                  corner_radius=8, height=34)
         open_btn.pack(side="right", padx=(5, 0))
 
         import_btn = ctk.CTkButton(
             header_frame, text="Import", width=100,
             command=self._import_mod_folder,
-            fg_color="#7a3fb0", hover_color="#633292",
+            fg_color=theme.PURPLE, hover_color=theme.HOVER_PURPLE,
             corner_radius=8, height=34,
         )
         import_btn.pack(side="right", padx=(5, 0))
 
         disable_all_btn = ctk.CTkButton(header_frame, text="Disable All", width=100,
                                         command=self._disable_all,
-                                        fg_color="#8b2e2e", hover_color="#6e2424",
+                                        fg_color=theme.DANGER_BUTTON, hover_color=theme.HOVER_DANGER_ALL,
                                         corner_radius=8, height=34)
         disable_all_btn.pack(side="right", padx=(5, 0))
 
         enable_all_btn = ctk.CTkButton(header_frame, text="Enable All", width=100,
                                        command=self._enable_all,
-                                       fg_color="#2e6b3e", hover_color="#245530",
+                                       fg_color=theme.SUCCESS_BUTTON, hover_color=theme.HOVER_SUCCESS_ALL,
                                        corner_radius=8, height=34)
         enable_all_btn.pack(side="right", padx=(5, 0))
 
         wifi_safe_btn = ctk.CTkButton(header_frame, text="Wi-Fi Safe", width=110,
                                       command=self._enable_wifi_safe_only,
-                                      fg_color="#1f538d", hover_color="#163b6a",
+                                      fg_color=theme.PRIMARY, hover_color=theme.HOVER_PRIMARY,
                                       corner_radius=8, height=34)
         wifi_safe_btn.pack(side="right", padx=(5, 0))
 
         repair_btn = ctk.CTkButton(header_frame, text="Repair Installed", width=130,
                                    command=self._repair_installed_mods,
-                                   fg_color="#2f3557", hover_color="#3f476f",
+                                   fg_color=theme.BTN_SECONDARY, hover_color=theme.HOVER_SECONDARY,
                                    corner_radius=8, height=34)
         repair_btn.pack(side="right", padx=(5, 0))
 
         runtime_btn = ctk.CTkButton(header_frame, text="Repair Runtime", width=126,
                                     command=self._repair_runtime_environment,
-                                    fg_color="#38405d", hover_color="#495276",
+                                    fg_color=theme.BTN_STAGE, hover_color=theme.HOVER_STAGE,
                                     corner_radius=8, height=34)
         runtime_btn.pack(side="right", padx=(5, 0))
 
@@ -159,7 +160,7 @@ class ModsPage(BasePage):
         group_cb = ctk.CTkCheckBox(right_filters, text="Group by type",
                                    variable=self.group_var,
                                    command=self._render_mods,
-                                   font=ctk.CTkFont(size=12), width=130)
+                                   font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), width=130)
         group_cb.pack(side="right", padx=(14, 0))
 
         self.filter_var = ctk.StringVar(value="All")
@@ -172,8 +173,8 @@ class ModsPage(BasePage):
 
         # Mod count summary
         self.count_label = ctk.CTkLabel(self, text="",
-                                        font=ctk.CTkFont(size=12),
-                                        text_color="#888888", anchor="w")
+                                        font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+                                        text_color=theme.TEXT_DIM, anchor="w")
         self.count_label.pack(fill="x", padx=32, pady=(0, 4))
 
         # Virtual scrolling canvas
@@ -181,7 +182,7 @@ class ModsPage(BasePage):
         self._canvas_frame.pack(fill="both", expand=True, padx=25, pady=(0, 10))
 
         self._canvas = tk.Canvas(
-            self._canvas_frame, bg="#12121e", highlightthickness=0,
+            self._canvas_frame, bg=theme.BG_APP, highlightthickness=0,
             bd=0, relief="flat",
         )
         self._scrollbar = ctk.CTkScrollbar(self._canvas_frame, command=self._canvas.yview)
@@ -191,7 +192,7 @@ class ModsPage(BasePage):
         self._canvas.pack(side="left", fill="both", expand=True)
 
         # Inner frame for widgets
-        self._inner_frame = tk.Frame(self._canvas, bg="#12121e")
+        self._inner_frame = tk.Frame(self._canvas, bg=theme.BG_APP)
         self._canvas_window = self._canvas.create_window(
             (0, 0), window=self._inner_frame, anchor="nw"
         )
@@ -201,11 +202,9 @@ class ModsPage(BasePage):
         self._inner_frame.bind("<Configure>", self._on_frame_configure)
 
     def _on_canvas_configure(self, event):
-        """Resize inner frame to match canvas width."""
         self._canvas.itemconfig(self._canvas_window, width=event.width)
 
     def _on_frame_configure(self, event):
-        """Update scroll region when inner frame changes, debounced."""
         # Debounce to prevent scroll jumps when scrollbar is being dragged
         new_region = (event.width, event.height)
         if new_region != self._last_scroll_region:
@@ -221,7 +220,6 @@ class ModsPage(BasePage):
                 pass
 
     def _update_scroll_region(self):
-        """Actually update the scroll region."""
         self._scroll_after_id = None
         try:
             self._canvas.configure(scrollregion=self._canvas.bbox("all"))
@@ -320,7 +318,6 @@ class ModsPage(BasePage):
         logger.debug("Mods", f"Rendered {len(filtered)} mod entries")
 
     def _render_grouped(self, mods):
-        """Render mods grouped by category."""
         groups = defaultdict(list)
         for mod in mods:
             primary = mod.metadata.categories[0] if mod.metadata.categories else "Other"
@@ -336,7 +333,7 @@ class ModsPage(BasePage):
             sorted_groups.append((key, groups[key]))
 
         for category, category_mods in sorted_groups:
-            color = CATEGORY_COLORS.get(category, "#555555")
+            color = CATEGORY_COLORS.get(category, theme.BTN_NEUTRAL)
             is_collapsed = category in self._collapsed
             enabled = sum(1 for m in category_mods if m.status == ModStatus.ENABLED)
 
@@ -348,17 +345,15 @@ class ModsPage(BasePage):
                     self._render_mod_row(mod, color)
 
     def _render_flat(self, mods):
-        """Render mods as a flat list."""
         for mod in mods:
             color = CATEGORY_COLORS.get(
                 mod.metadata.categories[0] if mod.metadata.categories else "Other",
-                "#555555"
+                theme.BTN_NEUTRAL
             )
             self._render_mod_row(mod, color)
 
     def _render_category_header(self, category, color, is_collapsed, enabled, total):
-        """Render a category header with collapse toggle."""
-        header = tk.Frame(self._inner_frame, bg="#181830", cursor="hand2",
+        header = tk.Frame(self._inner_frame, bg=theme.BG_ROW_HEADER, cursor="hand2",
                           height=_HEADER_HEIGHT)
         header.pack(fill="x", pady=(6, 1), padx=2)
         header.pack_propagate(False)
@@ -368,21 +363,21 @@ class ModsPage(BasePage):
         if enabled < total:
             count_text += f" \u00b7 {enabled} enabled"
 
-        arrow_label = tk.Label(header, text=arrow, font=("Segoe UI", 11),
-                               fg="#6a6a8a", bg="#181830", width=2)
+        arrow_label = tk.Label(header, text=arrow, font=("Segoe UI", theme.FONT_BODY),
+                               fg=theme.TEXT_FAINT, bg=theme.BG_ROW_HEADER, width=2)
         arrow_label.pack(side="left", padx=(10, 0))
 
         dot = tk.Frame(header, width=10, height=10, bg=color)
         dot.pack(side="left", padx=(4, 8), pady=15)
 
         name_l = tk.Label(header, text=f"{category}",
-                          font=("Segoe UI", 12, "bold"),
-                          fg="#b0b0cc", bg="#181830")
+                          font=("Segoe UI", theme.FONT_BODY_MEDIUM, "bold"),
+                          fg=theme.TEXT_LOG, bg=theme.BG_ROW_HEADER)
         name_l.pack(side="left", padx=(0, 8))
 
         count_l = tk.Label(header, text=count_text,
-                           font=("Segoe UI", 10),
-                           fg="#505068", bg="#181830")
+                           font=("Segoe UI", theme.FONT_CAPTION),
+                           fg=theme.TEXT_DISABLED_CATEGORY, bg=theme.BG_ROW_HEADER)
         count_l.pack(side="left")
 
         def on_click(e, cat=category):
@@ -396,24 +391,21 @@ class ModsPage(BasePage):
             w.bind("<Button-1>", on_click)
 
     def _render_mod_row(self, mod, accent_color):
-        """Render a single mod row using lightweight tk widgets for performance."""
         is_enabled = mod.status == ModStatus.ENABLED
 
-        row = tk.Frame(self._inner_frame, bg="#1c1c34", height=_MOD_ROW_HEIGHT)
+        row = tk.Frame(self._inner_frame, bg=theme.BG_ROW, height=_MOD_ROW_HEIGHT)
         row.pack(fill="x", pady=1, padx=2)
         row.pack_propagate(False)
 
-        # Colored accent bar
         accent = tk.Frame(row, width=4,
-                          bg=accent_color if is_enabled else "#3a3a4a")
+                          bg=accent_color if is_enabled else theme.ACCENT_STRIPE_DISABLED)
         accent.pack(side="left", fill="y", padx=(3, 0), pady=4)
 
-        # Toggle switch (CTk needed for proper switch behavior)
         switch = ctk.CTkSwitch(
             row, text="", width=42, height=20,
             command=lambda m=mod: self._on_toggle(m),
             onvalue=True, offvalue=False,
-            bg_color="#1c1c34",
+            bg_color=theme.BG_ROW,
         )
         switch.pack(side="left", padx=(8, 6))
         if is_enabled:
@@ -427,36 +419,34 @@ class ModsPage(BasePage):
         risk_key = mod.metadata.online_risk or "unknown_needs_review"
         badge_text, badge_color = MOD_RISK_BADGES.get(
             risk_key,
-            ("REVIEW", "#b08a2a"),
+            ("REVIEW", theme.WARNING_ALT),
         )
 
-        name_color = "#d0d0e8" if is_enabled else "#454560"
-        cat_color = "#6a6a88" if is_enabled else "#3a3a50"
+        name_color = theme.TEXT_BODY if is_enabled else theme.TEXT_VERY_DIM
+        cat_color = theme.TEXT_CATEGORY if is_enabled else theme.TEXT_DISABLED_CATEGORY
 
-        text_frame = tk.Frame(row, bg="#1c1c34")
+        text_frame = tk.Frame(row, bg=theme.BG_ROW)
         text_frame.pack(side="left", fill="x", expand=True)
 
-        # Use a tk.Label for speed (much faster than CTkLabel)
         name_label = tk.Label(
-            text_frame, text=name, font=("Segoe UI", 12),
-            fg=name_color, bg="#1c1c34", anchor="w",
+            text_frame, text=name, font=("Segoe UI", theme.FONT_BODY_MEDIUM),
+            fg=name_color, bg=theme.BG_ROW, anchor="w",
         )
         name_label.pack(side="left", padx=(2, 0))
 
         if cats:
             cat_label = tk.Label(
                 text_frame, text=" \u00b7 ".join(cats),
-                font=("Segoe UI", 10), fg=cat_color, bg="#1c1c34", anchor="w",
+                font=("Segoe UI", theme.FONT_CAPTION), fg=cat_color, bg=theme.BG_ROW, anchor="w",
             )
             cat_label.pack(side="left", padx=(8, 0))
 
-        # Online risk badge.
         tk.Label(
             row,
             text=badge_text,
-            font=("Segoe UI", 9, "bold"),
-            fg=badge_color if is_enabled else "#4f4f63",
-            bg="#1c1c34",
+            font=("Segoe UI", theme.FONT_TINY, "bold"),
+            fg=badge_color if is_enabled else theme.TEXT_DISABLED_RISK,
+            bg=theme.BG_ROW,
             anchor="e",
         ).pack(side="right", padx=(0, 10))
 
@@ -494,13 +484,13 @@ class ModsPage(BasePage):
         menu.withdraw()
         menu.overrideredirect(True)
         menu.attributes("-topmost", True)
-        menu.configure(fg_color="#101427")
+        menu.configure(fg_color=theme.BG_CONTEXT_MENU)
 
         frame = ctk.CTkFrame(
             menu,
-            fg_color="#171a31",
+            fg_color=theme.BG_CONTEXT_MENU_INNER,
             border_width=1,
-            border_color="#2f3f6a",
+            border_color=theme.BORDER_CONTEXT,
             corner_radius=8,
         )
         frame.pack(fill="both", expand=True)
@@ -555,7 +545,6 @@ class ModsPage(BasePage):
         return "break"
 
     def _close_context_menu_on_global_click(self, event):
-        """Close mod context menu when clicking outside it."""
         menu = self._context_menu
         if menu is None:
             return
@@ -586,8 +575,8 @@ class ModsPage(BasePage):
             height=30,
             corner_radius=0,
             fg_color="transparent",
-            hover_color="#24375f",
-            font=ctk.CTkFont(size=12),
+            hover_color=theme.HOVER_CONTEXT,
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
             command=lambda cb=callback: self._invoke_context_action(cb),
         )
         btn.pack(fill="x")
@@ -675,15 +664,15 @@ class ModsPage(BasePage):
         dialog.withdraw()
         dialog.title("Rename Mod")
         dialog.resizable(False, False)
-        dialog.configure(fg_color="#0f1327")
+        dialog.configure(fg_color=theme.BG_DIALOG)
 
-        shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
-                             border_width=1, border_color="#304378")
+        shell = ctk.CTkFrame(dialog, fg_color=theme.BG_DIALOG_SHELL, corner_radius=10,
+                             border_width=1, border_color=theme.BORDER_DIALOG)
         shell.pack(fill="both", expand=True, padx=10, pady=10)
 
         ctk.CTkLabel(
             shell, text="Rename Mod", anchor="w",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
         ctk.CTkLabel(
@@ -692,7 +681,7 @@ class ModsPage(BasePage):
                  "Unchecked: rename in this app only.\n"
                  "Checked: also rename the actual mod folder.",
             anchor="w", justify="left",
-            font=ctk.CTkFont(size=12), text_color="#b9bfd8",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_SOFT,
         ).pack(fill="x", padx=14)
 
         entry = ctk.CTkEntry(shell, height=32)
@@ -705,7 +694,7 @@ class ModsPage(BasePage):
             shell,
             text="Rename actual mod folder too",
             variable=rename_folder_var,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
         ).pack(anchor="w", padx=14, pady=(0, 12))
 
         btn_row = ctk.CTkFrame(shell, fg_color="transparent")
@@ -722,13 +711,13 @@ class ModsPage(BasePage):
 
         ctk.CTkButton(
             btn_row, text="Cancel", width=96, height=30,
-            fg_color="#2f3557", hover_color="#3f476f",
+            fg_color=theme.BTN_SECONDARY, hover_color=theme.HOVER_SECONDARY,
             command=lambda: close_with(None),
         ).pack(side="right")
 
         ctk.CTkButton(
             btn_row, text="Save", width=96, height=30,
-            fg_color="#1f538d", hover_color="#163b6a",
+            fg_color=theme.PRIMARY, hover_color=theme.HOVER_PRIMARY,
             command=lambda: close_with(entry.get()),
         ).pack(side="right", padx=(0, 8))
 
@@ -777,7 +766,7 @@ class ModsPage(BasePage):
     def _copy_mod_risk_details(self, mod):
         risk = mod.metadata.online_risk or "unknown_needs_review"
         reasons = list(mod.metadata.online_reasons or [])
-        badge_text, _color = MOD_RISK_BADGES.get(risk, ("REVIEW", "#b08a2a"))
+        badge_text, _color = MOD_RISK_BADGES.get(risk, ("REVIEW", theme.WARNING_ALT))
         lines = [
             f"Mod: {mod.original_name}",
             f"Online Risk: {risk} ({badge_text})",
@@ -898,15 +887,15 @@ class ModsPage(BasePage):
         dialog.withdraw()
         dialog.title(f"Configure {support_label}")
         dialog.resizable(False, False)
-        dialog.configure(fg_color="#0f1327")
+        dialog.configure(fg_color=theme.BG_DIALOG)
 
-        shell = ctk.CTkFrame(dialog, fg_color="#151b36", corner_radius=10,
-                             border_width=1, border_color="#304378")
+        shell = ctk.CTkFrame(dialog, fg_color=theme.BG_DIALOG_SHELL, corner_radius=10,
+                             border_width=1, border_color=theme.BORDER_DIALOG)
         shell.pack(fill="both", expand=True, padx=10, pady=10)
 
         ctk.CTkLabel(
             shell, text=f"Configure {support_label}", anchor="w",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
         current_visual = self._format_support_slot_list(
@@ -930,8 +919,8 @@ class ModsPage(BasePage):
             ),
             anchor="w",
             justify="left",
-            font=ctk.CTkFont(size=12),
-            text_color="#b9bfd8",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_SOFT,
         ).pack(fill="x", padx=14)
 
         form = ctk.CTkFrame(shell, fg_color="transparent")
@@ -1009,8 +998,8 @@ class ModsPage(BasePage):
             ),
             anchor="w",
             justify="left",
-            font=ctk.CTkFont(size=11),
-            text_color="#8e97bc",
+            font=ctk.CTkFont(size=theme.FONT_BODY),
+            text_color=theme.TEXT_MERGED,
         )
         note_label.pack(fill="x")
 
@@ -1037,13 +1026,13 @@ class ModsPage(BasePage):
 
         ctk.CTkButton(
             btn_row, text="Cancel", width=96, height=30,
-            fg_color="#2f3557", hover_color="#3f476f",
+            fg_color=theme.BTN_SECONDARY, hover_color=theme.HOVER_SECONDARY,
             command=lambda: close_with(None),
         ).pack(side="right")
 
         ctk.CTkButton(
             btn_row, text="Apply", width=96, height=30,
-            fg_color="#1f538d", hover_color="#163b6a",
+            fg_color=theme.PRIMARY, hover_color=theme.HOVER_PRIMARY,
             command=on_apply,
         ).pack(side="right", padx=(0, 8))
 
@@ -1161,7 +1150,6 @@ class ModsPage(BasePage):
             self._refresh()
 
     def _enable_all(self):
-        """Enable all disabled mods."""
         disabled = [m for m in self._all_mods if m.status == ModStatus.DISABLED]
         if not disabled:
             messagebox.showinfo("Info", "All mods are already enabled.")
@@ -1221,7 +1209,6 @@ class ModsPage(BasePage):
             messagebox.showerror("Error", f"Failed to enable only Wi-Fi-safe mods: {e}")
 
     def _disable_all(self):
-        """Disable all enabled mods."""
         enabled = [m for m in self._all_mods if m.status == ModStatus.ENABLED]
         if not enabled:
             messagebox.showinfo("Info", "All mods are already disabled.")
@@ -1503,14 +1490,14 @@ class ModsPage(BasePage):
         dialog.withdraw()
         dialog.title("Select Skins to Import")
         dialog.resizable(False, False)
-        dialog.configure(fg_color="#0f1327")
+        dialog.configure(fg_color=theme.BG_DIALOG)
 
         shell = ctk.CTkFrame(
             dialog,
-            fg_color="#151b36",
+            fg_color=theme.BG_DIALOG_SHELL,
             corner_radius=10,
             border_width=1,
-            border_color="#304378",
+            border_color=theme.BORDER_DIALOG,
         )
         shell.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -1518,7 +1505,7 @@ class ModsPage(BasePage):
             shell,
             text="Select Skins to Import",
             anchor="w",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"),
         ).pack(fill="x", padx=14, pady=(12, 6))
 
         ctk.CTkLabel(
@@ -1531,11 +1518,11 @@ class ModsPage(BasePage):
             ),
             anchor="w",
             justify="left",
-            font=ctk.CTkFont(size=12),
-            text_color="#b9bfd8",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_SOFT,
         ).pack(fill="x", padx=14)
 
-        options_frame = ctk.CTkFrame(shell, fg_color="#10162c", corner_radius=8)
+        options_frame = ctk.CTkFrame(shell, fg_color=theme.BG_OPTIONS_FRAME, corner_radius=8)
         options_frame.pack(fill="x", padx=14, pady=(12, 10))
 
         option_vars: dict[str, tk.BooleanVar] = {}
@@ -1548,7 +1535,7 @@ class ModsPage(BasePage):
                 options_frame,
                 text=label,
                 variable=var,
-                font=ctk.CTkFont(size=12),
+                font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
             ).pack(anchor="w", padx=12, pady=6)
 
         quick_row = ctk.CTkFrame(shell, fg_color="transparent")
@@ -1567,8 +1554,8 @@ class ModsPage(BasePage):
             text="Base Only",
             width=96,
             height=30,
-            fg_color="#2f3557",
-            hover_color="#3f476f",
+            fg_color=theme.BTN_SECONDARY,
+            hover_color=theme.HOVER_SECONDARY,
             command=select_only_recommended,
         ).pack(side="left")
 
@@ -1577,8 +1564,8 @@ class ModsPage(BasePage):
             text="Select All",
             width=96,
             height=30,
-            fg_color="#2f3557",
-            hover_color="#3f476f",
+            fg_color=theme.BTN_SECONDARY,
+            hover_color=theme.HOVER_SECONDARY,
             command=select_all,
         ).pack(side="left", padx=(8, 0))
 
@@ -1606,8 +1593,8 @@ class ModsPage(BasePage):
             text="Skip Pack",
             width=96,
             height=30,
-            fg_color="#2f3557",
-            hover_color="#3f476f",
+            fg_color=theme.BTN_SECONDARY,
+            hover_color=theme.HOVER_SECONDARY,
             command=lambda: close_with([]),
         ).pack(side="right")
 
@@ -1616,8 +1603,8 @@ class ModsPage(BasePage):
             text="Import Selected",
             width=124,
             height=30,
-            fg_color="#1f538d",
-            hover_color="#163b6a",
+            fg_color=theme.PRIMARY,
+            hover_color=theme.HOVER_PRIMARY,
             command=on_import_selected,
         ).pack(side="right", padx=(0, 8))
 

@@ -13,6 +13,9 @@ _MOD_CONTENT_DIRS = {
     "assist", "item", "param", "stream",
 }
 
+# Max slot references shown in compact group labels before truncating.
+_SLOT_GROUP_DISPLAY_LIMIT = 2
+
 
 class ConflictDetector:
     def __init__(self):
@@ -48,7 +51,6 @@ class ConflictDetector:
         # even without overlapping files (e.g. one extra wrapper folder).
         conflicts.extend(self._detect_structure_conflicts(mods_root))
 
-        # Sort by severity (critical first)
         severity_order = {
             ConflictSeverity.CRITICAL: 0,
             ConflictSeverity.HIGH: 1,
@@ -216,7 +218,7 @@ class ConflictDetector:
         conflict.slot_group_key = self._build_slot_group_key(slot_map)
         conflict.slot_group_label = self._format_limited_list(
             self._build_slot_group_descriptions(slot_map, slot_name_variants),
-            max_items=2,
+            max_items=_SLOT_GROUP_DISPLAY_LIMIT,
         )
         aggregate_unique = self._dedupe_strings(aggregate_labels)
         if aggregate_unique:
@@ -258,8 +260,8 @@ class ConflictDetector:
                 if len(names) == 1:
                     display_name = names[0]
                 elif len(names) > 1:
-                    display_name = " / ".join(names[:2])
-                    if len(names) > 2:
+                    display_name = " / ".join(names[:_SLOT_GROUP_DISPLAY_LIMIT])
+                    if len(names) > _SLOT_GROUP_DISPLAY_LIMIT:
                         display_name = f"{display_name} +{len(names) - 2}"
                 descriptions.append(
                     ConflictDetector._format_slot_reference(fighter, slot, display_name)
