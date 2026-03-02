@@ -124,7 +124,7 @@ class DashboardPage(BasePage):
 
         self.xmsbt_info = ctk.CTkLabel(
             self.info_frame, text="Click 'Refresh All' to scan your mod setup.",
-            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_SUBTLE, anchor="w", wraplength=900,
+            font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_SUBTLE, anchor="w", wraplength=theme.WRAP_WIDE,
         )
         self.xmsbt_info.pack(fill="x", padx=20, pady=14)
 
@@ -169,7 +169,7 @@ class DashboardPage(BasePage):
         frame = self._SPINNER_FRAMES[self._spinner_index % len(self._SPINNER_FRAMES)]
         self.loading_label.configure(text=f"{frame} {self._spinner_text}...")
         self._spinner_index += 1
-        self.after(100, self._animate_spinner)
+        self.after(theme.DELAY_SPINNER_TICK, self._animate_spinner)
 
     def on_show(self):
         logger.debug("Dashboard", "Page shown, scheduling stats refresh")

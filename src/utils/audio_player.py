@@ -7,6 +7,8 @@ import subprocess
 import threading
 import time
 
+from src.ui.theme import TIMEOUT_AUDIO_KILL, TIMEOUT_AUDIO_KILL_SHORT
+
 DEFAULT_VOLUME = 0.7
 MS_PER_SECOND = 1000.0
 OPUS_HEADER_PROBE_BYTES = 48
@@ -190,11 +192,11 @@ class AudioPlayer:
             if proc.poll() is None:
                 proc.terminate()
                 try:
-                    proc.wait(timeout=0.8)
+                    proc.wait(timeout=TIMEOUT_AUDIO_KILL)
                 except Exception:
                     proc.kill()
                     try:
-                        proc.wait(timeout=0.5)
+                        proc.wait(timeout=TIMEOUT_AUDIO_KILL_SHORT)
                     except Exception:
                         pass
             # Log any stderr output from ffplay for debugging

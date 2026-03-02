@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.2.2**.
+Current release version: **1.0.0**.
 
 One place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -9,17 +9,9 @@ One place to manage mods, Skyline plugins, music assignments, CSS edits, conflic
 
 Grab the latest zip from the [Releases](https://github.com/rosacry/ssbu-mod-manager/releases) page, extract it, and run `SSBUModManager.exe`.
 
-## What's New in 1.2.2
+## What's New in 1.0.0
 
-### Music Stage-Slot Fixes
-- The Music page now resolves stage slots from the real SSBU playlist structure in `ui_stage_db.prc` and `ui_bgm_db.prc` instead of the older broken `bgm_set_list` assumption.
-- Stage-slot discovery now checks scanned active mods and `disabled_mods`, so safe-slot replacement works even when the source PRC mod is disabled.
-- The stage catalog now uses the real in-game stage IDs and names, which fixes missing or mislabeled stages in the safe-slot workflow.
-- Older saved music assignments and safe replacements using the app's previous placeholder stage IDs are normalized automatically.
-
-### Safe Replacement UX
-- Safe-slot rows keep the `default -> replacement` mapping visible, including menu music.
-- Empty-state messaging now explains that the app is waiting on compatible PRC stage data instead of implying the entire feature is unavailable.
+Initial public release.
 
 ## Features
 
@@ -96,7 +88,7 @@ Requires Python 3.11+.
 python build.py
 ```
 
-Output: `dist/SSBUModManager-1.2.2-windows.zip`
+Output: `dist/SSBUModManager-1.0.0-windows.zip`
 
 ## First-Run Setup
 

@@ -4,8 +4,6 @@ import tkinter as tk
 
 from src.ui import theme
 
-
-# Scroll speed multiplier (higher = faster scrolling)
 SCROLL_SPEED = 5
 
 
@@ -20,7 +18,7 @@ def _patch_scrollable_frame_speed(frame: ctk.CTkScrollableFrame, speed: int = SC
         canvas = frame._parent_canvas
         def _fast_scroll(event):
             try:
-                canvas.yview_scroll(int(-speed * (event.delta / 120)), "units")
+                canvas.yview_scroll(int(-speed * (event.delta / theme.SCROLL_DELTA_DIVISOR)), "units")
             except tk.TclError:
                 pass
             return "break"
@@ -46,7 +44,7 @@ def patch_listbox_scroll_speed(listbox: tk.Listbox, speed: int = SCROLL_SPEED):
     """Patch a tk.Listbox to scroll faster."""
     def _fast_scroll(event):
         try:
-            listbox.yview_scroll(int(-speed * (event.delta / 120)), "units")
+            listbox.yview_scroll(int(-speed * (event.delta / theme.SCROLL_DELTA_DIVISOR)), "units")
         except tk.TclError:
             pass
         return "break"
@@ -57,7 +55,7 @@ def _patch_canvas_scroll_speed(canvas: tk.Canvas, speed: int = SCROLL_SPEED):
     """Patch a tk.Canvas to scroll faster."""
     def _fast_scroll(event):
         try:
-            canvas.yview_scroll(int(-speed * (event.delta / 120)), "units")
+            canvas.yview_scroll(int(-speed * (event.delta / theme.SCROLL_DELTA_DIVISOR)), "units")
         except tk.TclError:
             pass
         return "break"
@@ -68,7 +66,7 @@ def _patch_text_scroll_speed(text_widget: tk.Text, speed: int = SCROLL_SPEED):
     """Patch a tk.Text to scroll faster."""
     def _fast_scroll(event):
         try:
-            text_widget.yview_scroll(int(-speed * (event.delta / 120)), "units")
+            text_widget.yview_scroll(int(-speed * (event.delta / theme.SCROLL_DELTA_DIVISOR)), "units")
         except tk.TclError:
             pass
         return "break"
@@ -193,7 +191,7 @@ class BasePage(ctk.CTkFrame):
             pass
 
         if fade_supported:
-            fade_values = (0.82, 0.94, 1.0)
+            fade_values = theme.FADE_ALPHA_STEPS
 
             def _fade_step(index=0):
                 try:
@@ -207,7 +205,7 @@ class BasePage(ctk.CTkFrame):
                     return
                 if index + 1 < len(fade_values):
                     try:
-                        dialog.after(10, lambda: _fade_step(index + 1))
+                        dialog.after(theme.DELAY_DIALOG_LAYOUT, lambda: _fade_step(index + 1))
                     except Exception:
                         pass
 
@@ -228,6 +226,29 @@ class BasePage(ctk.CTkFrame):
                 focus_widget.focus_set()
             except Exception:
                 pass
+
+    def _center_dialog(self, dialog, width: int, height: int):
+        try:
+            self.update_idletasks()
+            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
+            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
+        except Exception:
+            x, y = 200, 200
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+    @staticmethod
+    def _clamp_popup_to_screen(x: int, y: int, width: int, height: int):
+        try:
+            root = tk._default_root
+            if root is None:
+                return x, y
+            sw = max(640, root.winfo_screenwidth())
+            sh = max(480, root.winfo_screenheight())
+            cx = min(max(6, int(x)), max(6, sw - int(width) - 6))
+            cy = min(max(6, int(y)), max(6, sh - int(height) - 6))
+            return cx, cy
+        except Exception:
+            return x, y
 
     def on_show(self):
         """Called when the page is navigated to. Override to refresh data."""

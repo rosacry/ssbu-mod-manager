@@ -128,7 +128,7 @@ class ConflictsPage(BasePage):
                           "(PRC, MSBT) usually don't cause crashes but may result in one mod's "
                           "changes being overridden by another.",
                      font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
-                     wraplength=900, justify="left").pack(anchor="w", pady=(4, 0))
+                     wraplength=theme.WRAP_WIDE, justify="left").pack(anchor="w", pady=(4, 0))
 
         self.summary_label = ctk.CTkLabel(self, text="Click 'Scan for Conflicts' to check for mod file conflicts.",
                                           font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS),
@@ -954,7 +954,7 @@ class ConflictsPage(BasePage):
                               "No file conflicts were detected.",
                          font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS), text_color=theme.TEXT_DIM,
                          justify="center").pack()
-            self.after(10, lambda: self._center_content_in_view(empty_frame))
+            self.after(theme.DELAY_DIALOG_LAYOUT, lambda: self._center_content_in_view(empty_frame))
             return
 
         if not filtered_conflicts and not filtered_locale_msbts and filter_text:
@@ -977,7 +977,7 @@ class ConflictsPage(BasePage):
                 text_color=theme.TEXT_DIM,
                 justify="center",
             ).pack()
-            self.after(10, lambda: self._center_content_in_view(empty_frame))
+            self.after(theme.DELAY_DIALOG_LAYOUT, lambda: self._center_content_in_view(empty_frame))
             return
 
         total = len(filtered_conflicts)
@@ -1103,7 +1103,7 @@ class ConflictsPage(BasePage):
                 if section_description:
                     ctk.CTkLabel(header_inner, text=section_description,
                                  font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM,
-                                 anchor="w", wraplength=800, justify="left").pack(anchor="w")
+                                 anchor="w", wraplength=theme.WRAP_LARGE, justify="left").pack(anchor="w")
 
                 pending_in_group = sum(
                     1 for c in conflicts
@@ -1196,7 +1196,7 @@ class ConflictsPage(BasePage):
                               "(e.g. → msg_bgm.msbt) so they work for all languages and avoid conflicts "
                               "between mods. Click 'Fix Locale MSBT Files' above to rename them all.",
                          font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM,
-                         anchor="w", wraplength=800, justify="left").pack(anchor="w", pady=(4, 0))
+                         anchor="w", wraplength=theme.WRAP_LARGE, justify="left").pack(anchor="w", pady=(4, 0))
 
             for entry in filtered_locale_msbts:
                 try:
@@ -1250,11 +1250,11 @@ class ConflictsPage(BasePage):
         )
         self._reset_conflict_canvas_view()
         self._stabilize_conflict_viewport()
-        self.after(30, self._compact_leading_conflict_gap)
-        self.after(150, self._compact_leading_conflict_gap)
-        self.after(22, self._ensure_results_not_blank)
+        self.after(theme.DELAY_LEADING_GAP, self._compact_leading_conflict_gap)
+        self.after(theme.DELAY_SEARCH_DEBOUNCE, self._compact_leading_conflict_gap)
+        self.after(theme.DELAY_RESULTS_CHECK, self._ensure_results_not_blank)
         self._arm_top_anchor_guard("render")
-        self.after(100, self._patch_all_scroll_speeds)
+        self.after(theme.DELAY_SCROLL_SPEED_PATCH, self._patch_all_scroll_speeds)
 
     def _ensure_results_not_blank(self):
         """Guarantee the results area is never left empty after a completed scan."""
@@ -1309,7 +1309,7 @@ class ConflictsPage(BasePage):
         self._reset_conflict_canvas_view()
         self._stabilize_conflict_viewport()
         self._arm_top_anchor_guard("minimal-render")
-        self.after(30, self._compact_leading_conflict_gap)
+        self.after(theme.DELAY_LEADING_GAP, self._compact_leading_conflict_gap)
 
     def _reset_conflict_canvas_view(self):
         """Normalize list canvas view after prompt/results mode changes."""
@@ -1558,7 +1558,7 @@ class ConflictsPage(BasePage):
 
             if remaining > 1:
                 try:
-                    aid = self.after(40, lambda: _tick(remaining - 1))
+                    aid = self.after(theme.DELAY_ANIMATION_TICK, lambda: _tick(remaining - 1))
                     self._viewport_stabilize_after_ids.append(aid)
                 except Exception:
                     pass

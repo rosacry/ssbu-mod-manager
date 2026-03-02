@@ -608,7 +608,7 @@ class PluginsPage(BasePage):
             # Give context-menu teardown one frame so rename dialogs
             # never show partially during focus handoff on Windows.
             self.update_idletasks()
-            self.after(52, callback)
+            self.after(theme.DELAY_CONTEXT_TEARDOWN, callback)
         except Exception:
             callback()
 
@@ -745,33 +745,10 @@ class PluginsPage(BasePage):
 
         dialog.bind("<Escape>", lambda _e: close_with(None))
         dialog.bind("<Return>", lambda _e: close_with(entry.get()))
-        self._center_dialog(dialog, width=500, height=290)
+        self._center_dialog(dialog, width=theme.WIDTH_DIALOG_TEXT_ENTRY, height=theme.HEIGHT_DIALOG_TEXT_ENTRY)
         self._present_modal_dialog(dialog, focus_widget=entry, animate_open=False)
         self.wait_window(dialog)
         return result["value"]
-
-    def _center_dialog(self, dialog, width: int, height: int):
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
-            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
-        except Exception:
-            x, y = 200, 200
-        dialog.geometry(f"{width}x{height}+{x}+{y}")
-
-    @staticmethod
-    def _clamp_popup_to_screen(x: int, y: int, width: int, height: int):
-        try:
-            root = tk._default_root
-            if root is None:
-                return x, y
-            sw = max(640, root.winfo_screenwidth())
-            sh = max(480, root.winfo_screenheight())
-            cx = min(max(6, int(x)), max(6, sw - int(width) - 6))
-            cy = min(max(6, int(y)), max(6, sh - int(height) - 6))
-            return cx, cy
-        except Exception:
-            return x, y
 
     def _copy_plugin_risk_details(self, plugin):
         base = self._base_plugin_filename(plugin)

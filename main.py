@@ -9,24 +9,8 @@ import sys
 import threading
 import traceback
 
-# ── System DPI Awareness ───────────────────────────────────────────────
-# Must be set BEFORE any tkinter/CustomTkinter import.
-#
-# We use **System** DPI awareness (level 1) — NOT Per-Monitor (level 2).
-# With Per-Monitor awareness, CustomTkinter's ScalingTracker detects DPI
-# changes when the window crosses monitors and rescales every widget
-# individually through callbacks.  This causes visible reflow, geometry
-# fighting, and can even drop the titlebar drag.  The CTk author noted
-# the same issues with Per-Monitor V2.
-#
-# System DPI awareness means the app renders at the primary monitor's
-# DPI and Windows bitmap-scales it on other monitors.  The result:
-#   • Zero visual glitches when dragging between monitors.
-#   • Text may be very slightly softer on a non-primary monitor, but
-#     this is imperceptible in practice and matches how most desktop
-#     apps (VS Code, Discord, Spotify, etc.) behave.
-#   • The app's own zoom (Ctrl+/-) still works for user-controlled
-#     scaling.
+# System DPI awareness (level 1) must be set before any tkinter import.
+# Per-Monitor (level 2) causes reflow and geometry fighting in CustomTkinter.
 if os.name == "nt":
     try:
         import ctypes

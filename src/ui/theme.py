@@ -1,9 +1,7 @@
 """Centralized UI theme: colors, fonts, spacing, sizing, and timing constants."""
 
 
-# ---------------------------------------------------------------------------
 # Colors – Backgrounds
-# ---------------------------------------------------------------------------
 
 BG_DEEPEST = "#0c0c18"
 BG_APP = "#12121e"
@@ -32,9 +30,7 @@ BG_WARNING_TINT = "#2e2a1a"
 BG_WARNING_NOTE = "#2e2020"
 BG_INFO_TINT = "#1a2a2e"
 
-# ---------------------------------------------------------------------------
 # Colors – Text
-# ---------------------------------------------------------------------------
 
 TEXT_PRIMARY = "#ffffff"
 TEXT_BODY = "#d0d0e8"
@@ -61,9 +57,7 @@ TEXT_VERSION = "#777777"
 TEXT_SCAN_HINT = "#7f88a5"
 TEXT_MERGED = "#8e97bc"
 
-# ---------------------------------------------------------------------------
 # Colors – Accent / Brand
-# ---------------------------------------------------------------------------
 
 ACCENT = "#e94560"
 PRIMARY = "#1f538d"
@@ -74,9 +68,7 @@ TEAL_CATEGORY = "#1abc9c"
 ORANGE_CATEGORY = "#e67e22"
 GRAY_CATEGORY = "#95a5a6"
 
-# ---------------------------------------------------------------------------
 # Colors – Status
-# ---------------------------------------------------------------------------
 
 SUCCESS = "#2fa572"
 SUCCESS_ALT = "#27ae60"
@@ -108,9 +100,7 @@ INFO_WORKFLOW = "#8899bb"
 INFO_SUMMARY = "#8f97bb"
 INFO_QUEUE = "#8fb2ff"
 
-# ---------------------------------------------------------------------------
 # Colors – Buttons
-# ---------------------------------------------------------------------------
 
 BTN_NEUTRAL = "#555555"
 BTN_SECONDARY = "#2f3557"
@@ -121,9 +111,7 @@ BTN_VANILLA = "#3f4f76"
 BTN_DISABLED = "#1a2a1e"
 BTN_DISABLED_TEXT = "#4a4a5a"
 
-# ---------------------------------------------------------------------------
 # Colors – Hover States
-# ---------------------------------------------------------------------------
 
 HOVER_SUCCESS = "#106a43"
 HOVER_SUCCESS_ALT = "#248a5d"
@@ -147,18 +135,14 @@ HOVER_STAGE = "#495276"
 HOVER_VANILLA = "#4f6088"
 HOVER_UPGRADE = "#2a4a7a"
 
-# ---------------------------------------------------------------------------
 # Colors – Borders / Separators
-# ---------------------------------------------------------------------------
 
 BORDER_DIALOG = "#304378"
 BORDER_CONTEXT = "#2f3f6a"
 BORDER_INPUT = "#3a3a55"
 BORDER_SEPARATOR = "#1e1e34"
 
-# ---------------------------------------------------------------------------
 # Colors – Slider / Progress / Miscellaneous
-# ---------------------------------------------------------------------------
 
 PROGRESS_TRACK = "#2a2a45"
 TOOLBAR_HOVER = "#2a2a4a"
@@ -169,9 +153,7 @@ SLIDER_HOVER = "#5599dd"
 ACCENT_STRIPE_DISABLED = "#3a3a4a"
 SIDEBAR_ACTIVE = "#162850"
 
-# ---------------------------------------------------------------------------
 # Font Sizes
-# ---------------------------------------------------------------------------
 
 FONT_TINY = 9
 FONT_CAPTION = 10
@@ -187,9 +169,7 @@ FONT_BRAND = 26
 FONT_LARGE = 28
 FONT_XLARGE = 32
 
-# ---------------------------------------------------------------------------
 # Corner Radii
-# ---------------------------------------------------------------------------
 
 RADIUS_NONE = 0
 RADIUS_MINIMAL = 2
@@ -199,9 +179,7 @@ RADIUS_LARGE = 10
 RADIUS_XLARGE = 12
 RADIUS_STAT_CARD = 14
 
-# ---------------------------------------------------------------------------
 # Standard Widget Heights
-# ---------------------------------------------------------------------------
 
 HEIGHT_TINY_BUTTON = 22
 HEIGHT_MINI_BUTTON = 26
@@ -216,9 +194,7 @@ HEIGHT_ACCENT_STRIP = 4
 HEIGHT_SLIDER = 14
 HEIGHT_PROGRESS = 4
 
-# ---------------------------------------------------------------------------
 # Standard Widget Widths
-# ---------------------------------------------------------------------------
 
 WIDTH_ICON_BUTTON = 24
 WIDTH_SMALL_ICON = 30
@@ -234,9 +210,7 @@ WIDTH_RESET_BUTTON = 160
 WIDTH_LARGE_BUTTON = 180
 WIDTH_PATH_ENTRY = 480
 
-# ---------------------------------------------------------------------------
 # Padding
-# ---------------------------------------------------------------------------
 
 PAD_TIGHT = 5
 PAD_COMPACT = 8
@@ -246,9 +220,7 @@ PAD_CONTENT = 14
 PAD_INNER = 15
 PAD_PAGE = 30
 
-# ---------------------------------------------------------------------------
 # Timing (milliseconds)
-# ---------------------------------------------------------------------------
 
 DELAY_IMMEDIATE = 0
 DELAY_SCROLL_UPDATE = 5
@@ -263,7 +235,9 @@ DELAY_DEFERRED_CALLBACK = 52
 DELAY_SAFE_NEUTRALIZE = 80
 DELAY_SCROLL_SPEED_PATCH = 100
 DELAY_SASH_INIT = 120
+DELAY_SCROLL_RESTORE = 20
 DELAY_RESULTS_CHECK = 22
+DELAY_SCROLL_SPEED_PATCH_SLOW = 200
 DELAY_WINDOW_VISIBLE = 250
 DELAY_AUTO_SAVE = 300
 DELAY_COPY_TOAST = 2000
@@ -272,3 +246,56 @@ TIMEOUT_FFMPEG = 30
 TIMEOUT_SPOTIFY_AUTH = 180
 TIMEOUT_AUDIO_KILL = 0.8
 TIMEOUT_AUDIO_KILL_SHORT = 0.5
+
+# Wraplength
+
+WRAP_WIDE = 900
+WRAP_LARGE = 800
+WRAP_MEDIUM = 760
+WRAP_STANDARD = 700
+WRAP_NARROW = 680
+WRAP_COMPACT = 580
+WRAP_DIALOG = 500
+WRAP_COLUMN = 320
+
+# Scroll
+
+SCROLL_DELTA_DIVISOR = 120
+
+# Dialog / Panel Dimensions
+
+WIDTH_PANEL_LEFT = 560
+WIDTH_PANEL_LEFT_MIN = 340
+WIDTH_PANEL_STAGE_LIST = 420
+WIDTH_PANEL_STAGE_LIST_MIN = 280
+WIDTH_PANEL_MIDDLE = 300
+WIDTH_PANEL_MIDDLE_MIN = 200
+WIDTH_PANEL_TRACKS = 550
+WIDTH_PANEL_TRACKS_MIN = 350
+WIDTH_DIALOG_SPOTIFY = 640
+HEIGHT_DIALOG_SPOTIFY = 520
+WIDTH_DIALOG_TEXT_ENTRY = 500
+HEIGHT_DIALOG_TEXT_ENTRY = 290
+HEIGHT_SUMMARY_BOX = 200
+WIDTH_ENTRY_FIELD = 350
+HEIGHT_SCROLLABLE_RESULTS = 250
+SASH_POSITION_RATIO = 0.58
+
+# Multi-Slot Dialog
+
+WIDTH_MULTI_SLOT_DIALOG = 520
+HEIGHT_MULTI_SLOT_BASE = 320
+HEIGHT_MULTI_SLOT_MIN_CONTENT = 230
+HEIGHT_MULTI_SLOT_OPTION = 36
+
+# Fade Animation
+
+FADE_ALPHA_STEPS = (0.82, 0.94, 1.0)
+
+# Spinner Animation
+
+DELAY_SPINNER_TICK = 100
+
+# Context Menu
+
+DELAY_CONTEXT_TEARDOWN = 52

@@ -108,18 +108,14 @@ def categorize_mod_online(mod: Mod) -> str:
     if risk == "unknown_needs_review":
         return "unknown"
 
-    # Check gameplay keywords (highest priority)
     for kw in GAMEPLAY_KEYWORDS:
         if kw in name_lower:
             return "required_both"
 
-    # Check if mod has PRC files with gameplay-related paths
     if mod.metadata and mod.metadata.has_prc:
-        # PRC files in fighter/ or param/ directories are gameplay-affecting
         if mod.metadata.fighter_kind:
             return "required_both"
 
-    # Check audio keywords
     for kw in AUDIO_KEYWORDS:
         if kw in name_lower:
             return "audio_only"
@@ -128,14 +124,12 @@ def categorize_mod_online(mod: Mod) -> str:
     if "Audio" in cats:
         return "audio_only"
 
-    # Check stage keywords
     for kw in STAGE_KEYWORDS:
         if kw in name_lower:
             return "stage_mods"
     if "Stage" in cats:
         return "stage_mods"
 
-    # Check visual keywords
     for kw in VISUAL_KEYWORDS:
         if kw in name_lower:
             return "visual_only"
@@ -144,9 +138,7 @@ def categorize_mod_online(mod: Mod) -> str:
     if any(c in cats for c in ("Character", "UI", "Effect")):
         return "visual_only"
 
-    # Check by file types if we have metadata
     if mod.metadata:
-        # Mods with only visual data (textures, models) are client-side
         if not mod.metadata.has_prc and not mod.metadata.has_msbt and not mod.metadata.has_xmsbt:
             return "visual_only"
 
@@ -184,7 +176,7 @@ class OnlineCompatPage(BasePage):
         desc = ctk.CTkLabel(self,
             text="Understand which mods are needed by both players for online multiplayer via emulator LDN networks, "
                  "and which mods are client-side only. Use the Compatibility Checker to verify setups before playing.",
-            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=800,
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=theme.WRAP_LARGE,
             justify="left")
         desc.pack(fill="x", padx=30, pady=(0, 15))
 
@@ -192,10 +184,8 @@ class OnlineCompatPage(BasePage):
         scroll.pack(fill="both", expand=True, padx=30)
         self._scroll = scroll
 
-        # === Compatibility Checker ===
         self._build_checker_section(scroll)
 
-        # === Info Guide ===
         guide_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         guide_section.pack(fill="x", pady=(0, 15))
 
@@ -243,7 +233,7 @@ class OnlineCompatPage(BasePage):
                          ).pack(fill="x", padx=12, pady=(8, 2))
             ctk.CTkLabel(rule_frame, text=desc_text,
                          font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_HINT,
-                         anchor="w", wraplength=700, justify="left"
+                         anchor="w", wraplength=theme.WRAP_STANDARD, justify="left"
                          ).pack(fill="x", padx=12, pady=(0, 8))
 
         emu_note = ctk.CTkFrame(guide_section, fg_color=theme.BG_CARD_DEEP, corner_radius=6)
@@ -259,10 +249,9 @@ class OnlineCompatPage(BasePage):
                  "(or a specifically validated compatible fork). "
                  "Use the Migration page to transfer your data between emulators.",
             font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.INFO_EMU, anchor="w",
-            wraplength=700, justify="left"
+            wraplength=theme.WRAP_STANDARD, justify="left"
         ).pack(fill="x", padx=12, pady=(0, 10))
 
-        # === Analysis Results ===
         self.analysis_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         self.analysis_section.pack(fill="x", pady=(0, 15))
 
@@ -277,7 +266,6 @@ class OnlineCompatPage(BasePage):
         self.analysis_content = ctk.CTkFrame(self.analysis_section, fg_color="transparent")
         self.analysis_content.pack(fill="x", padx=15, pady=(5, 15))
 
-        # === Shareable Summary ===
         self.share_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
 
     # â”€â”€â”€ Compatibility Checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -299,7 +287,7 @@ class OnlineCompatPage(BasePage):
                  "By default, only gameplay-affecting files are fingerprinted. Enable Strict Audio Sync "
                  "to include audio/BGM files for tournament rulesets that require exact parity.",
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
-            wraplength=760, justify="left"
+            wraplength=theme.WRAP_MEDIUM, justify="left"
         ).pack(fill="x", padx=15, pady=(0, 12))
 
         # â”€â”€ Tournament workflow explanation â”€â”€
@@ -372,7 +360,7 @@ class OnlineCompatPage(BasePage):
             text="Scans all your enabled mods and generates a code containing only gameplay file hashes. "
                  "Skins and UI are excluded; audio/BGM is included only if Strict Audio Sync is enabled.",
             font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM, anchor="w",
-            wraplength=700, justify="left"
+            wraplength=theme.WRAP_STANDARD, justify="left"
         ).pack(fill="x", padx=12, pady=(0, 5))
 
         self._gen_status = ctk.CTkLabel(gen_frame, text="",
@@ -627,7 +615,7 @@ class OnlineCompatPage(BasePage):
                 font=ctk.CTkFont(size=theme.FONT_CAPTION),
                 text_color=theme.WARNING,
                 anchor="w",
-                wraplength=700,
+                wraplength=theme.WRAP_STANDARD,
                 justify="left",
             ).pack(fill="x", pady=(0, 4))
 
@@ -636,7 +624,7 @@ class OnlineCompatPage(BasePage):
                 text="\u2713  No gameplay-affecting mods detected under current policy â€” "
                      "you appear to be running vanilla or visual-only content.",
                 font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.SUCCESS, anchor="w",
-                wraplength=700, justify="left")
+                wraplength=theme.WRAP_STANDARD, justify="left")
             note.pack(fill="x", pady=(0, 5))
 
     def _paste_from_clipboard(self):
@@ -761,7 +749,7 @@ class OnlineCompatPage(BasePage):
                 text="Your gameplay-affecting files match the host's setup. "
                      "You're good to play online without desyncs!",
                 font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.SUCCESS_DETAIL, anchor="w",
-                wraplength=700, justify="left"
+                wraplength=theme.WRAP_STANDARD, justify="left"
             ).pack(fill="x", padx=12, pady=(0, 5))
 
             details = []
@@ -809,7 +797,7 @@ class OnlineCompatPage(BasePage):
                 text="Your gameplay setup differs from the host's. Playing online "
                      "will likely cause desyncs. See details below:",
                 font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.DANGER_DETAIL, anchor="w",
-                wraplength=700, justify="left"
+                wraplength=theme.WRAP_STANDARD, justify="left"
             ).pack(fill="x", padx=12, pady=(0, 8))
 
             # Environment issues (emulator/game version mismatches)
@@ -888,7 +876,7 @@ class OnlineCompatPage(BasePage):
             for w in result.warnings:
                 ctk.CTkLabel(warn_frame, text=f"  \u2022  {w}",
                              font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.WARNING_DETAIL,
-                             anchor="w", wraplength=680, justify="left"
+                             anchor="w", wraplength=theme.WRAP_NARROW, justify="left"
                              ).pack(fill="x", padx=12, pady=1)
 
             ctk.CTkFrame(warn_frame, height=8, fg_color="transparent").pack()
@@ -912,7 +900,7 @@ class OnlineCompatPage(BasePage):
                 text="These plugins don't affect gameplay sync and won't cause desyncs. "
                      "They only enhance the local experience for whoever has them installed.",
                 font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.INFO_DETAIL, anchor="w",
-                wraplength=680, justify="left"
+                wraplength=theme.WRAP_NARROW, justify="left"
             ).pack(fill="x", padx=12, pady=(0, 6))
 
             if result.optional_only_local:
@@ -951,7 +939,7 @@ class OnlineCompatPage(BasePage):
 
         ctk.CTkLabel(grp, text=description,
                      font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.TEXT_DIM,
-                     anchor="w", wraplength=680, justify="left"
+                     anchor="w", wraplength=theme.WRAP_NARROW, justify="left"
                      ).pack(fill="x", padx=10, pady=(0, 5))
 
         # Show up to 15 items, collapse the rest
@@ -1063,7 +1051,7 @@ class OnlineCompatPage(BasePage):
 
             ctk.CTkLabel(cat_frame, text=cat_info['description'],
                          font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM,
-                         anchor="w", wraplength=700, justify="left"
+                         anchor="w", wraplength=theme.WRAP_STANDARD, justify="left"
                          ).pack(fill="x", padx=12, pady=(0, 5))
 
             for mod in sorted(mods_in_cat, key=lambda m: m.name.lower()):
@@ -1139,7 +1127,7 @@ class OnlineCompatPage(BasePage):
 
         summary_text = "\n".join(lines)
 
-        text_box = ctk.CTkTextbox(self.share_section, height=200, fg_color=theme.BG_CARD_DEEP,
+        text_box = ctk.CTkTextbox(self.share_section, height=theme.HEIGHT_SUMMARY_BOX, fg_color=theme.BG_CARD_DEEP,
                                   font=ctk.CTkFont(family="Consolas", size=theme.FONT_BODY))
         text_box.pack(fill="x", padx=15, pady=5)
         text_box.insert("1.0", summary_text)

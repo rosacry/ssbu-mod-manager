@@ -1071,8 +1071,7 @@ class MusicManager:
             if self._is_supported_track_file(track.file_path)
         ]
 
-    # === Save / Apply Methods ===
-
+    
     def save_assignments(self, mods_root: Path) -> dict:
         """
         Save music assignments by:

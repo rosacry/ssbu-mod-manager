@@ -782,8 +782,7 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
 
     magic = struct.unpack_from('<I', lopus_data, 0)[0]
 
-    # --- Parse header ---
-    # header_size is always at offset 0x04 for all versions.
+        # header_size is always at offset 0x04 for all versions.
     header_size = (
         struct.unpack_from("<I", lopus_data, LOPUS_HEADER_SIZE_OFFSET)[0]
         if len(lopus_data) >= LOPUS_MIN_SLOT_SIZE
@@ -882,8 +881,7 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
     if header_size == 0 or header_size > len(lopus_data):
         header_size = LOPUS_DEFAULT_HEADER_SIZE
 
-    # --- Extract Opus frames ---
-    # Some OPUS/LOPUS variants keep valid frame slots at offsets beyond
+        # Some OPUS/LOPUS variants keep valid frame slots at offsets beyond
     # header_size.  Scan a small set of candidate starts and prefer
     # size-prefixed extraction over CBR if both validate.
     start_offsets: list[int] = []
@@ -1103,7 +1101,6 @@ def _extract_audio_entries(data: bytes, sections: dict) -> list[bytes]:
     return entries
 
 
-# --- IDSP (Nintendo DSP ADPCM) decoder ---
 _DSP_COEF = [
     (0, 0), (2048, 0), (0, 2048), (1024, 1024),
     (4096, -2048), (3584, -1536), (3072, -1024), (2560, -512),
@@ -1377,7 +1374,6 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
     parsed_data_offset: int = OPUS_INNER_DATA_OFFSET_FALLBACK
     parsed_pre_skip: int = LOPUS_DEFAULT_PRE_SKIP
 
-    # --- Strategy 0: SSBU OPUS container with big-endian header ---
     if len(audio_data) >= OPUS_CONTAINER_HEADER_MIN_SIZE:
         try:
             container_data_offset = struct.unpack_from(

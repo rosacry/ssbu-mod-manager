@@ -1621,9 +1621,7 @@ def test_import_plugin_package_routes_disabled_plugins_to_disabled_folder(tmp_pa
     assert (plugins_path.parent / "disabled_plugins" / "liblegacy.nro").exists()
 
 
-# ---------------------------------------------------------------------------
 # Bug 1.1: Moved existing mod must be included in repair focus set
-# ---------------------------------------------------------------------------
 
 def test_import_mod_package_repairs_moved_existing_mod_config(tmp_path: Path):
     """When an existing mod is moved to an open slot to make room for an
@@ -1671,9 +1669,7 @@ def test_import_mod_package_repairs_moved_existing_mod_config(tmp_path: Path):
     assert not effect_original.exists() or quarantine_dir.exists()
 
 
-# ---------------------------------------------------------------------------
 # Bug 1.2: Preserve custom config keys during reslot
-# ---------------------------------------------------------------------------
 
 def test_build_repaired_visual_slot_config_preserves_custom_keys(tmp_path: Path):
     """Custom/unrecognised keys in config.json must survive reslot operations."""
@@ -1699,9 +1695,7 @@ def test_build_repaired_visual_slot_config_preserves_custom_keys(tmp_path: Path)
     assert result.get("custom-metadata") == {"author": "test", "version": 2}
 
 
-# ---------------------------------------------------------------------------
 # Bug 2.2: Effect slot detection must not match bare version numbers
-# ---------------------------------------------------------------------------
 
 def test_is_effect_file_for_fighter_slot_no_false_positive_on_version_numbers():
     """Bare numbers in asset filenames (e.g. _01_ in trail textures) must
@@ -1734,9 +1728,7 @@ def test_is_effect_file_for_fighter_slot_specific_slot_boundary():
     ) is True
 
 
-# ---------------------------------------------------------------------------
 # Bug 2.4: Effect retarget must not corrupt asset version numbers
-# ---------------------------------------------------------------------------
 
 def test_retarget_effect_relative_path_does_not_corrupt_version_numbers():
     """When retargeting from slot 1 to slot 5, the bare-number _01_ in
@@ -1755,9 +1747,7 @@ def test_retarget_effect_relative_path_bare_number_fallback_when_no_c_token():
     assert "/05/" in result
 
 
-# ---------------------------------------------------------------------------
 # Bug 3.1: Quarantine idempotency on Windows
-# ---------------------------------------------------------------------------
 
 def test_quarantine_shared_path_effects_idempotent(tmp_path: Path):
     """Running quarantine twice on the same files should not crash on
@@ -1785,9 +1775,7 @@ def test_quarantine_shared_path_effects_idempotent(tmp_path: Path):
     assert summary2.shared_effect_files_quarantined == 0  # no files left to quarantine
 
 
-# ---------------------------------------------------------------------------
 # Bug 3.6: Dual new-dir-files / new_dir_files key normalization
-# ---------------------------------------------------------------------------
 
 def test_merge_minimal_slot_manifest_normalizes_dual_keys():
     """When both 'new-dir-files' and 'new_dir_files' exist, ensure they
@@ -1810,9 +1798,7 @@ def test_merge_minimal_slot_manifest_normalizes_dual_keys():
     assert "fighter/mario/model/body/c00/extra.nutexb" in ndf["fighter/mario/model/body/c00"]
 
 
-# ---------------------------------------------------------------------------
 # BNTX internal texture-name patching tests
-# ---------------------------------------------------------------------------
 from src.core.skin_slot_utils import (
     _extract_bntx_internal_name,
     patch_bntx_internal_name,

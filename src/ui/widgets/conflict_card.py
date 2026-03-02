@@ -59,7 +59,7 @@ class ConflictCard(ctk.CTkFrame):
                 text_color=theme.TEXT_MERGED,
                 anchor="w",
                 justify="left",
-                wraplength=760,
+                wraplength=theme.WRAP_MEDIUM,
             )
             slot_label.pack(fill="x", padx=12, pady=(0, 5))
 

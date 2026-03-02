@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-DEFAULT_COSTUME_COUNT = 8   # Standard costume/color slots per fighter in SSBU
-HIDDEN_DISP_ORDER = -1      # Sentinel for hidden characters in db_fighter
-UNSIGNED_BYTE_WRAP = 256    # For converting signed byte disp_order to unsigned
+DEFAULT_COSTUME_COUNT = 8
+HIDDEN_DISP_ORDER = -1
+UNSIGNED_BYTE_WRAP = 256
+SIGNED_BYTE_MAX = 127
 
 
 @dataclass

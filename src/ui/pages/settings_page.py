@@ -55,7 +55,7 @@ class SettingsPage(BasePage):
                      text="The root SDMC directory where your emulator stores SSBU mod data. "
                           "Supports Eden, Ryujinx, Yuzu, Suyu, Sudachi, Citron, and others.",
                      font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED,
-                     anchor="w", wraplength=700,
+                     anchor="w", wraplength=theme.WRAP_STANDARD,
                      ).pack(fill="x", padx=15, pady=(0, 5))
 
         path_frame = ctk.CTkFrame(sdmc_section, fg_color="transparent")
@@ -65,7 +65,7 @@ class SettingsPage(BasePage):
         self.sdmc_var = ctk.StringVar(
             value=str(settings.eden_sdmc_path) if settings.eden_sdmc_path else "")
 
-        self.sdmc_entry = ctk.CTkEntry(path_frame, textvariable=self.sdmc_var, width=480, height=34)
+        self.sdmc_entry = ctk.CTkEntry(path_frame, textvariable=self.sdmc_var, width=theme.WIDTH_PATH_ENTRY, height=34)
         self.sdmc_entry.pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(path_frame, text="Browse", width=80,
@@ -97,7 +97,7 @@ class SettingsPage(BasePage):
 
         self.css_var = ctk.StringVar(
             value=str(settings.css_mod_folder) if settings.css_mod_folder else "")
-        ctk.CTkEntry(css_frame, textvariable=self.css_var, width=480, height=34).pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(css_frame, textvariable=self.css_var, width=theme.WIDTH_PATH_ENTRY, height=34).pack(side="left", padx=(0, 8))
         ctk.CTkButton(css_frame, text="Browse", width=80,
                       command=self._browse_css, height=34, corner_radius=8).pack(side="left")
 
@@ -119,7 +119,6 @@ class SettingsPage(BasePage):
         ctk.CTkCheckBox(gen_section, text="Create backup before merge operations",
                         variable=self.backup_var).pack(fill="x", padx=15, pady=(3, 15))
 
-        # --- Music Scanning section ---
         music_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         music_section.pack(fill="x", pady=(0, 15))
 
@@ -134,7 +133,7 @@ class SettingsPage(BasePage):
                 "Only .nus3audio files whose name starts with bgm_ are detected."
             ),
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
-            text_color=theme.TEXT_MUTED, anchor="w", wraplength=700, justify="left",
+            text_color=theme.TEXT_MUTED, anchor="w", wraplength=theme.WRAP_STANDARD, justify="left",
         ).pack(fill="x", padx=15, pady=(0, 8))
 
         self.music_scan_disabled_var = ctk.BooleanVar(
@@ -188,7 +187,7 @@ class SettingsPage(BasePage):
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
             text_color=theme.TEXT_MUTED,
             anchor="w",
-            wraplength=760,
+            wraplength=theme.WRAP_MEDIUM,
             justify="left",
         ).pack(fill="x", padx=15, pady=(0, 8))
 
@@ -246,7 +245,7 @@ class SettingsPage(BasePage):
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
             text_color=theme.TEXT_MUTED,
             anchor="w",
-            wraplength=760,
+            wraplength=theme.WRAP_MEDIUM,
             justify="left",
         ).pack(fill="x", padx=15, pady=(0, 8))
 
@@ -276,7 +275,6 @@ class SettingsPage(BasePage):
         self.experimental_spotify_var.trace_add("write", lambda *_: self._auto_save())
         self.music_scan_disabled_var.trace_add("write", lambda *_: self._auto_save())
 
-    # --- Extra track directory helpers ---
     def _add_extra_dir_row(self, value: str = ""):
         """Add a row showing an extra track directory with a remove button."""
         if not self._extra_dirs_frame_packed:
@@ -285,7 +283,7 @@ class SettingsPage(BasePage):
         row_frame = ctk.CTkFrame(self._extra_dirs_frame, fg_color="transparent")
         row_frame.pack(fill="x", pady=2)
 
-        entry = ctk.CTkEntry(row_frame, height=30, width=480)
+        entry = ctk.CTkEntry(row_frame, height=30, width=theme.WIDTH_PATH_ENTRY)
         entry.pack(side="left", padx=(0, 6))
         if value:
             entry.insert(0, value)
@@ -337,7 +335,7 @@ class SettingsPage(BasePage):
                 self.after_cancel(self._auto_save_id)
             except Exception:
                 pass
-        self._auto_save_id = self.after(300, self._do_auto_save)
+        self._auto_save_id = self.after(theme.DELAY_AUTO_SAVE, self._do_auto_save)
 
     def _on_online_meta_change(self):
         self._refresh_online_metadata_status()

@@ -44,7 +44,7 @@ class SharePage(BasePage):
         ctk.CTkLabel(name_frame, text="Profile Name:", width=120, anchor="w",
                      font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS)).pack(side="left")
         self.profile_name_var = ctk.StringVar(value="My SSBU Setup")
-        ctk.CTkEntry(name_frame, textvariable=self.profile_name_var, width=350,
+        ctk.CTkEntry(name_frame, textvariable=self.profile_name_var, width=theme.WIDTH_ENTRY_FIELD,
                      height=32).pack(side="left", padx=10)
 
         desc_frame = ctk.CTkFrame(export_frame, fg_color="transparent")
@@ -52,7 +52,7 @@ class SharePage(BasePage):
         ctk.CTkLabel(desc_frame, text="Description:", width=120, anchor="w",
                      font=ctk.CTkFont(size=theme.FONT_BODY_EMPHASIS)).pack(side="left")
         self.desc_var = ctk.StringVar()
-        ctk.CTkEntry(desc_frame, textvariable=self.desc_var, width=350,
+        ctk.CTkEntry(desc_frame, textvariable=self.desc_var, width=theme.WIDTH_ENTRY_FIELD,
                      placeholder_text="Optional description...", height=32).pack(side="left", padx=10)
 
         include_frame = ctk.CTkFrame(export_frame, fg_color="transparent")
@@ -89,7 +89,7 @@ class SharePage(BasePage):
                                    corner_radius=8, height=34)
         import_btn.pack(side="right")
 
-        self.import_result_frame = ctk.CTkScrollableFrame(import_frame, fg_color="transparent", height=250)
+        self.import_result_frame = ctk.CTkScrollableFrame(import_frame, fg_color="transparent", height=theme.HEIGHT_SCROLLABLE_RESULTS)
         self.import_result_frame.pack(fill="x", padx=15, pady=(0, 15))
 
         self.import_empty = ctk.CTkLabel(

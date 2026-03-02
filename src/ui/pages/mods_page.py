@@ -39,7 +39,6 @@ CATEGORY_COLORS = {
     "Other": theme.BTN_NEUTRAL,
 }
 
-# Row heights
 _HEADER_HEIGHT = 40
 _MOD_ROW_HEIGHT = 44
 _ROW_PAD = 2
@@ -146,7 +145,7 @@ class ModsPage(BasePage):
         def _debounced_search(*_a):
             if self._search_after_id:
                 self.after_cancel(self._search_after_id)
-            self._search_after_id = self.after(150, self._render_mods)
+            self._search_after_id = self.after(theme.DELAY_SEARCH_DEBOUNCE, self._render_mods)
         self.search_var.trace("w", _debounced_search)
         search_entry = ctk.CTkEntry(filter_frame, placeholder_text="Search mods...",
                                     textvariable=self.search_var, height=34,
@@ -215,7 +214,7 @@ class ModsPage(BasePage):
                 except Exception:
                     pass
             try:
-                self._scroll_after_id = self.after(5, self._update_scroll_region)
+                self._scroll_after_id = self.after(theme.DELAY_SCROLL_UPDATE, self._update_scroll_region)
             except Exception:
                 pass
 
@@ -587,7 +586,7 @@ class ModsPage(BasePage):
             # Give context-menu teardown one frame so rename dialogs
             # never show partially during focus handoff on Windows.
             self.update_idletasks()
-            self.after(52, callback)
+            self.after(theme.DELAY_CONTEXT_TEARDOWN, callback)
         except Exception:
             callback()
 
@@ -729,29 +728,6 @@ class ModsPage(BasePage):
         if result["value"] is None:
             return None
         return result["value"], result["rename_folder"]
-
-    def _center_dialog(self, dialog, width: int, height: int):
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
-            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
-        except Exception:
-            x, y = 200, 200
-        dialog.geometry(f"{width}x{height}+{x}+{y}")
-
-    @staticmethod
-    def _clamp_popup_to_screen(x: int, y: int, width: int, height: int):
-        try:
-            root = tk._default_root
-            if root is None:
-                return x, y
-            sw = max(640, root.winfo_screenwidth())
-            sh = max(480, root.winfo_screenheight())
-            cx = min(max(6, int(x)), max(6, sw - int(width) - 6))
-            cy = min(max(6, int(y)), max(6, sh - int(height) - 6))
-            return cx, cy
-        except Exception:
-            return x, y
 
     def _reset_single_custom_mod_name(self, mod):
         settings = self.app.config_manager.settings
@@ -1137,7 +1113,7 @@ class ModsPage(BasePage):
             # list (disabled mods get appended at the end).
             scroll_pos = self._canvas.yview()[0]
             self._render_mods()
-            self.after(20, lambda: self._canvas.yview_moveto(scroll_pos))
+            self.after(theme.DELAY_SCROLL_RESTORE, lambda: self._canvas.yview_moveto(scroll_pos))
         except ContentOperationBlockedError as e:
             logger.warn("Mods", f"Toggle blocked: {e}")
             messagebox.showerror(e.info.title, e.info.message)
@@ -1611,7 +1587,7 @@ class ModsPage(BasePage):
         dialog.bind("<Escape>", lambda _e: close_with([]))
         dialog.bind("<Return>", lambda _e: on_import_selected())
         dialog.bind("<Control-a>", lambda _e: (select_all(), "break"))
-        self._center_dialog(dialog, width=520, height=max(320, 230 + len(info.options) * 36))
+        self._center_dialog(dialog, width=theme.WIDTH_MULTI_SLOT_DIALOG, height=max(theme.HEIGHT_MULTI_SLOT_BASE, theme.HEIGHT_MULTI_SLOT_MIN_CONTENT + len(info.options) * theme.HEIGHT_MULTI_SLOT_OPTION))
         self._present_modal_dialog(dialog, animate_open=False)
         self.wait_window(dialog)
         return result["value"]

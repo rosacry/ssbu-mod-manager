@@ -47,8 +47,8 @@ class CSSPage(BasePage):
         self._paned = main_frame
 
         # Left panel
-        left_frame = ctk.CTkFrame(main_frame, width=560, fg_color=theme.BG_CARD, corner_radius=10)
-        main_frame.add(left_frame, minsize=340, stretch="never", width=560)
+        left_frame = ctk.CTkFrame(main_frame, width=theme.WIDTH_PANEL_LEFT, fg_color=theme.BG_CARD, corner_radius=10)
+        main_frame.add(left_frame, minsize=theme.WIDTH_PANEL_LEFT_MIN, stretch="never", width=theme.WIDTH_PANEL_LEFT)
 
         ctk.CTkLabel(left_frame, text="Characters",
                      font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"), anchor="w"
@@ -168,10 +168,10 @@ class CSSPage(BasePage):
             try:
                 total_w = main_frame.winfo_width()
                 if total_w > 700:
-                    main_frame.sash_place(0, int(total_w * 0.58), 0)
+                    main_frame.sash_place(0, int(total_w * theme.SASH_POSITION_RATIO), 0)
             except Exception:
                 pass
-        self.after(120, _init_sash_position)
+        self.after(theme.DELAY_SASH_INIT, _init_sash_position)
 
     @property
     def css_manager(self):

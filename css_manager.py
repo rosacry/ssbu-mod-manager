@@ -8,11 +8,25 @@ from LMS.Message.MSBT import MSBT
 from LMS.Stream.Reader import Reader
 from LMS.Stream.Writer import Writer
 import io
+import re
+import json
+import glob
 
 HIDDEN_DISP_ORDER = -1
 DEFAULT_COLOR_NUM = 8
 SIGNED_BYTE_MAX = 127
 UNSIGNED_BYTE_RANGE = 256
+WINDOW_GEOMETRY = "1200x800"
+BG_LISTBOX = "#2b2b2b"
+FG_LISTBOX = "white"
+SELECT_BG_LISTBOX = "#1f538d"
+FONT_LISTBOX = ("Arial", 12)
+COLOR_SUCCESS = "#2fa572"
+COLOR_SUCCESS_HOVER = "#106a43"
+COLOR_WARNING = "#b08a2a"
+COLOR_WARNING_HOVER = "#8a6b1f"
+COLOR_DANGER = "#b02a2a"
+COLOR_DANGER_HOVER = "#8a1f1f"
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -22,7 +36,7 @@ class CSSManagerApp(ctk.CTk):
         super().__init__()
 
         self.title("SSBU CSS Manager")
-        self.geometry("1200x800")
+        self.geometry(WINDOW_GEOMETRY)
 
         # Load ParamLabels.csv
         self.labels_path = os.path.join(os.path.dirname(__file__), "ParamLabels.csv")
@@ -61,10 +75,10 @@ class CSSManagerApp(ctk.CTk):
         self.left_frame = ctk.CTkFrame(self.main_frame, width=450)
         self.left_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
 
-        self.one_click_add_btn = ctk.CTkButton(self.left_frame, text="✨ 1-Click Add Character from Mod ✨", command=self.one_click_add_character, state="disabled", fg_color="#2fa572", hover_color="#106a43")
+        self.one_click_add_btn = ctk.CTkButton(self.left_frame, text="✨ 1-Click Add Character from Mod ✨", command=self.one_click_add_character, state="disabled", fg_color=COLOR_SUCCESS, hover_color=COLOR_SUCCESS_HOVER)
         self.one_click_add_btn.pack(fill="x", padx=10, pady=10)
 
-        self.auto_hide_btn = ctk.CTkButton(self.left_frame, text="🔍 Auto-Detect & Hide Unused", command=self.auto_hide_unused, state="disabled", fg_color="#b08a2a", hover_color="#8a6b1f")
+        self.auto_hide_btn = ctk.CTkButton(self.left_frame, text="🔍 Auto-Detect & Hide Unused", command=self.auto_hide_unused, state="disabled", fg_color=COLOR_WARNING, hover_color=COLOR_WARNING_HOVER)
         self.auto_hide_btn.pack(fill="x", padx=10, pady=5)
 
         self.search_var = tk.StringVar()
@@ -72,7 +86,7 @@ class CSSManagerApp(ctk.CTk):
         self.search_entry = ctk.CTkEntry(self.left_frame, placeholder_text="Search...", textvariable=self.search_var)
         self.search_entry.pack(fill="x", padx=10, pady=10)
 
-        self.listbox = tk.Listbox(self.left_frame, bg="#2b2b2b", fg="white", selectbackground="#1f538d", font=("Arial", 12))
+        self.listbox = tk.Listbox(self.left_frame, bg=BG_LISTBOX, fg=FG_LISTBOX, selectbackground=SELECT_BG_LISTBOX, font=FONT_LISTBOX)
         self.listbox.pack(fill="both", expand=True, padx=10, pady=10)
         self.listbox.bind("<<ListboxSelect>>", self.on_select)
 
@@ -82,7 +96,7 @@ class CSSManagerApp(ctk.CTk):
         self.hide_btn = ctk.CTkButton(self.left_frame, text="Hide Selected (disp_order = -1)", command=self.hide_character, state="disabled")
         self.hide_btn.pack(fill="x", padx=10, pady=5)
 
-        self.delete_btn = ctk.CTkButton(self.left_frame, text="Delete Selected", command=self.delete_character, state="disabled", fg_color="#b02a2a", hover_color="#8a1f1f")
+        self.delete_btn = ctk.CTkButton(self.left_frame, text="Delete Selected", command=self.delete_character, state="disabled", fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER)
         self.delete_btn.pack(fill="x", padx=10, pady=5)
 
         self.right_frame = ctk.CTkFrame(self.main_frame)
@@ -366,7 +380,6 @@ class CSSManagerApp(ctk.CTk):
 
     def detect_name_id_from_mod(self, mod_dir):
         """Detect name_id from a mod folder by scanning portrait files, xmsbt, and narration sounds."""
-        import re
         detected_name_id = None
 
         portrait_dir = os.path.join(mod_dir, "ui", "replace", "chara", "chara_0")
@@ -519,9 +532,6 @@ class CSSManagerApp(ctk.CTk):
             return
             
         try:
-            import json
-            import re
-            import glob
             import tkinter.simpledialog as sd
             
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -640,7 +650,7 @@ class CSSManagerApp(ctk.CTk):
                 try:
                     new_chara_ref['characall_label_c00'].value = pyprc.hash(announcer_label)
                 except Exception as e:
-                    print(f"Failed to set announcer label: {e}")
+                    messagebox.showwarning("Warning", f"Failed to set announcer label: {e}")
             
             def safe_set(ref, fld, v):
                 try:
@@ -698,8 +708,6 @@ class CSSManagerApp(ctk.CTk):
             return
             
         try:
-            import json
-            import re
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
 

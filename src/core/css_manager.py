@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Optional, Any
 from src.core.prc_handler import PRCHandler
 from src.core.msbt_handler import MSBTHandler
+from src.models.character import (
+    DEFAULT_COSTUME_COUNT as DEFAULT_COLOR_NUM,
+    HIDDEN_DISP_ORDER,
+    SIGNED_BYTE_MAX,
+    UNSIGNED_BYTE_WRAP as UNSIGNED_BYTE_RANGE,
+)
 from src.utils.logger import logger
-
-HIDDEN_DISP_ORDER = -1
-DEFAULT_COLOR_NUM = 8
-SIGNED_BYTE_MAX = 127
-UNSIGNED_BYTE_RANGE = 256
 
 
 class CSSManager:

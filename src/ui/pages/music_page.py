@@ -107,9 +107,8 @@ class MusicPage(BasePage):
         content.pack(fill="both", expand=True, padx=30, pady=(0, 10))
         self._paned = content  # store for sash positioning
 
-        # === LEFT COLUMN: Stage list ===
-        left = ctk.CTkFrame(content, width=420, fg_color=theme.BG_CARD, corner_radius=10)
-        content.add(left, minsize=280, stretch="never", width=420)
+        left = ctk.CTkFrame(content, width=theme.WIDTH_PANEL_STAGE_LIST, fg_color=theme.BG_CARD, corner_radius=10)
+        content.add(left, minsize=theme.WIDTH_PANEL_STAGE_LIST_MIN, stretch="never", width=theme.WIDTH_PANEL_STAGE_LIST)
 
         ctk.CTkLabel(left, text="Stages",
                      font=ctk.CTkFont(size=theme.FONT_CARD_HEADING, weight="bold"), anchor="w"
@@ -166,9 +165,8 @@ class MusicPage(BasePage):
             command=self._on_exclude_change, font=ctk.CTkFont(size=theme.FONT_BODY),
         ).pack(fill="x", padx=12, pady=(4, 10))
 
-        # === MIDDLE COLUMN: Stage music workflows ===
         middle = ctk.CTkFrame(content, fg_color=theme.BG_CARD, corner_radius=10)
-        content.add(middle, minsize=200, stretch="always", width=300)
+        content.add(middle, minsize=theme.WIDTH_PANEL_MIDDLE_MIN, stretch="always", width=theme.WIDTH_PANEL_MIDDLE)
 
         playlist_header = ctk.CTkFrame(middle, fg_color="transparent")
         playlist_header.pack(fill="x", padx=12, pady=(10, 5))
@@ -195,7 +193,7 @@ class MusicPage(BasePage):
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.TEXT_SOFT,
             justify="left",
-            wraplength=320,
+            wraplength=theme.WRAP_COLUMN,
             anchor="w",
         )
         self.safe_slot_note.pack(fill="x", padx=10, pady=(10, 6))
@@ -235,7 +233,7 @@ class MusicPage(BasePage):
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.WARNING_FAVORITES,
             justify="left",
-            wraplength=320,
+            wraplength=theme.WRAP_COLUMN,
             anchor="w",
         ).pack(fill="x", padx=10, pady=(10, 6))
 
@@ -257,9 +255,8 @@ class MusicPage(BasePage):
                       font=ctk.CTkFont(size=theme.FONT_BODY),
                       ).pack(side="right", padx=5)
 
-        # === RIGHT COLUMN: Available tracks ===
-        right = ctk.CTkFrame(content, width=550, fg_color=theme.BG_CARD, corner_radius=10)
-        content.add(right, minsize=350, stretch="never", width=550)
+        right = ctk.CTkFrame(content, width=theme.WIDTH_PANEL_TRACKS, fg_color=theme.BG_CARD, corner_radius=10)
+        content.add(right, minsize=theme.WIDTH_PANEL_TRACKS_MIN, stretch="never", width=theme.WIDTH_PANEL_TRACKS)
 
         avail_header = ctk.CTkFrame(right, fg_color="transparent")
         avail_header.pack(fill="x", padx=10, pady=(10, 5))
@@ -982,7 +979,7 @@ class MusicPage(BasePage):
                 text_color=theme.TEXT_DISABLED,
                 font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
                 justify="center",
-                wraplength=320,
+                wraplength=theme.WRAP_COLUMN,
             ).pack(pady=30)
             return
 
@@ -993,7 +990,7 @@ class MusicPage(BasePage):
                 text_color=theme.TEXT_DISABLED,
                 font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
                 justify="center",
-                wraplength=320,
+                wraplength=theme.WRAP_COLUMN,
             ).pack(pady=30)
             return
 
@@ -1742,7 +1739,7 @@ class MusicPage(BasePage):
             justify="left",
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.TEXT_DIM,
-            wraplength=580,
+            wraplength=theme.WRAP_COMPACT,
         )
         status_label.pack(fill="x", padx=14, pady=(0, 8))
 
@@ -1984,7 +1981,7 @@ class MusicPage(BasePage):
         dialog.protocol("WM_DELETE_WINDOW", _close_dialog)
         dialog.bind("<Escape>", lambda _e: _close_dialog())
 
-        self._center_dialog(dialog, width=640, height=520)
+        self._center_dialog(dialog, width=theme.WIDTH_DIALOG_SPOTIFY, height=theme.HEIGHT_DIALOG_SPOTIFY)
         self._present_modal_dialog(dialog, focus_widget=None, animate_open=False)
         _refresh_auth_ui()
         if self.app.spotify_manager.is_authenticated():
@@ -2017,15 +2014,6 @@ class MusicPage(BasePage):
             if len(report.low_confidence) > 8:
                 lines.append(f"...and {len(report.low_confidence) - 8} more")
         return "\n".join(lines)
-
-    def _center_dialog(self, dialog, width: int, height: int):
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
-            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
-        except Exception:
-            x, y = 200, 200
-        dialog.geometry(f"{width}x{height}+{x}+{y}")
 
     # Audio playback methods
     def _on_track_click(self, event):

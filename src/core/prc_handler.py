@@ -2,15 +2,14 @@
 from pathlib import Path
 from typing import Any, Optional
 
+from src.models.character import SIGNED_BYTE_MAX, UNSIGNED_BYTE_WRAP as UNSIGNED_BYTE_RANGE
+
 try:
     import pyprc
     _pyprc_available = True
 except ImportError:
     pyprc = None
     _pyprc_available = False
-
-SIGNED_BYTE_MAX = 127
-UNSIGNED_BYTE_RANGE = 256
 
 
 class PRCHandler:

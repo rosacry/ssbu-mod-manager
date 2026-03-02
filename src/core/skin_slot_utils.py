@@ -493,9 +493,7 @@ def _is_visual_slot_categories(categories: frozenset[str] | set[str]) -> bool:
     return bool(set(categories) & _VISUAL_SLOT_CATEGORIES)
 
 
-# ---------------------------------------------------------------------------
 # BNTX internal texture-name patching
-# ---------------------------------------------------------------------------
 _BNTX_MAGIC = b"BNTX"
 _STRX_MAGIC = b"_STR"  # String table section magic (first 4 bytes of "_STRX")
 _BNTX_STR_SCAN_REGION = 256

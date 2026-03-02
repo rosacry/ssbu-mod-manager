@@ -41,7 +41,7 @@ class MigrationPage(BasePage):
             text="Migrate your SSBU data between emulators. Different emulators run separate multiplayer "
                  "networks/protocol builds, so cross-emulator play is not guaranteed. "
                  "For reliable online play, use the same emulator and build as your opponent.",
-            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=800,
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=theme.WRAP_LARGE,
             justify="left")
         desc.pack(fill="x", padx=30, pady=(0, 15))
 
@@ -49,7 +49,6 @@ class MigrationPage(BasePage):
         scroll.pack(fill="both", expand=True, padx=30)
         self._scroll = scroll
 
-        # === Section 1: Emulator-to-Emulator Migration ===
         migrate_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         migrate_section.pack(fill="x", pady=(0, 15))
 
@@ -146,7 +145,6 @@ class MigrationPage(BasePage):
         self.scan_result_frame = ctk.CTkFrame(migrate_section, fg_color="transparent")
         self.scan_result_frame.pack(fill="x", padx=15, pady=(5, 15))
 
-        # === Section 2: Export / Import ===
         export_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         export_section.pack(fill="x", pady=(0, 15))
 
@@ -157,7 +155,7 @@ class MigrationPage(BasePage):
                      text="Export ALL emulator data directly â€” no need to use the emulator's own export tool. "
                           "This reads data straight from the emulator's AppData directories, including keys, "
                           "firmware, and profiles that aren't in the SDMC root.",
-                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=700
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w", wraplength=theme.WRAP_STANDARD
                      ).pack(fill="x", padx=15, pady=(0, 10))
 
         direct_note = ctk.CTkFrame(export_section, fg_color=theme.BG_CARD_DEEP, corner_radius=6)
@@ -166,7 +164,7 @@ class MigrationPage(BasePage):
             text="\u2139  Direct Export reads from emulator directories automatically â€” "
                  "you do NOT need to open the emulator first or use its Data Manager page.",
             font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.INFO, anchor="w",
-            wraplength=680, justify="left"
+            wraplength=theme.WRAP_NARROW, justify="left"
         ).pack(fill="x", padx=12, pady=8)
 
         exp_sel_frame = ctk.CTkFrame(export_section, fg_color="transparent")
@@ -207,7 +205,7 @@ class MigrationPage(BasePage):
         self._extra_details = ctk.CTkLabel(self._extra_cat_frame, text="",
                                            font=ctk.CTkFont(size=theme.FONT_BODY),
                                            text_color=theme.TEXT_DIM, anchor="w",
-                                           wraplength=680, justify="left")
+                                           wraplength=theme.WRAP_NARROW, justify="left")
         self._extra_details.pack(fill="x", padx=12, pady=(3, 8))
 
         exp_btn_frame = ctk.CTkFrame(export_section, fg_color="transparent")
@@ -236,7 +234,6 @@ class MigrationPage(BasePage):
 
         ctk.CTkFrame(export_section, height=8, fg_color="transparent").pack()
 
-        # === Section 3: Emulator Version Upgrade ===
         upgrade_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         upgrade_section.pack(fill="x", pady=(0, 15))
 
@@ -247,7 +244,7 @@ class MigrationPage(BasePage):
                      text="Upgrade to a new version of the same emulator while preserving all your data â€” "
                           "mods, plugins, saves, encryption keys, shader cache, and settings.",
                      font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
-                     wraplength=800, justify="left"
+                     wraplength=theme.WRAP_LARGE, justify="left"
                      ).pack(fill="x", padx=15, pady=(0, 10))
 
         up_sel = ctk.CTkFrame(upgrade_section, fg_color="transparent")
@@ -328,7 +325,6 @@ class MigrationPage(BasePage):
         self._upgrade_plan = None
         self._upgrade_check_vars: dict[str, ctk.BooleanVar] = {}
 
-        # === Section 4: Detected Emulators Info ===
         info_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         info_section.pack(fill="x", pady=(0, 15))
 
@@ -378,7 +374,7 @@ class MigrationPage(BasePage):
                 try:
                     self.after(0, lambda: self._render_detected(results))
                     # Re-patch scroll speeds after dynamic content is created
-                    self.after(200, self._patch_all_scroll_speeds)
+                    self.after(theme.DELAY_SCROLL_SPEED_PATCH_SLOW, self._patch_all_scroll_speeds)
                 except Exception:
                     pass
 

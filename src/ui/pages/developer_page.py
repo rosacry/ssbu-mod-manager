@@ -168,7 +168,7 @@ class DeveloperPage(BasePage):
         all_text = self.log_text.get("1.0", tk.END).strip()
         if not all_text:
             self.copy_feedback.configure(text="No logs to copy")
-            self.after(2000, lambda: self.copy_feedback.configure(text=""))
+            self.after(theme.DELAY_COPY_TOAST, lambda: self.copy_feedback.configure(text=""))
             return
 
         try:
@@ -176,9 +176,9 @@ class DeveloperPage(BasePage):
             self.clipboard_append(all_text)
             self.update()  # Force clipboard update
             self.copy_feedback.configure(text="Copied!")
-            self.after(2000, lambda: self.copy_feedback.configure(text=""))
+            self.after(theme.DELAY_COPY_TOAST, lambda: self.copy_feedback.configure(text=""))
             logger.info("Developer", f"Copied {len(all_text)} chars to clipboard")
         except Exception as e:
             self.copy_feedback.configure(text="Copy failed")
-            self.after(2000, lambda: self.copy_feedback.configure(text=""))
+            self.after(theme.DELAY_COPY_TOAST, lambda: self.copy_feedback.configure(text=""))
             logger.error("Developer", f"Clipboard copy failed: {e}")
