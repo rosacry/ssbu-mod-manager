@@ -36,7 +36,7 @@ class MusicPage(BasePage):
     _MENU_STAGE_PREFIX = "[Menu] "
     _ZERO_TIME_TEXT = "0:00"
     _SPINNER_FRAMES = ["|", "/", "-", "\\"]
-    _QUEUE_EMPTY_TEXT = "Library player idle"
+    _QUEUE_EMPTY_TEXT = "Player idle"
 
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, app, **kwargs)
@@ -71,6 +71,7 @@ class MusicPage(BasePage):
         self._suppress_track_selection_autoplay = False
         self._play_generation = 0
         self._track_click_after_id = None
+        self._status_clear_after_id = None
         self._build_ui()
 
     def _build_ui(self):
@@ -324,13 +325,14 @@ class MusicPage(BasePage):
         player_frame = ctk.CTkFrame(right, fg_color=theme.BG_CARD_INNER, corner_radius=6)
         player_frame.pack(fill="x", padx=10, pady=(2, 4))
 
-        # Keep now-playing status above controls so it remains visible.
+        # Now-playing status — only visible when there is text to show,
+        # so it doesn't reserve vertical whitespace when idle.
         self.player_status = ctk.CTkLabel(
             player_frame, text="",
             font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.SUCCESS,
             anchor="w",
         )
-        self.player_status.pack(fill="x", padx=8, pady=(5, 0))
+        # Starts hidden; _set_player_status() will pack/forget as needed.
 
         self.queue_status = ctk.CTkLabel(
             player_frame,
@@ -339,7 +341,7 @@ class MusicPage(BasePage):
             text_color=theme.TEXT_DIM,
             anchor="w",
         )
-        self.queue_status.pack(fill="x", padx=8, pady=(2, 0))
+        self.queue_status.pack(fill="x", padx=8, pady=(5, 0))
 
         player_inner = ctk.CTkFrame(player_frame, fg_color="transparent")
         player_inner.pack(fill="x", padx=8, pady=5)
@@ -386,8 +388,8 @@ class MusicPage(BasePage):
 
         ctk.CTkButton(
             queue_controls,
-            text="Play Filtered",
-            width=110,
+            text="Play All",
+            width=90,
             height=26,
             fg_color=theme.PRIMARY,
             hover_color=theme.HOVER_PRIMARY,
@@ -396,8 +398,8 @@ class MusicPage(BasePage):
         ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
             queue_controls,
-            text="Play Favorites",
-            width=110,
+            text="Favorites",
+            width=90,
             height=26,
             fg_color=theme.BTN_VANILLA,
             hover_color=theme.HOVER_VANILLA,
@@ -407,23 +409,23 @@ class MusicPage(BasePage):
         ctk.CTkButton(
             queue_controls,
             text="Prev",
-            width=60,
+            width=65,
             height=26,
             fg_color=theme.BTN_SECONDARY,
             hover_color=theme.HOVER_SECONDARY,
             font=ctk.CTkFont(size=theme.FONT_BODY),
             command=lambda: self._step_queue(-1),
-        ).pack(side="right")
+        ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
             queue_controls,
             text="Next",
-            width=60,
+            width=65,
             height=26,
             fg_color=theme.BTN_SECONDARY,
             hover_color=theme.HOVER_SECONDARY,
             font=ctk.CTkFont(size=theme.FONT_BODY),
             command=lambda: self._step_queue(1),
-        ).pack(side="right", padx=(0, 4))
+        ).pack(side="left")
 
         add_btn_frame = ctk.CTkFrame(right, fg_color="transparent")
         add_btn_frame.pack(fill="x", padx=10, pady=(0, 10))
@@ -487,7 +489,8 @@ class MusicPage(BasePage):
             except Exception:
                 pass
         for attr in ("_track_filter_after_id", "_stage_filter_after_id",
-                    "_volume_debounce_after_id", "_track_click_after_id"):
+                    "_volume_debounce_after_id", "_track_click_after_id",
+                    "_status_clear_after_id"):
             aid = getattr(self, attr, None)
             if aid:
                 try:
@@ -543,7 +546,7 @@ class MusicPage(BasePage):
                 self._is_playing = False
                 self.play_toggle_btn.configure(
                     text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
-                self.player_status.configure(text="")
+                self._set_player_status("")
 
     def _start_spinner(self, text: str = "Loading"):
         """Start an animated loading spinner in the loading label."""
@@ -1479,7 +1482,7 @@ class MusicPage(BasePage):
             self.queue_status.configure(text=self._QUEUE_EMPTY_TEXT, text_color=theme.TEXT_DIM)
             return
         self.queue_status.configure(
-            text=f"Queue: {self._queue_name} {self._queue_index + 1}/{len(self._queue_track_ids)}",
+            text=f"Now Playing: {self._queue_index + 1} of {len(self._queue_track_ids)} ({self._queue_name})",
             text_color=theme.INFO_QUEUE,
         )
 
@@ -1512,10 +1515,11 @@ class MusicPage(BasePage):
             queue_name = "Favorites"
         else:
             tracks = self._get_filtered_tracks()
-            queue_name = "Filtered Tracks"
+            queue_name = "All Tracks"
 
         if not tracks:
-            self.player_status.configure(text="No tracks available for that queue.", text_color=theme.ACCENT)
+            self._set_player_status("No tracks available.", theme.ACCENT,
+                                    clear_after=self._PLAYBACK_STATUS_CLEAR_MS)
             return
 
         selected = self._get_selected_track()
@@ -1528,19 +1532,22 @@ class MusicPage(BasePage):
             self._update_queue_status()
             return
         if index < 0 or index >= len(self._queue_track_ids):
-            self.player_status.configure(text="Reached the end of the queue.", text_color=theme.TEXT_DIM)
+            self._set_player_status("Reached end of list.", theme.TEXT_DIM,
+                                    clear_after=self._PLAYBACK_STATUS_CLEAR_MS)
             return
         self._queue_index = index
         track = self._resolve_track_by_id(self._queue_track_ids[index])
         if track is None:
-            self.player_status.configure(text="Queued track is no longer available.", text_color=theme.ACCENT)
+            self._set_player_status("Track no longer available.", theme.ACCENT,
+                                    clear_after=self._PLAYBACK_ERROR_CLEAR_MS)
             return
         self._select_visible_track(track.track_id)
         self._play_track(track)
 
     def _step_queue(self, direction: int):
         if not self._queue_track_ids:
-            self.player_status.configure(text="Start a queue first.", text_color=theme.TEXT_DIM)
+            self._set_player_status("Press Play All or Favorites first.", theme.TEXT_DIM,
+                                    clear_after=self._PLAYBACK_STATUS_CLEAR_MS)
             return
         self._play_queue_index(self._queue_index + direction)
 
@@ -1950,9 +1957,8 @@ class MusicPage(BasePage):
                             description="Created by SSBU Mod Manager",
                         )
                     report = self.app.spotify_manager.export_tracks_to_playlist(playlist, tracks)
-                    current = self.app.config_manager.settings
-                    current.spotify_last_playlist_id = report.playlist_id
-                    self.app.config_manager.save(current)
+                    self.app.config_manager.update_setting(
+                        "spotify_last_playlist_id", report.playlist_id)
                 except Exception as exc:
                     self.after(
                         self._ZERO_DELAY_MS,
@@ -2048,15 +2054,12 @@ class MusicPage(BasePage):
     def _play_selected(self):
         track = self._get_selected_track()
         if not track:
-            self.player_status.configure(text="Select a track first", text_color=theme.ACCENT)
-            self.after(
-                self._PLAYBACK_STATUS_CLEAR_MS,
-                lambda: self.player_status.configure(text=""),
-            )
+            self._set_player_status("Select a track first", theme.ACCENT,
+                                    clear_after=self._PLAYBACK_STATUS_CLEAR_MS)
             return
         filtered_tracks = self._get_filtered_tracks()
         if filtered_tracks:
-            self._prime_queue(filtered_tracks, "Filtered Tracks", preferred_track_id=track.track_id)
+            self._prime_queue(filtered_tracks, "All Tracks", preferred_track_id=track.track_id)
         self._play_track(track)
 
     def _cancel_playback_timers(self):
@@ -2068,6 +2071,43 @@ class MusicPage(BasePage):
                 except Exception:
                     pass
                 setattr(self, attr, None)
+
+    def _set_player_status(self, text: str, color: str = "",
+                           clear_after: int = 0):
+        """Show or hide the player status label.
+
+        The label is only packed when it has text so it doesn't
+        reserve vertical whitespace when idle.
+        """
+        # Cancel any pending auto-clear timer.
+        aid = getattr(self, "_status_clear_after_id", None)
+        if aid:
+            try:
+                self.after_cancel(aid)
+            except Exception:
+                pass
+            self._status_clear_after_id = None
+
+        if text:
+            self.player_status.configure(
+                text=text,
+                text_color=color or theme.SUCCESS,
+            )
+            # Pack above queue_status if not already visible.
+            try:
+                self.player_status.pack_info()
+            except tk.TclError:
+                self.player_status.pack(
+                    before=self.queue_status, fill="x", padx=8, pady=(5, 0))
+            if clear_after > 0:
+                self._status_clear_after_id = self.after(
+                    clear_after, lambda: self._set_player_status(""))
+        else:
+            self.player_status.configure(text="")
+            try:
+                self.player_status.pack_forget()
+            except tk.TclError:
+                pass
 
     def _play_track(self, track):
         """Play a specific track in a background thread."""
@@ -2084,7 +2124,7 @@ class MusicPage(BasePage):
         self._play_generation += 1
         current_gen = self._play_generation
 
-        self.player_status.configure(text="Loading...", text_color=theme.TEXT_DIM)
+        self._set_player_status("Loading...", theme.TEXT_DIM)
         self.update_idletasks()
 
         def _play_bg():
@@ -2097,15 +2137,18 @@ class MusicPage(BasePage):
                 audio_player.stop()
                 return
             if not self.app.shutting_down:
-                self.after(self._ZERO_DELAY_MS, lambda: self._on_play_result(result, track))
+                self.after(self._ZERO_DELAY_MS, lambda: self._on_play_result(result, track, current_gen))
 
         threading.Thread(target=_play_bg, daemon=True).start()
 
-    def _on_play_result(self, result, track):
+    def _on_play_result(self, result, track, generation: int = -1):
         """Handle play result on the main thread."""
+        # Guard against stale callbacks from superseded play requests.
+        if generation >= 0 and generation != self._play_generation:
+            return
         success, msg = result
         color = theme.SUCCESS if success else theme.ACCENT
-        self.player_status.configure(text=msg, text_color=color)
+        self._set_player_status(msg, color)
         if success:
             self._is_playing = True
             self.play_toggle_btn.configure(
@@ -2119,10 +2162,8 @@ class MusicPage(BasePage):
             self.seek_slider.set(self._ZERO_DELAY_MS)
             self._update_seek_bar()
         else:
-            self.after(
-                self._PLAYBACK_ERROR_CLEAR_MS,
-                lambda: self.player_status.configure(text=""),
-            )
+            self._set_player_status(msg, theme.ACCENT,
+                                    clear_after=self._PLAYBACK_ERROR_CLEAR_MS)
 
     def _poll_playback_end(self):
         """Periodically check if playback ended so the button resets."""
@@ -2143,7 +2184,7 @@ class MusicPage(BasePage):
             self._is_playing = False
             self.play_toggle_btn.configure(
                 text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
-            self.player_status.configure(text="")
+            self._set_player_status("")
             return
         self._poll_after_id = self.after(self._PLAYBACK_POLL_MS, self._poll_playback_end)
 
@@ -2154,11 +2195,11 @@ class MusicPage(BasePage):
         self._cancel_playback_timers()
         self.play_toggle_btn.configure(
             text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
-        self.player_status.configure(text="Stopped", text_color=theme.TEXT_DIM)
+        self._set_player_status("Stopped", theme.TEXT_DIM,
+                                clear_after=self._PLAYBACK_STOPPED_CLEAR_MS)
         self.seek_slider.set(self._ZERO_DELAY_MS)
         self.seek_label.configure(text=self._ZERO_TIME_TEXT)
         self.seek_duration_label.configure(text=self._ZERO_TIME_TEXT)
-        self.after(self._PLAYBACK_STOPPED_CLEAR_MS, lambda: self.player_status.configure(text=""))
 
     def _on_volume_change(self, value):
         new_volume = max(self._MIN_VOLUME, min(self._MAX_VOLUME, float(value) / self._MAX_PERCENT))

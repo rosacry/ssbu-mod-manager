@@ -48,66 +48,67 @@ def _ensure_mixer():
         # Double-check after acquiring lock
         if _pygame_initialized:
             return
-    if pygame is None:
-        try:
-            import pygame as _pg
-            pygame = _pg
-        except ImportError:
-            _pygame_error = "pygame not installed"
-            return
-    init_errors = []
-
-    # Try stricter/larger-buffer configurations first to avoid global crackle
-    # or distortion on some Windows audio stacks.
-    attempts = [
-        (None, 48000, 8192, 0),
-        ("directsound", 48000, 8192, 0),
-        ("wasapi", 48000, 8192, 0),
-        ("winmm", 44100, 8192, 0),
-        (None, 44100, 4096, 0),
-    ]
-
-    for driver, freq, buffer, allowed in attempts:
-        try:
-            if pygame.mixer.get_init():
-                pygame.mixer.quit()
-        except Exception:
-            pass
-
-        try:
-            if driver:
-                os.environ["SDL_AUDIODRIVER"] = driver
-            else:
-                os.environ.pop("SDL_AUDIODRIVER", None)
-
-            pygame.mixer.init(
-                frequency=freq,
-                size=-16,
-                channels=2,
-                buffer=buffer,
-                allowedchanges=allowed,
-            )
-            init_tuple = pygame.mixer.get_init()
-            _pygame_available = True
-            _pygame_error = ""
-            _pygame_backend = f"driver={driver or 'default'} init={init_tuple} buffer={buffer}"
-            _pygame_initialized = True
+        if pygame is None:
             try:
-                from src.utils.logger import logger
-                logger.info("AudioPlayer", f"Pygame mixer initialized ({_pygame_backend})")
+                import pygame as _pg
+                pygame = _pg
+            except ImportError:
+                _pygame_error = "pygame not installed"
+                _pygame_initialized = True
+                return
+        init_errors = []
+
+        # Try stricter/larger-buffer configurations first to avoid global
+        # crackle or distortion on some Windows audio stacks.
+        attempts = [
+            (None, 48000, 8192, 0),
+            ("directsound", 48000, 8192, 0),
+            ("wasapi", 48000, 8192, 0),
+            ("winmm", 44100, 8192, 0),
+            (None, 44100, 4096, 0),
+        ]
+
+        for driver, freq, buffer, allowed in attempts:
+            try:
+                if pygame.mixer.get_init():
+                    pygame.mixer.quit()
             except Exception:
                 pass
-            return
-        except Exception as e:
-            init_errors.append(f"{driver or 'default'}@{freq}/{buffer}: {e}")
 
-    _pygame_error = "; ".join(init_errors)[:500]
-    _pygame_initialized = True  # Mark as attempted so we don't retry endlessly
-    try:
-        from src.utils.logger import logger
-        logger.error("AudioPlayer", f"Failed to initialize mixer: {_pygame_error}")
-    except Exception:
-        pass
+            try:
+                if driver:
+                    os.environ["SDL_AUDIODRIVER"] = driver
+                else:
+                    os.environ.pop("SDL_AUDIODRIVER", None)
+
+                pygame.mixer.init(
+                    frequency=freq,
+                    size=-16,
+                    channels=2,
+                    buffer=buffer,
+                    allowedchanges=allowed,
+                )
+                init_tuple = pygame.mixer.get_init()
+                _pygame_available = True
+                _pygame_error = ""
+                _pygame_backend = f"driver={driver or 'default'} init={init_tuple} buffer={buffer}"
+                _pygame_initialized = True
+                try:
+                    from src.utils.logger import logger
+                    logger.info("AudioPlayer", f"Pygame mixer initialized ({_pygame_backend})")
+                except Exception:
+                    pass
+                return
+            except Exception as e:
+                init_errors.append(f"{driver or 'default'}@{freq}/{buffer}: {e}")
+
+        _pygame_error = "; ".join(init_errors)[:500]
+        _pygame_initialized = True  # Mark as attempted so we don't retry endlessly
+        try:
+            from src.utils.logger import logger
+            logger.error("AudioPlayer", f"Failed to initialize mixer: {_pygame_error}")
+        except Exception:
+            pass
 
 
 class AudioPlayer:

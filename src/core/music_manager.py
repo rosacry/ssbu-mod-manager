@@ -289,6 +289,7 @@ class MusicManager:
     _prc_hash_labels_loaded = False
 
     def __init__(self):
+        self._lock = threading.RLock()
         self.tracks: list[MusicTrack] = []
         self.stage_playlists: dict[str, StagePlaylist] = {}
         self.stage_slots: dict[str, list[StageTrackSlot]] = {}
@@ -487,7 +488,8 @@ class MusicManager:
         so the user can browse / favourite them without enabling the mods.
         """
         self._load_library_preferences()
-        self.tracks = []
+        with self._lock:
+            self.tracks = []
         seen_ids: set[str] = set()
 
         # Scan the main mods directory.
@@ -521,11 +523,12 @@ class MusicManager:
                 track.display_name = beautify_track_name(track.track_id)
             track.is_favorite = track.track_id in self.favorite_track_ids
 
-        self.tracks = [
-            track
-            for track in self.tracks
-            if self._is_supported_track_file(track.file_path)
-        ]
+        with self._lock:
+            self.tracks = [
+                track
+                for track in self.tracks
+                if self._is_supported_track_file(track.file_path)
+            ]
 
         if self._scan_should_abort(cancel_event):
             return self.tracks
@@ -853,19 +856,21 @@ class MusicManager:
     def set_track_favorite(self, track_id: str, is_favorite: bool) -> bool:
         self._load_library_preferences()
         changed = False
-        if is_favorite:
-            if track_id not in self.favorite_track_ids:
-                self.favorite_track_ids.add(track_id)
-                changed = True
-        else:
-            if track_id in self.favorite_track_ids:
-                self.favorite_track_ids.remove(track_id)
-                changed = True
+        with self._lock:
+            if is_favorite:
+                if track_id not in self.favorite_track_ids:
+                    self.favorite_track_ids.add(track_id)
+                    changed = True
+            else:
+                if track_id in self.favorite_track_ids:
+                    self.favorite_track_ids.remove(track_id)
+                    changed = True
 
+            if changed:
+                for track in self.tracks:
+                    if track.track_id == track_id:
+                        track.is_favorite = is_favorite
         if changed:
-            for track in self.tracks:
-                if track.track_id == track_id:
-                    track.is_favorite = is_favorite
             self._save_library_preferences()
         return is_favorite
 
@@ -874,12 +879,13 @@ class MusicManager:
 
     def get_favorite_tracks(self) -> list[MusicTrack]:
         self._load_library_preferences()
-        return [
-            track
-            for track in self.tracks
-            if track.track_id in self.favorite_track_ids
-            and self._is_supported_track_file(track.file_path)
-        ]
+        with self._lock:
+            return [
+                track
+                for track in self.tracks
+                if track.track_id in self.favorite_track_ids
+                and self._is_supported_track_file(track.file_path)
+            ]
 
     def _replacement_config_path(self) -> Path:
         return CONFIG_DIR / REPLACEMENTS_FILENAME
@@ -1065,11 +1071,12 @@ class MusicManager:
 
     def get_all_available_tracks(self) -> list[MusicTrack]:
         """Get all discovered tracks."""
-        return [
-            track
-            for track in self.tracks
-            if self._is_supported_track_file(track.file_path)
-        ]
+        with self._lock:
+            return [
+                track
+                for track in self.tracks
+                if self._is_supported_track_file(track.file_path)
+            ]
 
     
     def save_assignments(self, mods_root: Path) -> dict:
