@@ -157,8 +157,10 @@ class SettingsPage(BasePage):
             text_color=theme.TEXT_DIM, anchor="w",
         ).pack(fill="x", padx=15, pady=(0, 5))
 
-        self._extra_dirs_frame = ctk.CTkFrame(music_section, fg_color="transparent")
-        self._extra_dirs_frame.pack(fill="x", padx=15, pady=(0, 5))
+        self._extra_dirs_frame = ctk.CTkFrame(music_section, fg_color="transparent", height=0)
+        # Only pack the frame when it has directory rows; avoids a blank
+        # 200px gap from CTkFrame's default minimum height.
+        self._extra_dirs_frame_packed = False
 
         self._extra_dir_rows: list[tuple[ctk.CTkEntry, ctk.CTkButton]] = []
         for d in (getattr(settings, "music_extra_track_dirs", None) or []):
@@ -277,6 +279,9 @@ class SettingsPage(BasePage):
     # --- Extra track directory helpers ---
     def _add_extra_dir_row(self, value: str = ""):
         """Add a row showing an extra track directory with a remove button."""
+        if not self._extra_dirs_frame_packed:
+            self._extra_dirs_frame.pack(fill="x", padx=15, pady=(0, 5))
+            self._extra_dirs_frame_packed = True
         row_frame = ctk.CTkFrame(self._extra_dirs_frame, fg_color="transparent")
         row_frame.pack(fill="x", pady=2)
 
@@ -303,6 +308,9 @@ class SettingsPage(BasePage):
             if e.master is not row_frame
         ]
         row_frame.destroy()
+        if not self._extra_dir_rows and self._extra_dirs_frame_packed:
+            self._extra_dirs_frame.pack_forget()
+            self._extra_dirs_frame_packed = False
         self._auto_save()
 
     def _browse_extra_dir(self):
@@ -490,6 +498,9 @@ class SettingsPage(BasePage):
         for entry, _ in list(self._extra_dir_rows):
             entry.master.destroy()
         self._extra_dir_rows.clear()
+        if self._extra_dirs_frame_packed:
+            self._extra_dirs_frame.pack_forget()
+            self._extra_dirs_frame_packed = False
         self.sdmc_status.configure(text="Reset to defaults", text_color=theme.TEXT_DIM)
         logger.enabled = False
         self.app._update_managers()

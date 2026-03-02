@@ -373,8 +373,8 @@ class ModManagerApp(ctk.CTk):
             logger.warn("App", f"Startup prewarm failed: {e}")
         self.update_idletasks()
 
-        # Center before first show.
-        self._center_window_on_screen()
+        # Restore saved position or center on screen.
+        self._restore_or_center_window()
 
         _dbg("update_idletasks done, showing window...")
         force_alpha_hidden = False
@@ -397,7 +397,7 @@ class ModManagerApp(ctk.CTk):
                 pass
         # Normalize geometry synchronously after map to avoid visible jumps.
         self.update_idletasks()
-        self._center_window_on_screen()
+        self._restore_or_center_window()
 
         fade_in_supported = False
         if self._ENABLE_WINDOW_FADE and force_alpha_hidden:
@@ -2054,6 +2054,82 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
 
+    def _restore_or_center_window(self):
+        """Restore saved window position or fall back to centering.
+
+        Parses ``window_geometry`` from settings (format ``WxH+X+Y``).
+        If the saved position places at least 120px of the window on any
+        connected monitor the position is restored; otherwise the window
+        is centered on the primary screen.
+        """
+        if self._shutting_down:
+            return
+        try:
+            saved = getattr(self.config_manager.settings, "window_geometry", "") or ""
+            m = re.match(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", saved)
+            if m:
+                sx, sy = int(m.group(3)), int(m.group(4))
+                ww, wh = self._get_current_geometry_size()
+                if self._is_position_visible(sx, sy, ww, wh):
+                    self.geometry(f"{ww}x{wh}+{sx}+{sy}")
+                    return
+        except Exception:
+            pass
+        self._center_window_on_screen()
+
+    def _is_position_visible(self, x: int, y: int, w: int, h: int,
+                             min_visible: int = 120) -> bool:
+        """Return True if at least *min_visible* px of the rect overlaps a monitor."""
+        try:
+            import ctypes
+            import ctypes.wintypes
+
+            monitors: list[tuple[int, int, int, int]] = []
+
+            MONITOR_ENUM_PROC = ctypes.WINFUNCTYPE(
+                ctypes.c_int,
+                ctypes.c_ulong,
+                ctypes.c_ulong,
+                ctypes.POINTER(ctypes.wintypes.RECT),
+                ctypes.c_double,
+            )
+
+            def _callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
+                rc = lprcMonitor[0]
+                monitors.append((rc.left, rc.top, rc.right, rc.bottom))
+                return 1
+
+            ctypes.windll.user32.EnumDisplayMonitors(
+                None, None, MONITOR_ENUM_PROC(_callback), 0
+            )
+
+            for ml, mt, mr, mb in monitors:
+                # Overlap rectangle
+                ol = max(x, ml)
+                ot = max(y, mt)
+                orr = min(x + w, mr)
+                ob = min(y + h, mb)
+                if (orr - ol) >= min_visible and (ob - ot) >= min_visible:
+                    return True
+
+            # Fallback: if EnumDisplayMonitors returned nothing, trust Tk
+            if not monitors:
+                return True
+            return False
+        except Exception:
+            # Non-Windows or ctypes failure - trust the saved position
+            return True
+
+    def _save_window_geometry(self):
+        """Persist current window geometry (WxH+X+Y) into settings."""
+        try:
+            geo = self.geometry()
+            if re.match(r"\d+x\d+\+(-?\d+)\+(-?\d+)", geo):
+                self.config_manager.settings.window_geometry = geo
+                self.config_manager.save()
+        except Exception:
+            pass
+
     def _ensure_window_visible(self, attempt: int = 1):
         """Recover from startup cases where the window ends up hidden/minimized."""
         if self._shutting_down:
@@ -2417,6 +2493,10 @@ class ModManagerApp(ctk.CTk):
 
         self._shutting_down = True
         logger.info("App", "Shutting down...")
+
+        # Persist window position so it reopens on the same monitor.
+        self._save_window_geometry()
+
         if self._ENABLE_WINDOW_FADE:
             self._fade_out_then(self._finalize_shutdown)
         else:
