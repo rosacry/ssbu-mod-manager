@@ -1517,15 +1517,16 @@ class ModManagerApp(ctk.CTk):
         different DPI.  This looks like the window disappears and reappears.
 
         This patch:
-        * Hides the window (alpha=0) for only the duration of the actual
-          reflow (~50-100 ms), then restores it once layout has settled.
-          This masks the visual widget-by-widget rescaling cascade.
+        * Skips ALL alpha manipulation — any alpha change during a
+          cross-monitor drag causes Windows to drop the titlebar grab,
+          making it impossible to finish the move.  The brief widget
+          reflow (~50-100 ms) is far less jarring than losing the drag.
+        * Blocks dimension-event processing during the callback cascade
+          so intermediate Configure events don't corrupt geometry.
         * Reduces the polling interval from 100 ms → 50 ms for faster
           detection of monitor changes.
-        * Reduces the post-scaling pause from 1500 ms → 300 ms so the UI
-          tracks the new monitor promptly.
-        * Forces ``update_idletasks()`` while hidden so all geometry
-          negotiations complete before the window reappears.
+        * Reduces the post-scaling pause from 1500 ms → 300 ms so the
+          UI tracks the new monitor promptly.
         """
         try:
             from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
@@ -1538,7 +1539,7 @@ class ModManagerApp(ctk.CTk):
 
         @classmethod
         def _smooth_check_dpi_scaling(cls):  # noqa: N805
-            """DPI change detector with brief hide-and-show transition."""
+            """DPI change detector — no alpha changes, no drag interruption."""
             new_scaling_detected = False
 
             for window in list(cls.window_widgets_dict):
@@ -1552,35 +1553,14 @@ class ModManagerApp(ctk.CTk):
                 if current_dpi_scaling_value != cls.window_dpi_scaling_dict.get(window):
                     cls.window_dpi_scaling_dict[window] = current_dpi_scaling_value
 
-                    # ── Hide → rescale → settle → show ──────────────
-                    # Setting alpha=0 before the callback cascade means
-                    # the user never sees the intermediate widget reflow.
-                    # We call update_idletasks() while hidden so that Tk
-                    # completes all geometry negotiations.  The total
-                    # invisible time is ~50-100 ms — imperceptible
-                    # during a cross-monitor drag.
-                    try:
-                        window.attributes("-alpha", 0.0)
-                    except Exception:
-                        pass
-
+                    # NO alpha changes — setting alpha mid-drag causes
+                    # Windows to release the titlebar capture, making it
+                    # impossible for the user to finish moving the window.
+                    # The brief visual reflow is acceptable.
                     try:
                         window.block_update_dimensions_event()
                         cls.update_scaling_callbacks_for_window(window)
                         window.unblock_update_dimensions_event()
-                    except Exception:
-                        pass
-
-                    # Let Tk process the queued geometry changes while
-                    # the window is still invisible.
-                    try:
-                        window.update_idletasks()
-                    except Exception:
-                        pass
-
-                    # Restore visibility.
-                    try:
-                        window.attributes("-alpha", 1.0)
                     except Exception:
                         pass
 
