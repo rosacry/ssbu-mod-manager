@@ -24,7 +24,7 @@ WAV_MIN_HEADER_SIZE = WAV_HEADER_SIZE
 WAV_SAMPLE_RATE_HZ = "48000"
 WAV_SAMPLE_FORMAT = "s16"
 FFMPEG_TIMEOUT_SECONDS = 30
-LOG_STDERR_PREVIEW_CHARS = 200
+LOG_STDERR_PREVIEW_CHARS = 800
 PCM_ANALYSIS_MIN_BYTES = 4000
 PCM_WINDOW_BYTES_VALIDATE = 96000
 PCM_WINDOW_BYTES_SCORE = 120000
@@ -2041,7 +2041,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r13"
+_DECODER_CACHE_REV = "r14"
 
 
 def _get_cache_dir() -> Path:
@@ -2116,25 +2116,28 @@ def _resolve_cached_preview(
     return False, "", None
 
 
-def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path,
-                              is_primary: bool = False) -> Optional[Path]:
-    """Decode via ffmpeg with quality validation.
-
-    When *is_primary* is True, the log messages use 'ffmpeg direct' rather
-    than 'ffmpeg direct fallback' to reflect its role as the preferred
-    decoder path.
-    """
-    label = "ffmpeg direct" if is_primary else "ffmpeg direct fallback"
+def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path) -> Optional[Path]:
+    """Decode via ffmpeg with quality validation (last-resort fallback)."""
     try:
         from src.utils.logger import logger
         result = _run_ffmpeg_to_wav(input_path, wav_out)
         if result is None:
             return None
-        if result.returncode != 0 or not wav_out.exists():
+        if result.returncode != 0:
+            # Always clean up partial output on failure
+            try:
+                wav_out.unlink(missing_ok=True)
+            except (OSError, TypeError):
+                try:
+                    wav_out.unlink()
+                except OSError:
+                    pass
             stderr_preview = ""
             if result.stderr:
                 stderr_preview = result.stderr.decode("utf-8", errors="replace")[:LOG_STDERR_PREVIEW_CHARS]
-            logger.debug("NUS3AUDIO", f"{label} failed (rc={result.returncode}): {stderr_preview}")
+            logger.debug("NUS3AUDIO", f"ffmpeg direct failed (rc={result.returncode}): {stderr_preview}")
+            return None
+        if not wav_out.exists():
             return None
 
         sz = wav_out.stat().st_size
@@ -2147,26 +2150,118 @@ def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path,
             dur = _wav_duration_seconds(wav_out)
             logger.info(
                 "NUS3AUDIO",
-                f"{label} accepted ({sz} bytes, dur={dur:.1f}s, "
+                f"ffmpeg direct accepted ({sz} bytes, dur={dur:.1f}s, "
                 f"zcr={zcr:.3f}, corr={corr:.3f})"
             )
             return wav_out
 
         logger.debug(
             "NUS3AUDIO",
-            f"{label} rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+            f"ffmpeg direct rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
         )
         try:
             wav_out.unlink()
         except OSError:
             pass
     except Exception as e:
+        # Clean up partial output on exception too
+        try:
+            wav_out.unlink(missing_ok=True)
+        except (OSError, TypeError):
+            try:
+                wav_out.unlink()
+            except OSError:
+                pass
         try:
             from src.utils.logger import logger
-            logger.debug("NUS3AUDIO", f"{label} failed: {e}")
+            logger.debug("NUS3AUDIO", f"ffmpeg direct failed: {e}")
         except Exception:
             pass
     return None
+
+
+def _try_ffmpeg_raw_entry(audio_data: bytes, cache_dir: Path,
+                          cache_key: str) -> Optional[Path]:
+    """Try decoding a raw audio entry via ffmpeg auto-detection.
+
+    Useful for NX OPUS containers that ffmpeg can handle natively even
+    though it may not support the outer NUS3AUDIO wrapper.
+    """
+    if not _find_ffmpeg():
+        return None
+    raw_path = cache_dir / f"{cache_key}.raw_entry"
+    wav_out = cache_dir / f"{cache_key}.wav"
+    try:
+        from src.utils.logger import logger
+        raw_path.write_bytes(audio_data)
+        result = _run_ffmpeg_to_wav(raw_path, wav_out)
+        # Clean up temp input regardless
+        try:
+            raw_path.unlink()
+        except OSError:
+            pass
+        if result is None or result.returncode != 0:
+            try:
+                wav_out.unlink(missing_ok=True)
+            except (OSError, TypeError):
+                try:
+                    wav_out.unlink()
+                except OSError:
+                    pass
+            if result and result.returncode != 0:
+                stderr_preview = ""
+                if result.stderr:
+                    stderr_preview = result.stderr.decode("utf-8", errors="replace")[:LOG_STDERR_PREVIEW_CHARS]
+                logger.debug("NUS3AUDIO", f"ffmpeg raw entry failed (rc={result.returncode}): {stderr_preview}")
+            return None
+        if not wav_out.exists() or wav_out.stat().st_size < FFMPEG_RAW_MIN_WAV_BYTES:
+            try:
+                wav_out.unlink(missing_ok=True)
+            except (OSError, TypeError):
+                try:
+                    wav_out.unlink()
+                except OSError:
+                    pass
+            return None
+        # Quality / noise validation
+        if not _validate_wav_quality(wav_out):
+            try:
+                wav_out.unlink()
+            except OSError:
+                pass
+            return None
+        zcr, corr = _wav_noise_signature(wav_out)
+        if zcr > FFMPEG_DIRECT_NOISE_ZCR_THRESHOLD and corr < FFMPEG_DIRECT_NOISE_CORR_THRESHOLD:
+            try:
+                wav_out.unlink()
+            except OSError:
+                pass
+            return None
+        dur = _wav_duration_seconds(wav_out)
+        logger.info(
+            "NUS3AUDIO",
+            f"ffmpeg raw entry accepted ({wav_out.stat().st_size} bytes, "
+            f"dur={dur:.1f}s, zcr={zcr:.3f}, corr={corr:.3f})"
+        )
+        return wav_out
+    except Exception as e:
+        try:
+            raw_path.unlink()
+        except OSError:
+            pass
+        try:
+            wav_out.unlink(missing_ok=True)
+        except (OSError, TypeError):
+            try:
+                wav_out.unlink()
+            except OSError:
+                pass
+        try:
+            from src.utils.logger import logger
+            logger.debug("NUS3AUDIO", f"ffmpeg raw entry error: {e}")
+        except Exception:
+            pass
+        return None
 
 
 def extract_and_convert(
@@ -2204,24 +2299,17 @@ def extract_and_convert(
     if len(data) < 8 or data[:4] != b'NUS3':
         return False, "Not a valid NUS3AUDIO file", None
 
-    # Priority 1: ffmpeg direct decode.
-    # ffmpeg's NUS3AUDIO demuxer handles LOPUS frame extraction, slot
-    # sizes, trailer bytes, and format variants (v1-v4, CBR/VBR, BE/LE
-    # frame sizes) more reliably than manual parsing.  Manual extraction
-    # can pick incorrect slot sizes causing 2x-speed playback (CBR with
-    # doubled slot) or crunchy distortion (wrong frame boundaries).
-    wav_out = cache_dir / f"{cache_key}.wav"
-    direct = _try_ffmpeg_direct_to_wav(nus3audio_path, wav_out, is_primary=True)
-    if direct is not None:
-        return True, f"Playing: {nus3audio_path.name}", direct
-
-    # Priority 2: manual extraction + per-format conversion.
-    # Used when ffmpeg fails (missing NUS3 demuxer, unusual container,
-    # or quality gate rejection).
+    # Manual extraction from NUS3AUDIO container.
     sections = _find_sections(data)
     audio_entries = _extract_audio_entries(data, sections)
 
     if not audio_entries:
+        # Last-resort: try ffmpeg on the whole NUS3AUDIO file (requires
+        # an ffmpeg build with the NUS3AUDIO demuxer).
+        wav_out = cache_dir / f"{cache_key}.wav"
+        direct = _try_ffmpeg_direct_to_wav(nus3audio_path, wav_out)
+        if direct is not None:
+            return True, f"Playing: {nus3audio_path.name}", direct
         return False, "No audio data found in NUS3AUDIO", None
 
     # Try the first (usually only) audio entry
@@ -2275,6 +2363,16 @@ def _try_convert_audio(
         out = cache_dir / f"{cache_key}.ogg"
         out.write_bytes(audio_data)
         return True, f"Playing: {display_name}", out
+
+    # For LOPUS / OPUS entries, try ffmpeg on the raw extracted entry
+    # first.  ffmpeg may have a native decoder (NX OPUS / nsopusdec)
+    # that handles these more reliably than manual OGG construction.
+    if len(audio_data) >= 4:
+        _raw_magic = struct.unpack_from('<I', audio_data, 0)[0]
+        if (_raw_magic & 0x80000000) or audio_data[:4] == b'OPUS':
+            _raw_wav = _try_ffmpeg_raw_entry(audio_data, cache_dir, cache_key)
+            if _raw_wav is not None:
+                return True, f"Playing: {display_name}", _raw_wav
 
     # LOPUS (Nintendo Opus)
     if len(audio_data) >= 4:
