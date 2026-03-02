@@ -498,6 +498,47 @@ class ModManagerApp(ctk.CTk):
         if warmed:
             logger.info("App", f"Startup prewarmed pages: {', '.join(warmed)}")
 
+    # ── CTk bug-fix overrides ─────────────────────────────────────────
+    # CustomTkinter 5.2.2 has a bug: both block_update_dimensions_event()
+    # and unblock_update_dimensions_event() set _block_update_dimensions_event
+    # to False, so the "block" call is a no-op.  During DPI transitions the
+    # ScalingTracker calls block → update_scaling_callbacks → unblock, but
+    # because blocking never actually happens, intermediate Configure events
+    # can update _current_width/_current_height with stale-scaling values,
+    # corrupting the window geometry.
+    def block_update_dimensions_event(self):
+        self._block_update_dimensions_event = True
+
+    def unblock_update_dimensions_event(self):
+        self._block_update_dimensions_event = False
+
+    def _set_scaling(self, new_widget_scaling, new_window_scaling):
+        """Override CTk's _set_scaling to reduce the 1-second size-lock.
+
+        The upstream implementation temporarily pins minsize == maxsize for
+        1000 ms to work around a Tk geometry snap bug.  That long lock makes
+        the window feel frozen after a DPI transition.  We shorten it to
+        200 ms which is enough to avoid the Tk snap while keeping the UI
+        responsive.
+        """
+        from customtkinter.windows.widgets.scaling.scaling_base_class import CTkScalingBaseClass
+        import tkinter
+
+        CTkScalingBaseClass._set_scaling(self, new_widget_scaling, new_window_scaling)
+
+        # Force new dimensions (same technique as upstream).
+        tkinter.Tk.minsize(self, self._apply_window_scaling(self._current_width),
+                           self._apply_window_scaling(self._current_height))
+        tkinter.Tk.maxsize(self, self._apply_window_scaling(self._current_width),
+                           self._apply_window_scaling(self._current_height))
+        tkinter.Tk.geometry(self, (
+            f"{self._apply_window_scaling(self._current_width)}"
+            f"x{self._apply_window_scaling(self._current_height)}"
+        ))
+
+        # Shorter delay before restoring real min/max constraints.
+        self.after(200, self._set_scaled_min_max)
+
     def _apply_scaled_geometry(self, scale: float):
         """Set window geometry and minsize proportional to scale factor."""
         screen_w, screen_h = self._get_primary_screen_size()
@@ -1309,16 +1350,23 @@ class ModManagerApp(ctk.CTk):
                 except Exception:
                     pass
             self._resize_after_id = self.after(self._RESIZE_SETTLE_MS, self._finalize_resize)
-            # Proactively detect DPI changes during window moves / drags.
-            # The CTk polling loop runs every 50ms, but Configure events
-            # fire during the drag itself, so we can catch monitor
-            # transitions earlier.
-            self._check_monitor_dpi_change()
+            # DPI change detection is handled solely by the patched
+            # ScalingTracker polling loop (50 ms interval) which performs a
+            # proper hide→rescale→show transition.  Firing scaling callbacks
+            # ALSO from Configure events causes duplicate reflows and visual
+            # fighting, so we just track the value here for informational use.
+            self._track_monitor_dpi()
         except Exception:
             pass
 
-    def _check_monitor_dpi_change(self):
-        """Detect if the window moved to a monitor with different DPI."""
+    def _track_monitor_dpi(self):
+        """Update the DPI tracking variable without firing scaling callbacks.
+
+        The actual DPI transition is handled by the patched
+        ``ScalingTracker.check_dpi_scaling`` polling loop which does a
+        hide→rescale→settle→show sequence.  This method only keeps our
+        ``_last_monitor_dpi`` in sync for logging / diagnostic purposes.
+        """
         try:
             from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
             current_dpi = ScalingTracker.get_window_dpi_scaling(self)
@@ -1327,13 +1375,6 @@ class ModManagerApp(ctk.CTk):
                 return
             if abs(current_dpi - self._last_monitor_dpi) > 0.01:
                 self._last_monitor_dpi = current_dpi
-                ScalingTracker.window_dpi_scaling_dict[self] = current_dpi
-                try:
-                    self.block_update_dimensions_event()
-                    ScalingTracker.update_scaling_callbacks_for_window(self)
-                    self.unblock_update_dimensions_event()
-                except Exception:
-                    pass
                 logger.debug("App", f"Monitor DPI change detected: {current_dpi:.2f}")
         except Exception:
             pass
@@ -1472,17 +1513,19 @@ class ModManagerApp(ctk.CTk):
         """Replace CTk's harsh alpha-flash DPI transition with a smooth one.
 
         CustomTkinter's ``ScalingTracker.check_dpi_scaling`` sets the window
-        to alpha=0.15 during rescaling when the user drags between monitors
-        with different DPI.  This looks like the window disappears and
-        reappears.
+        to alpha=0.15 for ~1500 ms when the user drags between monitors with
+        different DPI.  This looks like the window disappears and reappears.
 
-        This patch replaces that behaviour:
-        * Skip the alpha manipulation entirely — the brief rescaling
-          reflow is far less jarring than a near-invisible flash.
-        * Reduce the polling interval from 100ms → 50ms for faster
+        This patch:
+        * Hides the window (alpha=0) for only the duration of the actual
+          reflow (~50-100 ms), then restores it once layout has settled.
+          This masks the visual widget-by-widget rescaling cascade.
+        * Reduces the polling interval from 100 ms → 50 ms for faster
           detection of monitor changes.
-        * Reduce the post-scaling pause from 1500ms → 400ms so the UI
+        * Reduces the post-scaling pause from 1500 ms → 300 ms so the UI
           tracks the new monitor promptly.
+        * Forces ``update_idletasks()`` while hidden so all geometry
+          negotiations complete before the window reappears.
         """
         try:
             from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
@@ -1491,12 +1534,11 @@ class ModManagerApp(ctk.CTk):
 
         # Reduce polling latency so we detect DPI changes sooner.
         ScalingTracker.update_loop_interval = 50
-        ScalingTracker.loop_pause_after_new_scaling = 400
+        ScalingTracker.loop_pause_after_new_scaling = 300
 
         @classmethod
         def _smooth_check_dpi_scaling(cls):  # noqa: N805
-            """DPI change detector without the alpha-flash."""
-            import sys as _sys
+            """DPI change detector with brief hide-and-show transition."""
             new_scaling_detected = False
 
             for window in list(cls.window_widgets_dict):
@@ -1510,11 +1552,35 @@ class ModManagerApp(ctk.CTk):
                 if current_dpi_scaling_value != cls.window_dpi_scaling_dict.get(window):
                     cls.window_dpi_scaling_dict[window] = current_dpi_scaling_value
 
-                    # DO NOT flash alpha — this is the key fix.
+                    # ── Hide → rescale → settle → show ──────────────
+                    # Setting alpha=0 before the callback cascade means
+                    # the user never sees the intermediate widget reflow.
+                    # We call update_idletasks() while hidden so that Tk
+                    # completes all geometry negotiations.  The total
+                    # invisible time is ~50-100 ms — imperceptible
+                    # during a cross-monitor drag.
+                    try:
+                        window.attributes("-alpha", 0.0)
+                    except Exception:
+                        pass
+
                     try:
                         window.block_update_dimensions_event()
                         cls.update_scaling_callbacks_for_window(window)
                         window.unblock_update_dimensions_event()
+                    except Exception:
+                        pass
+
+                    # Let Tk process the queued geometry changes while
+                    # the window is still invisible.
+                    try:
+                        window.update_idletasks()
+                    except Exception:
+                        pass
+
+                    # Restore visibility.
+                    try:
+                        window.attributes("-alpha", 1.0)
                     except Exception:
                         pass
 
