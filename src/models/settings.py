@@ -36,3 +36,6 @@ class AppSettings:
     spotify_user_id: str = ""
     spotify_display_name: str = ""
     spotify_last_playlist_id: str = ""
+    # Music scanning options
+    music_scan_disabled_mods: bool = True
+    music_extra_track_dirs: list[str] = field(default_factory=list)

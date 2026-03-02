@@ -281,7 +281,16 @@ class MusicManager:
 
     @staticmethod
     def _is_supported_track_file(file_path: Path) -> bool:
-        return file_path.suffix.lower() == ".nus3audio"
+        """Only accept .nus3audio files whose stem starts with ``bgm_``.
+
+        This filters out voice packs, skin sound effects, and other
+        non-BGM .nus3audio files that should not appear in the music
+        library.
+        """
+        return (
+            file_path.suffix.lower() == NUS3AUDIO_SUFFIX
+            and file_path.stem.lower().startswith(TRACK_ID_PREFIX)
+        )
 
     @staticmethod
     def _scan_cancelled(cancel_event: Optional[threading.Event]) -> bool:

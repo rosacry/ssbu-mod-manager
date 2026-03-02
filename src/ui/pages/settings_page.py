@@ -119,6 +119,60 @@ class SettingsPage(BasePage):
         ctk.CTkCheckBox(gen_section, text="Create backup before merge operations",
                         variable=self.backup_var).pack(fill="x", padx=15, pady=(3, 15))
 
+        # --- Music Scanning section ---
+        music_section = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
+        music_section.pack(fill="x", pady=(0, 15))
+
+        ctk.CTkLabel(
+            music_section, text="Music Scanning",
+            font=ctk.CTkFont(size=theme.FONT_SECTION_HEADING, weight="bold"), anchor="w",
+        ).pack(fill="x", padx=15, pady=(15, 5))
+        ctk.CTkLabel(
+            music_section,
+            text=(
+                "Control which directories are scanned for custom BGM tracks. "
+                "Only .nus3audio files whose name starts with bgm_ are detected."
+            ),
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
+            text_color=theme.TEXT_MUTED, anchor="w", wraplength=700, justify="left",
+        ).pack(fill="x", padx=15, pady=(0, 8))
+
+        self.music_scan_disabled_var = ctk.BooleanVar(
+            value=bool(getattr(settings, "music_scan_disabled_mods", True))
+        )
+        ctk.CTkCheckBox(
+            music_section,
+            text="Include tracks from the disabled_mods folder",
+            variable=self.music_scan_disabled_var,
+        ).pack(fill="x", padx=15, pady=(0, 10))
+
+        ctk.CTkLabel(
+            music_section, text="Extra Track Directories:",
+            font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), anchor="w",
+        ).pack(fill="x", padx=15, pady=(5, 3))
+        ctk.CTkLabel(
+            music_section,
+            text="Add additional folders to scan for custom .nus3audio tracks.",
+            font=ctk.CTkFont(size=theme.FONT_CAPTION),
+            text_color=theme.TEXT_DIM, anchor="w",
+        ).pack(fill="x", padx=15, pady=(0, 5))
+
+        self._extra_dirs_frame = ctk.CTkFrame(music_section, fg_color="transparent")
+        self._extra_dirs_frame.pack(fill="x", padx=15, pady=(0, 5))
+
+        self._extra_dir_rows: list[tuple[ctk.CTkEntry, ctk.CTkButton]] = []
+        for d in (getattr(settings, "music_extra_track_dirs", None) or []):
+            self._add_extra_dir_row(d)
+
+        extra_btn_frame = ctk.CTkFrame(music_section, fg_color="transparent")
+        extra_btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+
+        ctk.CTkButton(
+            extra_btn_frame, text="+ Add Directory", width=140,
+            fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
+            command=self._browse_extra_dir, height=32, corner_radius=8,
+        ).pack(side="left")
+
         online_meta = ctk.CTkFrame(scroll, fg_color=theme.BG_CARD, corner_radius=10)
         online_meta.pack(fill="x", pady=(0, 15))
 
@@ -218,6 +272,54 @@ class SettingsPage(BasePage):
         self.emu_version_var.trace_add("write", lambda *_: self._on_online_meta_change())
         self.game_version_var.trace_add("write", lambda *_: self._on_online_meta_change())
         self.experimental_spotify_var.trace_add("write", lambda *_: self._auto_save())
+        self.music_scan_disabled_var.trace_add("write", lambda *_: self._auto_save())
+
+    # --- Extra track directory helpers ---
+    def _add_extra_dir_row(self, value: str = ""):
+        """Add a row showing an extra track directory with a remove button."""
+        row_frame = ctk.CTkFrame(self._extra_dirs_frame, fg_color="transparent")
+        row_frame.pack(fill="x", pady=2)
+
+        entry = ctk.CTkEntry(row_frame, height=30, width=480)
+        entry.pack(side="left", padx=(0, 6))
+        if value:
+            entry.insert(0, value)
+
+        remove_btn = ctk.CTkButton(
+            row_frame, text="Remove", width=70, height=30,
+            fg_color=theme.BTN_NEUTRAL, hover_color=theme.HOVER_NEUTRAL,
+            corner_radius=6,
+            command=lambda rf=row_frame: self._remove_extra_dir_row(rf),
+        )
+        remove_btn.pack(side="left")
+
+        self._extra_dir_rows.append((entry, remove_btn))
+        entry.bind("<FocusOut>", lambda *_: self._auto_save())
+
+    def _remove_extra_dir_row(self, row_frame: ctk.CTkFrame):
+        """Remove a single extra-dir row and trigger auto-save."""
+        self._extra_dir_rows = [
+            (e, b) for (e, b) in self._extra_dir_rows
+            if e.master is not row_frame
+        ]
+        row_frame.destroy()
+        self._auto_save()
+
+    def _browse_extra_dir(self):
+        """Let the user pick a directory, then add a row for it."""
+        folder = filedialog.askdirectory(title="Select Extra Track Directory")
+        if folder:
+            self._add_extra_dir_row(folder)
+            self._auto_save()
+
+    def _collect_extra_dirs(self) -> list[str]:
+        """Return the list of non-empty extra track directories from the UI."""
+        dirs: list[str] = []
+        for entry, _ in self._extra_dir_rows:
+            val = entry.get().strip()
+            if val:
+                dirs.append(val)
+        return dirs
 
     def _auto_save(self):
         if not self._auto_save_active:
@@ -361,6 +463,8 @@ class SettingsPage(BasePage):
         settings.emulator_version = (self.emu_version_var.get() or "").strip()
         settings.game_version = normalize_game_version(self.game_version_var.get())
         settings.experimental_spotify_enabled = bool(self.experimental_spotify_var.get())
+        settings.music_scan_disabled_mods = bool(self.music_scan_disabled_var.get())
+        settings.music_extra_track_dirs = self._collect_extra_dirs()
 
         self.app.config_manager.save(settings)
         self.app._update_managers()
@@ -381,6 +485,11 @@ class SettingsPage(BasePage):
         self.emu_version_var.set("")
         self.game_version_var.set("")
         self.experimental_spotify_var.set(False)
+        self.music_scan_disabled_var.set(True)
+        # Remove all extra-dir rows
+        for entry, _ in list(self._extra_dir_rows):
+            entry.master.destroy()
+        self._extra_dir_rows.clear()
         self.sdmc_status.configure(text="Reset to defaults", text_color=theme.TEXT_DIM)
         logger.enabled = False
         self.app._update_managers()

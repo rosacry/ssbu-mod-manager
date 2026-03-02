@@ -604,11 +604,19 @@ class MusicPage(BasePage):
 
         # Also scan disabled_mods so users can browse/favourite tracks
         # from disabled mods without having to re-enable them first.
-        disabled_mods_path = mods_path.parent / "disabled_mods"
         additional_dirs = []
-        if disabled_mods_path.exists() and disabled_mods_path.is_dir():
-            additional_dirs.append(disabled_mods_path)
-            logger.info("Music", f"Also scanning disabled_mods: {disabled_mods_path}")
+        if settings.music_scan_disabled_mods:
+            disabled_mods_path = mods_path.parent / "disabled_mods"
+            if disabled_mods_path.exists() and disabled_mods_path.is_dir():
+                additional_dirs.append(disabled_mods_path)
+                logger.info("Music", f"Also scanning disabled_mods: {disabled_mods_path}")
+
+        # Include any user-configured extra track directories.
+        for extra_dir in (settings.music_extra_track_dirs or []):
+            extra_path = Path(extra_dir)
+            if extra_path.exists() and extra_path.is_dir():
+                additional_dirs.append(extra_path)
+                logger.info("Music", f"Also scanning extra directory: {extra_path}")
 
         def scan():
             try:

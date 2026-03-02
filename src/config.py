@@ -88,6 +88,13 @@ class ConfigManager:
                     spotify_user_id=str(data.get("spotify_user_id", "") or ""),
                     spotify_display_name=str(data.get("spotify_display_name", "") or ""),
                     spotify_last_playlist_id=str(data.get("spotify_last_playlist_id", "") or ""),
+                    music_scan_disabled_mods=bool(
+                        data.get("music_scan_disabled_mods", True)
+                    ),
+                    music_extra_track_dirs=[
+                        str(d) for d in (data.get("music_extra_track_dirs") or [])
+                        if str(d).strip()
+                    ],
                 )
             except (json.JSONDecodeError, KeyError, TypeError, OSError,
                     ValueError, UnicodeDecodeError) as e:
@@ -150,6 +157,8 @@ class ConfigManager:
             "spotify_user_id": str(self.settings.spotify_user_id or ""),
             "spotify_display_name": str(self.settings.spotify_display_name or ""),
             "spotify_last_playlist_id": str(self.settings.spotify_last_playlist_id or ""),
+            "music_scan_disabled_mods": bool(self.settings.music_scan_disabled_mods),
+            "music_extra_track_dirs": list(self.settings.music_extra_track_dirs or []),
         }
 
         try:
