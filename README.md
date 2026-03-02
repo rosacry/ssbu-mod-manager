@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.4.18**.
+Current release version: **1.4.19**.
 
 It gives you one place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -30,6 +30,7 @@ It gives you one place to manage mods, Skyline plugins, music assignments, CSS e
   - Mods: effect path retargeting during reslot no longer corrupts asset version numbers when a canonical `c##` slot token is already present in the path.
   - Mods: shared-path effect quarantine now handles pre-existing destination files on Windows without crashing on repeat runs.
   - Mods: configs with both `new-dir-files` and `new_dir_files` keys are now merged into a single canonical key to prevent stale dual-key divergence.
+  - Mods: BNTX portrait files whose internal texture name doesn't match the filename (from reslotting across slots or fighters) are now automatically patched during import, reslot, and installed-content repair, fixing tiny/missing portrait rendering on the VS screen and other UI contexts.
   - Runtime repair plugin junk-file cleanup now derives the SDMC root from the detected Yuzu data root instead of assuming a fixed directory depth from the mods path.
   - Mods: import now runs a postflight installed-content repair pass for the imported mods, so broken manifests, safe broad-support overlaps, and byte-identical exact file collisions are corrected immediately instead of being left for Yuzu/ARCropolis to discover.
   - Mods: repair/import postflight fills only the required `ui/replace[_patch]/chara/chara_0..4` portrait assets from the closest available portrait size in the same skin, and no longer fabricates advanced `chara_5..7` portrait files from mismatched BNTX sizes.
@@ -79,7 +80,7 @@ python build.py
 Output:
 
 - `dist/SSBUModManager/SSBUModManager.exe`
-- `dist/SSBUModManager-1.4.18-windows.zip`
+- `dist/SSBUModManager-1.4.19-windows.zip`
 
 If you explicitly need onefile packaging, build with PyInstaller manually using `--onefile`.
 

@@ -1,10 +1,14 @@
 """Skin slot detection and base-slot reslot helpers."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import shutil
+import struct
+
+log = logging.getLogger(__name__)
 
 
 _FIGHTER_PATH_RE = re.compile(
@@ -380,6 +384,9 @@ def reslot_mod_directory(source_dir: Path, output_dir: Path, fighter: str, sourc
         out_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(file_path, out_path)
 
+        # Patch BNTX internal texture name to match the (reslotted) filename.
+        if out_path.suffix.lower() == ".bntx":
+            patch_bntx_internal_name(out_path)
 
 def _should_keep_for_single_slot(relative_path: str, fighter: str, slot_token: str) -> bool:
     rel = normalize_rel_path(relative_path)
@@ -482,3 +489,109 @@ _VISUAL_SLOT_CATEGORIES = frozenset({"model", "ui"})
 
 def _is_visual_slot_categories(categories: frozenset[str] | set[str]) -> bool:
     return bool(set(categories) & _VISUAL_SLOT_CATEGORIES)
+
+
+# ---------------------------------------------------------------------------
+# BNTX internal texture-name patching
+# ---------------------------------------------------------------------------
+_BNTX_MAGIC = b"BNTX"
+_STRX_MAGIC = b"_STR"  # String table section magic (first 4 bytes of "_STRX")
+_BNTX_PORTRAIT_RE = re.compile(
+    r"^chara_\d_[a-z_]+_\d{2}$", re.IGNORECASE
+)
+
+
+def _extract_bntx_internal_name(data: bytes) -> str | None:
+    """Return the first portrait-like texture name from a BNTX string table, or *None*."""
+    idx = data.find(b"_STR")
+    if idx < 0:
+        return None
+    # Scan ~200 bytes past the _STR header for printable ASCII strings.
+    region = data[idx : idx + 256]
+    current: list[int] = []
+    best: str = ""
+    for b in region:
+        if 32 <= b < 127:
+            current.append(b)
+        else:
+            if current:
+                candidate = bytes(current).decode("ascii", errors="replace")
+                if len(candidate) > len(best):
+                    best = candidate
+                current = []
+    if current:
+        candidate = bytes(current).decode("ascii", errors="replace")
+        if len(candidate) > len(best):
+            best = candidate
+    return best if best else None
+
+
+def patch_bntx_internal_name(filepath: Path, expected_name: str | None = None) -> bool:
+    """Patch the internal texture name in a BNTX file to match the filename.
+
+    If *expected_name* is ``None`` the stem of *filepath* is used.
+    Returns ``True`` when any bytes were changed and written back.
+    """
+    filepath = Path(filepath)
+    if expected_name is None:
+        expected_name = filepath.stem
+
+    try:
+        data = filepath.read_bytes()
+    except OSError:
+        return False
+
+    if not data.startswith(_BNTX_MAGIC):
+        return False
+
+    current_name = _extract_bntx_internal_name(data)
+    if current_name is None or current_name == expected_name:
+        return False
+
+    old_bytes = current_name.encode("ascii")
+    new_bytes = expected_name.encode("ascii")
+
+    # Replace all occurrences that are null-terminated in the binary.
+    old_terminated = old_bytes + b"\x00"
+    new_terminated = new_bytes + b"\x00"
+
+    if len(new_terminated) > len(old_terminated):
+        # New name is longer – we cannot safely extend inline.  Log and skip.
+        log.warning(
+            "BNTX name patch skipped (new name longer): %s internal=%s expected=%s",
+            filepath.name, current_name, expected_name,
+        )
+        return False
+
+    # Pad to the same byte count as the old terminated string.
+    padded = new_terminated + b"\x00" * (len(old_terminated) - len(new_terminated))
+
+    patched = data.replace(old_terminated, padded)
+    if patched == data:
+        # Fallback: try replacing without null terminator (for non-terminated matches).
+        patched = data.replace(old_bytes, new_bytes + b"\x00" * (len(old_bytes) - len(new_bytes)))
+    if patched == data:
+        return False
+
+    try:
+        filepath.write_bytes(patched)
+    except OSError:
+        return False
+    return True
+
+
+def repair_bntx_internal_names(mod_root: Path) -> int:
+    """Scan all BNTX portrait files under *mod_root* and patch mismatched internal names.
+
+    Returns the number of files patched.
+    """
+    patched = 0
+    for bntx_path in mod_root.rglob("*.bntx"):
+        if not bntx_path.is_file():
+            continue
+        stem = bntx_path.stem
+        if not _BNTX_PORTRAIT_RE.match(stem):
+            continue
+        if patch_bntx_internal_name(bntx_path, stem):
+            patched += 1
+    return patched

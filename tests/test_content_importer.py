@@ -1808,3 +1808,113 @@ def test_merge_minimal_slot_manifest_normalizes_dual_keys():
     assert "fighter/mario/model/body/c00" in ndf
     # The extra file from the minimal manifest should be present.
     assert "fighter/mario/model/body/c00/extra.nutexb" in ndf["fighter/mario/model/body/c00"]
+
+
+# ---------------------------------------------------------------------------
+# BNTX internal texture-name patching tests
+# ---------------------------------------------------------------------------
+from src.core.skin_slot_utils import (
+    _extract_bntx_internal_name,
+    patch_bntx_internal_name,
+    repair_bntx_internal_names,
+)
+
+
+def _make_bntx_bytes(internal_name: str) -> bytes:
+    """Build a minimal valid BNTX binary with the given internal texture name."""
+    # Minimal BNTX header (magic + padding to reach _STRX)
+    header = b"BNTX" + b"\x00" * 412  # 416 bytes total to reach _STRX position
+    # String table section: _STR magic + padding + null-terminated name
+    str_section = b"_STRX" + b"\x00" * 21 + internal_name.encode("ascii") + b"\x00"
+    # _DIC section + BRTI section (stub)
+    dict_and_brti = b"\x00" * 20 + b"_DIC" + b"\x00" * 16 + b"BRTI" + b"\x00" * 128
+    # Padding to make it look like a real file
+    pixel_data = b"\xAB" * 4096
+    return header + str_section + dict_and_brti + pixel_data
+
+
+def test_extract_bntx_internal_name():
+    data = _make_bntx_bytes("chara_1_sonic_00")
+    name = _extract_bntx_internal_name(data)
+    assert name == "chara_1_sonic_00"
+
+
+def test_extract_bntx_internal_name_returns_none_for_non_bntx():
+    assert _extract_bntx_internal_name(b"NOT_A_BNTX_FILE") is None
+
+
+def test_patch_bntx_same_length_name(tmp_path: Path):
+    """Patching when old and new names have the same length (slot-only change)."""
+    bntx = tmp_path / "chara_1_sonic_02.bntx"
+    bntx.write_bytes(_make_bntx_bytes("chara_1_sonic_00"))
+    assert patch_bntx_internal_name(bntx) is True
+    # Verify the internal name was updated
+    assert _extract_bntx_internal_name(bntx.read_bytes()) == "chara_1_sonic_02"
+
+
+def test_patch_bntx_shorter_name_with_padding(tmp_path: Path):
+    """Patching when old name is longer (different fighter) pads with null bytes."""
+    bntx = tmp_path / "chara_1_edge_04.bntx"
+    bntx.write_bytes(_make_bntx_bytes("chara_1_chrom_00"))
+    assert patch_bntx_internal_name(bntx) is True
+    assert _extract_bntx_internal_name(bntx.read_bytes()) == "chara_1_edge_04"
+
+
+def test_patch_bntx_already_correct(tmp_path: Path):
+    """No patch needed when internal name already matches filename."""
+    bntx = tmp_path / "chara_1_sonic_02.bntx"
+    bntx.write_bytes(_make_bntx_bytes("chara_1_sonic_02"))
+    original = bntx.read_bytes()
+    assert patch_bntx_internal_name(bntx) is False
+    assert bntx.read_bytes() == original  # File unchanged
+
+
+def test_patch_bntx_skips_non_bntx(tmp_path: Path):
+    """Non-BNTX files are not modified."""
+    f = tmp_path / "chara_1_sonic_02.bntx"
+    f.write_bytes(b"NOT_BNTX" + b"\x00" * 100)
+    original = f.read_bytes()
+    assert patch_bntx_internal_name(f) is False
+    assert f.read_bytes() == original
+
+
+def test_repair_bntx_internal_names_batch(tmp_path: Path):
+    """repair_bntx_internal_names patches all mismatched portraits under a mod root."""
+    mod = tmp_path / "TestMod"
+    for i in range(3):
+        d = mod / "ui" / "replace" / "chara" / f"chara_{i}"
+        d.mkdir(parents=True, exist_ok=True)
+        # All internal names say sonic_00 but file says sonic_03
+        bntx = d / f"chara_{i}_sonic_03.bntx"
+        bntx.write_bytes(_make_bntx_bytes(f"chara_{i}_sonic_00"))
+
+    patched = repair_bntx_internal_names(mod)
+    assert patched == 3
+
+    for i in range(3):
+        bntx = mod / "ui" / "replace" / "chara" / f"chara_{i}" / f"chara_{i}_sonic_03.bntx"
+        assert _extract_bntx_internal_name(bntx.read_bytes()) == f"chara_{i}_sonic_03"
+
+
+def test_reslot_patches_bntx_internal_name(tmp_path: Path):
+    """reslot_mod_directory should patch the BNTX internal name after reslotting."""
+    from src.core.skin_slot_utils import reslot_mod_directory
+
+    src = tmp_path / "source"
+    portrait_dir = src / "ui" / "replace" / "chara" / "chara_1"
+    portrait_dir.mkdir(parents=True, exist_ok=True)
+    bntx = portrait_dir / "chara_1_sonic_00.bntx"
+    bntx.write_bytes(_make_bntx_bytes("chara_1_sonic_00"))
+    # Also add a fighter file so reslot has something to process
+    fighter_dir = src / "fighter" / "sonic" / "model" / "body" / "c00"
+    fighter_dir.mkdir(parents=True, exist_ok=True)
+    (fighter_dir / "model.numdlb").write_bytes(b"dummy")
+
+    dest = tmp_path / "output"
+    reslot_mod_directory(src, dest, "sonic", 0, 5)
+
+    # The BNTX should exist at the new slot path with patched internal name
+    reslotted = dest / "ui" / "replace" / "chara" / "chara_1" / "chara_1_sonic_05.bntx"
+    assert reslotted.exists(), f"Expected reslotted BNTX at {reslotted}"
+    assert _extract_bntx_internal_name(reslotted.read_bytes()) == "chara_1_sonic_05"
+

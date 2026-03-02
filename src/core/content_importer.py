@@ -20,6 +20,7 @@ from src.core.skin_slot_utils import (
     choose_primary_variant_root,
     copy_single_slot_variant,
     iter_slot_matches,
+    repair_bntx_internal_names,
     reslot_mod_directory,
 )
 from src.utils.xmsbt_parser import extract_entries_from_msbt, parse_xmsbt
@@ -720,6 +721,11 @@ def repair_installed_mods(
         portrait_repairs = _repair_missing_ui_portraits(mod_root)
         if portrait_repairs:
             summary.ui_portrait_repairs += portrait_repairs
+            changed_mods.add(mod_root.name)
+
+        bntx_name_patches = _repair_bntx_internal_names(mod_root)
+        if bntx_name_patches:
+            summary.ui_portrait_repairs += bntx_name_patches
             changed_mods.add(mod_root.name)
 
     _resolve_installed_exact_overlaps(
@@ -2040,6 +2046,12 @@ def _repair_missing_ui_portraits(mod_root: Path) -> int:
             size_map[target_size] = dest_path
             created += 1
     return created
+
+
+def _repair_bntx_internal_names(mod_root: Path) -> int:
+    """Patch BNTX portrait files whose internal texture name doesn't match
+    the filename.  Returns the number of files patched."""
+    return repair_bntx_internal_names(mod_root)
 
 
 def _cleanup_suspect_generated_ui_stock_icons(mods_path: Path, mod_root: Path) -> int:
