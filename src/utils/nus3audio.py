@@ -165,8 +165,8 @@ OPUS_RAW_PADDING_OFFSETS = (0, 4, 8, 16)
 OPUS_RAW_SLOT_MAX = 0x1000
 OPUS_CBR_SEARCH_START_DEFAULT = 0x18
 OPUS_CBR_TOC_CONSISTENCY_MIN_RATIO = 0.8
-FFMPEG_DIRECT_NOISE_ZCR_THRESHOLD = 0.30
-FFMPEG_DIRECT_NOISE_CORR_THRESHOLD = 0.55
+FFMPEG_DIRECT_NOISE_ZCR_THRESHOLD = 0.38
+FFMPEG_DIRECT_NOISE_CORR_THRESHOLD = 0.45
 FFMPEG_RAW_MIN_WAV_BYTES = 1000
 OPUS_PAGE_SEQUENCE_START = 2
 OPUS_INNER_DATA_OFFSET_FALLBACK = 4
@@ -2041,7 +2041,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r12"
+_DECODER_CACHE_REV = "r13"
 
 
 def _get_cache_dir() -> Path:
@@ -2116,14 +2116,25 @@ def _resolve_cached_preview(
     return False, "", None
 
 
-def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path) -> Optional[Path]:
-    """Best-effort whole-file ffmpeg decode with strict quality validation."""
+def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path,
+                              is_primary: bool = False) -> Optional[Path]:
+    """Decode via ffmpeg with quality validation.
+
+    When *is_primary* is True, the log messages use 'ffmpeg direct' rather
+    than 'ffmpeg direct fallback' to reflect its role as the preferred
+    decoder path.
+    """
+    label = "ffmpeg direct" if is_primary else "ffmpeg direct fallback"
     try:
         from src.utils.logger import logger
         result = _run_ffmpeg_to_wav(input_path, wav_out)
         if result is None:
             return None
         if result.returncode != 0 or not wav_out.exists():
+            stderr_preview = ""
+            if result.stderr:
+                stderr_preview = result.stderr.decode("utf-8", errors="replace")[:LOG_STDERR_PREVIEW_CHARS]
+            logger.debug("NUS3AUDIO", f"{label} failed (rc={result.returncode}): {stderr_preview}")
             return None
 
         sz = wav_out.stat().st_size
@@ -2133,15 +2144,17 @@ def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path) -> Optional[Path]
             and corr < FFMPEG_DIRECT_NOISE_CORR_THRESHOLD
         )
         if sz > PCM_WINDOW_BYTES_VALIDATE and _validate_wav_quality(wav_out) and not noisy_signature:
+            dur = _wav_duration_seconds(wav_out)
             logger.info(
                 "NUS3AUDIO",
-                f"ffmpeg direct fallback accepted ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+                f"{label} accepted ({sz} bytes, dur={dur:.1f}s, "
+                f"zcr={zcr:.3f}, corr={corr:.3f})"
             )
             return wav_out
 
-        logger.warn(
+        logger.debug(
             "NUS3AUDIO",
-            f"ffmpeg direct fallback rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
+            f"{label} rejected ({sz} bytes, zcr={zcr:.3f}, corr={corr:.3f})"
         )
         try:
             wav_out.unlink()
@@ -2150,7 +2163,7 @@ def _try_ffmpeg_direct_to_wav(input_path: Path, wav_out: Path) -> Optional[Path]
     except Exception as e:
         try:
             from src.utils.logger import logger
-            logger.debug("NUS3AUDIO", f"ffmpeg direct fallback failed: {e}")
+            logger.debug("NUS3AUDIO", f"{label} failed: {e}")
         except Exception:
             pass
     return None
@@ -2191,21 +2204,24 @@ def extract_and_convert(
     if len(data) < 8 or data[:4] != b'NUS3':
         return False, "Not a valid NUS3AUDIO file", None
 
-    # Priority 1: manual extraction + per-format conversion
-    # NOTE: ffmpeg whole-file demux can return distorted output on some
-    # builds while still producing a superficially valid WAV. We decode
-    # manually first to keep behavior deterministic across environments.
-    sections = _find_sections(data)
+    # Priority 1: ffmpeg direct decode.
+    # ffmpeg's NUS3AUDIO demuxer handles LOPUS frame extraction, slot
+    # sizes, trailer bytes, and format variants (v1-v4, CBR/VBR, BE/LE
+    # frame sizes) more reliably than manual parsing.  Manual extraction
+    # can pick incorrect slot sizes causing 2x-speed playback (CBR with
+    # doubled slot) or crunchy distortion (wrong frame boundaries).
+    wav_out = cache_dir / f"{cache_key}.wav"
+    direct = _try_ffmpeg_direct_to_wav(nus3audio_path, wav_out, is_primary=True)
+    if direct is not None:
+        return True, f"Playing: {nus3audio_path.name}", direct
 
-    # Extract audio entries using ADOF if available
+    # Priority 2: manual extraction + per-format conversion.
+    # Used when ffmpeg fails (missing NUS3 demuxer, unusual container,
+    # or quality gate rejection).
+    sections = _find_sections(data)
     audio_entries = _extract_audio_entries(data, sections)
 
     if not audio_entries:
-        # Last-resort whole-file fallback for unusual containers.
-        wav_out = cache_dir / f"{cache_key}.wav"
-        direct = _try_ffmpeg_direct_to_wav(nus3audio_path, wav_out)
-        if direct is not None:
-            return True, f"Playing: {nus3audio_path.name}", direct
         return False, "No audio data found in NUS3AUDIO", None
 
     # Try the first (usually only) audio entry
@@ -2234,12 +2250,6 @@ def extract_and_convert(
         )
         if result[0]:
             return result
-
-    # Priority 2: whole-file ffmpeg fallback (strictly validated).
-    wav_out = cache_dir / f"{cache_key}.wav"
-    direct = _try_ffmpeg_direct_to_wav(nus3audio_path, wav_out)
-    if direct is not None:
-        return True, f"Playing: {nus3audio_path.name}", direct
 
     fmt_hex = struct.unpack_from('<I', audio_data, 0)[0]
     fmt_ascii = audio_data[:4].decode('ascii', errors='replace')
