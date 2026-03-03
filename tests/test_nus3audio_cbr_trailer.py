@@ -27,7 +27,7 @@ class CBRTrailerTrimTests(unittest.TestCase):
             blob_parts.append(_make_slot(slot_size, payload, declared_len=payload_len))
 
         data = b"".join(blob_parts)
-        frames = _extract_opus_cbr_frames(data, slot_size=slot_size, search_start=0)
+        frames, _ = _extract_opus_cbr_frames(data, slot_size=slot_size, search_start=0)
 
         self.assertEqual(len(frames), frame_count)
         self.assertTrue(all(len(fr) == payload_len for fr in frames))
@@ -45,7 +45,7 @@ class CBRTrailerTrimTests(unittest.TestCase):
             blob_parts.append(_make_slot(slot_size, payload, declared_len=declared))
 
         data = b"".join(blob_parts)
-        frames = _extract_opus_cbr_frames(data, slot_size=slot_size, search_start=0)
+        frames, _ = _extract_opus_cbr_frames(data, slot_size=slot_size, search_start=0)
 
         self.assertEqual(len(frames), frame_count)
         self.assertTrue(all(len(fr) == slot_size for fr in frames))

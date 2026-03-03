@@ -1026,12 +1026,18 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                 )
 
     # CBR fallback — only when size-prefixed/VBR didn't find a solid result.
+    # CBR is very sensitive to exact slot size — a 1-byte error causes
+    # cumulative alignment drift.  Add ±1, ±2 to catch off-by-one headers.
     if not _stop_inner_search:
         for frame_size in frame_size_candidates:
             if _stop_inner_search:
                 break
             cbr_slots = [
                 frame_size,
+                frame_size - 2,
+                frame_size - 1,
+                frame_size + 1,
+                frame_size + 2,
                 frame_size + 4,
                 frame_size + 8,
             ]
@@ -1050,11 +1056,12 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                 for frame_start in start_offsets:
                     if _stop_inner_search:
                         break
+                    _cbr_result, _cbr_found_off = _extract_opus_cbr_frames(
+                        lopus_data, cs, search_start=frame_start)
                     _consider(
-                        _extract_opus_cbr_frames(
-                            lopus_data, cs, search_start=frame_start),
+                        _cbr_result,
                         2,
-                        info=f"cbr slot={cs} start={frame_start}",
+                        info=f"cbr slot={cs} start={frame_start} found={_cbr_found_off}",
                     )
 
     # Last resort: auto-detect slot size by scanning from each candidate start.
@@ -1140,7 +1147,7 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
             page_data_parts.append(frame)
             page_segments.extend(frame_segs)
             segs_used += len(frame_segs)
-            granule += samples_per_frame
+            granule += _opus_packet_samples(frame)
             i += 1
 
         flags = OPUS_PAGE_EOS_FLAG if i >= len(best_frames) else OPUS_PAGE_NO_FLAGS
@@ -1642,7 +1649,7 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                                 )
                                 else LOPUS_DEFAULT_HEADER_SIZE
                             )
-                            cbr_frames = _extract_opus_cbr_frames(
+                            cbr_frames, _ = _extract_opus_cbr_frames(
                                 inner, slot_size, search_start=cbr_start)
                             if len(cbr_frames) >= OPUS_MIN_VALID_FRAME_COUNT and _validate_opus_frames(cbr_frames):
                                 return _build_ogg_opus_from_frames(
@@ -1739,7 +1746,8 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
 
 
 def _extract_opus_cbr_frames(data: bytes, slot_size: int,
-                             search_start: int = OPUS_CBR_SEARCH_START_DEFAULT) -> list[bytes]:
+                             search_start: int = OPUS_CBR_SEARCH_START_DEFAULT
+                             ) -> tuple[list[bytes], int]:
     """Extract fixed-size (CBR) Opus frames with no per-frame size prefix.
 
     LOPUS type 0x80000001 can use constant bitrate where each Opus packet
@@ -1748,10 +1756,12 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
     TOC bytes appear consistently at *slot_size* intervals, then pick the
     best candidate (highest Opus config = fullband CELT for music).
 
-    Returns a list of raw Opus frame bytes, or an empty list on failure.
+    Returns ``(frames, found_offset)`` where *found_offset* is the byte
+    position of the first extracted frame within *data*, or -1 when no
+    valid CBR alignment was found.
     """
     if slot_size < LOPUS_MIN_SLOT_SIZE or slot_size > LOPUS_MAX_SLOT_SIZE:
-        return []
+        return [], -1
 
     end_search = min(search_start + slot_size, len(data) - slot_size * 3)
     candidates: list[tuple[int, int, int]] = []  # (config, offset, num_frames)
@@ -1777,7 +1787,7 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
             candidates.append((cfg, test_off, num_frames))
 
     if not candidates:
-        return []
+        return [], -1
 
     # Pick the candidate with the highest config value.
     # Music files use fullband CELT (configs 28-31) which sorts highest.
@@ -1790,7 +1800,7 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
         frames.append(data[pos:pos + slot_size])
         pos += slot_size
     if not frames:
-        return frames
+        return frames, best_off
 
     # Many SSBU custom CBR LOPUS tracks append an 8-byte trailer to each
     # slot where the first 4 bytes are a BE payload length (commonly slot-8).
@@ -1816,9 +1826,9 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
                 pkt_len = declared if 1 <= declared <= slot_size - 8 else mode_len
                 trimmed.append(fr[:pkt_len])
             if _validate_opus_frames(trimmed):
-                return trimmed
+                return trimmed, best_off
 
-    return frames
+    return frames, best_off
 
 
 def _extract_opus_be_slots(data: bytes, start_offset: int,
@@ -2102,9 +2112,7 @@ def _opus_toc_samples(toc_byte: int) -> int:
 
     The top 5 bits of the TOC byte encode the configuration which
     determines the frame duration.  We return the sample count for a
-    *single* coded frame.  For code 1/2/3 (multiple frames per packet)
-    the sample count is per-sub-frame, but in SSBU LOPUS each packet
-    is code-0 so this is fine.
+    *single* coded frame.
 
     Reference: RFC 6716 Section 3.1
     """
@@ -2130,6 +2138,28 @@ def _opus_toc_samples(toc_byte: int) -> int:
         return OPUS_DEFAULT_SAMPLES_PER_FRAME
 
     return durations[config % OPUS_DURATION_VARIANTS]
+
+
+def _opus_packet_samples(packet: bytes) -> int:
+    """Return total 48 kHz samples for one Opus packet.
+
+    Accounts for multi-frame packets (TOC code 1/2/3).
+    Code 0 = 1 frame, code 1 = 2 equal frames, code 2 = 2 different
+    frames, code 3 = variable count (read from byte 1).
+    """
+    if not packet:
+        return OPUS_DEFAULT_SAMPLES_PER_FRAME
+    toc = packet[0]
+    code = toc & 3
+    frame_samples = _opus_toc_samples(toc)
+    if code == 0:
+        return frame_samples
+    elif code in (1, 2):
+        return frame_samples * 2
+    elif code == 3 and len(packet) >= 2:
+        n_frames = packet[1] & 0x3F
+        return frame_samples * max(1, n_frames)
+    return frame_samples
 
 
 def _build_ogg_opus_from_frames(
@@ -2175,7 +2205,7 @@ def _build_ogg_opus_from_frames(
             page_data_parts.append(frame)
             page_segments.extend(frame_segs)
             segs_used += len(frame_segs)
-            granule += samples_per_frame
+            granule += _opus_packet_samples(frame)
             i += 1
 
         flags = OPUS_PAGE_EOS_FLAG if i >= len(opus_frames) else OPUS_PAGE_NO_FLAGS
@@ -2188,7 +2218,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r18"
+_DECODER_CACHE_REV = "r19"
 
 
 def _get_cache_dir() -> Path:
@@ -2745,13 +2775,49 @@ def _try_convert_audio(
         _good_enough_found = False
 
         def _is_good_enough(c: dict) -> bool:
-            """A candidate with clean audio — stop searching."""
-            return (
-                c["zcr"] < 0.30
-                and c["corr"] > 0.40
-                and c["duration"] > 5.0
-                and c["score"] > 0.3
-            )
+            """A candidate with clean audio — stop searching.
+
+            Requires clean noise metrics.  Candidates whose first Opus
+            frame has config < OPUS_MIN_MUSIC_CONFIG (SILK NB/MB/WB) are
+            never considered good-enough — they are almost always
+            misaligned extraction artifacts, not real music data.
+            """
+            if c["score"] <= 0.3 or c["duration"] <= 5.0:
+                return False
+            if c["zcr"] >= 0.30 or c["corr"] <= 0.40:
+                return False
+            # Reject low-config (SILK) candidates from early-exit
+            if 0 <= c.get("toc_config", -1) < OPUS_MIN_MUSIC_CONFIG:
+                return False
+            return True
+
+        def _read_first_toc_config(ogg_data: bytes) -> int:
+            """Return the Opus config index from the first audio frame
+            in an OGG Opus stream, or -1 on failure."""
+            try:
+                pages_seen = 0
+                pos = 0
+                while pos < len(ogg_data) - 27:
+                    if ogg_data[pos:pos + 4] == b'OggS':
+                        pages_seen += 1
+                        if pages_seen >= 3:  # skip head + tags pages
+                            n_segs = ogg_data[pos + 26]
+                            data_start = pos + 27 + n_segs
+                            if data_start < len(ogg_data):
+                                return (
+                                    ogg_data[data_start]
+                                    >> OPUS_TOC_CONFIG_SHIFT
+                                ) & OPUS_TOC_CONFIG_MASK
+                            break
+                        n_segs = ogg_data[pos + 26]
+                        seg_table = ogg_data[pos + 27:pos + 27 + n_segs]
+                        page_size = 27 + n_segs + sum(seg_table)
+                        pos += page_size
+                    else:
+                        pos += 1
+            except Exception:
+                pass
+            return -1
 
         def _capture_best(ogg_data: bytes, label: str,
                           forced_channels: Optional[int] = None) -> None:
@@ -2768,9 +2834,16 @@ def _try_convert_audio(
                     raw_score, duration_s, len(audio_data)
                 )
                 zcr, corr = _wav_noise_signature(wav_path)
+
+                # Penalise candidates with low Opus config (SILK NB/MB/WB).
+                toc_config = _read_first_toc_config(ogg_data)
+                config_penalty = 1.0
+                if 0 <= toc_config < OPUS_MIN_MUSIC_CONFIG:
+                    config_penalty = 0.30
+
                 candidate = {
                     "label": f"{label}/{out_channels}ch",
-                    "score": score,
+                    "score": score * config_penalty,
                     "raw": raw_score,
                     "duration": duration_s,
                     "bitrate": bitrate_kbps,
@@ -2780,9 +2853,12 @@ def _try_convert_audio(
                     "forced_channels": forced_channels,
                     "ogg": ogg_path,
                     "wav": wav_path,
+                    "toc_config": toc_config,
                 }
                 candidates.append(candidate)
-                if _is_good_enough(candidate):
+                # Only trigger early exit once we have >= 2 candidates
+                # so opus_container alone never short-circuits.
+                if len(candidates) >= 2 and _is_good_enough(candidate):
                     _good_enough_found = True
 
         # Main OPUS container path.
@@ -2869,7 +2945,8 @@ def _try_convert_audio(
                     "OPUS candidates: " + "; ".join(
                         f"{c['label']} adj={c['score']:.2f} raw={c['raw']:.2f} "
                         f"dur={c['duration']:.2f}s br={int(round(c['bitrate']))}kbps "
-                        f"zcr={c['zcr']:.3f} corr={c['corr']:.3f}"
+                        f"zcr={c['zcr']:.3f} corr={c['corr']:.3f} "
+                        f"cfg={c.get('toc_config', -1)}"
                         for c in top
                     )
                 )
