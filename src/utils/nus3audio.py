@@ -955,13 +955,30 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                 )
 
     # CBR fallback when no robust size-prefixed extraction was found.
+    # Apply the same slot-size variations as size-prefixed extraction:
+    # half, double, and ±4/±8 catch headers that report the wrong value.
     for frame_size in frame_size_candidates:
-        for frame_start in start_offsets:
-            _consider(
-                _extract_opus_cbr_frames(
-                    lopus_data, frame_size, search_start=frame_start),
-                2,
-            )
+        cbr_slots = [
+            frame_size,
+            frame_size + 4,
+            frame_size + 8,
+        ]
+        if frame_size >= LOPUS_MIN_SLOT_SIZE * 2:
+            cbr_slots.append(frame_size // 2)
+        cbr_doubled = frame_size * 2
+        if cbr_doubled <= LOPUS_MAX_SLOT_SIZE:
+            cbr_slots.append(cbr_doubled)
+        seen_cbr: set[int] = set()
+        for cs in cbr_slots:
+            if cs in seen_cbr or not (LOPUS_MIN_SLOT_SIZE <= cs <= LOPUS_MAX_SLOT_SIZE):
+                continue
+            seen_cbr.add(cs)
+            for frame_start in start_offsets:
+                _consider(
+                    _extract_opus_cbr_frames(
+                        lopus_data, cs, search_start=frame_start),
+                    2,
+                )
 
     # Last resort: auto-detect slot size by scanning from each candidate start.
     for frame_start in start_offsets:
@@ -2066,7 +2083,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r15"
+_DECODER_CACHE_REV = "r16"
 
 
 def _get_cache_dir() -> Path:
@@ -2474,6 +2491,42 @@ def _try_convert_audio(
                 except Exception as e:
                     logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
 
+            # Always try mono as additional candidate if all existing
+            # candidates have high noise signature.
+            if candidates and all(
+                c["zcr"] > NOISE_GATE_ZCR_THRESHOLD * 0.9
+                or c["corr"] < NOISE_GATE_CORR_THRESHOLD * 2
+                for c in candidates
+            ):
+                ch_label = "1_retry"
+                try:
+                    ogg_data = _lopus_to_ogg(audio_data, force_channels=1)
+                    ogg_path = cache_dir / f"{cache_key}_lopus_{ch_label}.ogg"
+                    ogg_path.write_bytes(ogg_data)
+                    wav_path = _convert_ogg_opus_to_wav(ogg_path)
+                    if wav_path and wav_path.exists():
+                        raw_score, out_channels = _score_wav_quality(wav_path)
+                        duration_s = _wav_duration_seconds(wav_path)
+                        score, bitrate_kbps = _score_opus_candidate(
+                            raw_score, duration_s, len(audio_data)
+                        )
+                        zcr, corr = _wav_noise_signature(wav_path)
+                        candidates.append({
+                            "label": f"{ch_label}/{out_channels}ch",
+                            "score": score,
+                            "raw": raw_score,
+                            "duration": duration_s,
+                            "bitrate": bitrate_kbps,
+                            "zcr": zcr,
+                            "corr": corr,
+                            "out_channels": out_channels,
+                            "forced_channels": 1,
+                            "ogg": ogg_path,
+                            "wav": wav_path,
+                        })
+                except Exception as e:
+                    logger.debug("NUS3AUDIO", f"LOPUS try ch={ch_label}: {e}")
+
             best_idx = _select_best_candidate_index(candidates)
             if best_idx >= 0 and candidates:
                 chosen_idx = _pick_low_noise_override(candidates, best_idx)
@@ -2533,10 +2586,12 @@ def _try_convert_audio(
                         best_candidate["zcr"] > NOISE_GATE_ZCR_THRESHOLD
                         and best_candidate["corr"] < NOISE_GATE_CORR_THRESHOLD
                     ):
+                        hex_preview = audio_data[:128].hex(' ')
                         logger.warn(
                             "NUS3AUDIO",
                             f"LOPUS noise gate rejected {best_label} "
-                            f"(zcr={best_candidate['zcr']:.3f}, corr={best_candidate['corr']:.3f})"
+                            f"(zcr={best_candidate['zcr']:.3f}, corr={best_candidate['corr']:.3f}) "
+                            f"| header[0:128]: {hex_preview}"
                         )
                     else:
                         return True, f"Playing: {display_name}", chosen_output
@@ -2633,20 +2688,20 @@ def _try_convert_audio(
                 except Exception:
                     pass
 
-        if not candidates:
-            ch_label = "1"
-            for payload_off in OPUS_PAYLOAD_OFFSETS:
-                if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
-                    continue
-                try:
-                    ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=1)
-                    _capture_best(
-                        ogg_data,
-                        f"opus_lopus_{ch_label}_off{payload_off}",
-                        forced_channels=1,
-                    )
-                except Exception:
-                    pass
+        # Always try mono as well — some tracks have wrong channel count
+        # in their headers, causing stereo decode of mono data = noise.
+        for payload_off in OPUS_PAYLOAD_OFFSETS:
+            if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
+                continue
+            try:
+                ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=1)
+                _capture_best(
+                    ogg_data,
+                    f"opus_lopus_1_off{payload_off}",
+                    forced_channels=1,
+                )
+            except Exception:
+                pass
 
         best_idx = _select_best_candidate_index(candidates)
         if best_idx >= 0 and candidates:
@@ -2707,10 +2762,13 @@ def _try_convert_audio(
                     best_candidate["zcr"] > NOISE_GATE_ZCR_THRESHOLD
                     and best_candidate["corr"] < NOISE_GATE_CORR_THRESHOLD
                 ):
+                    # Hex dump for diagnosis
+                    hex_preview = audio_data[:128].hex(' ')
                     logger.warn(
                         "NUS3AUDIO",
                         f"OPUS noise gate rejected {best_label} "
-                        f"(zcr={best_candidate['zcr']:.3f}, corr={best_candidate['corr']:.3f})"
+                        f"(zcr={best_candidate['zcr']:.3f}, corr={best_candidate['corr']:.3f}) "
+                        f"| header[0:128]: {hex_preview}"
                     )
                 else:
                     return True, f"Playing: {display_name}", chosen_output
