@@ -716,6 +716,43 @@ def _extract_frames_with_slot(data: bytes, start: int, slot_size: int,
     return frames
 
 
+def _extract_frames_vbr(data: bytes, start: int,
+                        endian: str = '<') -> list[bytes]:
+    """Extract Opus frames with variable-length size prefixes (VBR).
+
+    Each frame is preceded by a 4-byte size in *endian* byte order,
+    followed by the frame data.  Position advances by 4 + actual_size
+    (no fixed slot padding).  Zero-size entries are skipped (up to a
+    limit) to handle alignment padding.
+
+    Returns:
+        List of raw Opus frame bytes (may be empty).
+    """
+    fmt = f'{endian}I'
+    frames: list[bytes] = []
+    pos = start
+    max_consecutive_zeros = 16
+    zero_run = 0
+    while pos + U32_BYTE_WIDTH <= len(data):
+        actual_size = struct.unpack_from(fmt, data, pos)[0]
+        if actual_size == 0:
+            zero_run += 1
+            if zero_run > max_consecutive_zeros:
+                break
+            pos += U32_BYTE_WIDTH
+            continue
+        zero_run = 0
+        if actual_size > LOPUS_MAX_SLOT_SIZE:
+            break
+        if pos + U32_BYTE_WIDTH + actual_size > len(data):
+            break
+        frames.append(
+            data[pos + U32_BYTE_WIDTH:pos + U32_BYTE_WIDTH + actual_size]
+        )
+        pos += U32_BYTE_WIDTH + actual_size
+    return frames
+
+
 def _auto_detect_slot_frames(data: bytes, start: int) -> Optional[list[bytes]]:
     """Auto-detect slot size by scanning the data for valid Opus frame patterns.
 
@@ -973,7 +1010,22 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                     info=f"szpfx slot={slot_size} start={frame_start} BE",
                 )
 
-    # CBR fallback — only when size-prefixed didn't find a solid result.
+    # VBR extraction (variable-length size prefixes, no fixed slot).
+    # Handles tracks where frame sizes vary and exceed the declared slot.
+    if not _stop_inner_search:
+        for frame_start in start_offsets:
+            if _stop_inner_search:
+                break
+            for endian in ('<', '>'):
+                if _stop_inner_search:
+                    break
+                _consider(
+                    _extract_frames_vbr(lopus_data, frame_start, endian),
+                    3,
+                    info=f"vbr start={frame_start} {'LE' if endian == '<' else 'BE'}",
+                )
+
+    # CBR fallback — only when size-prefixed/VBR didn't find a solid result.
     if not _stop_inner_search:
         for frame_size in frame_size_candidates:
             if _stop_inner_search:
@@ -1015,14 +1067,31 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
     if not best_frames:
         raise ValueError("No Opus frames extracted from LOPUS data")
 
-    # Log winning extraction parameters for diagnosis
+    # Log winning extraction parameters + first frame TOC byte for diagnosis
     from src.utils.logger import logger
-    kind_names = {3: "size-prefixed", 2: "CBR", 1: "auto-detect"}
+    kind_names = {3: "size-prefixed/VBR", 2: "CBR", 1: "auto-detect"}
+    toc_info = ""
+    if best_frames and len(best_frames[0]) >= 1:
+        toc_byte = best_frames[0][0]
+        toc_config = (toc_byte >> OPUS_TOC_CONFIG_SHIFT) & OPUS_TOC_CONFIG_MASK
+        toc_stereo = (toc_byte >> 2) & 1
+        toc_code = toc_byte & 3
+        # Frame duration lookup from RFC 6716 config table
+        _dur_table = (
+            10, 20, 40, 60, 10, 20, 40, 60, 10, 20, 40, 60,  # SILK
+            10, 20, 10, 20,  # Hybrid
+            2.5, 5, 10, 20, 2.5, 5, 10, 20,  # CELT NB/WB
+            2.5, 5, 10, 20, 2.5, 5, 10, 20,  # CELT SWB/FB
+        )
+        frame_ms = _dur_table[toc_config] if toc_config < len(_dur_table) else 20
+        toc_info = (f" TOC=0x{toc_byte:02X} cfg={toc_config} "
+                    f"{'stereo' if toc_stereo else 'mono'} "
+                    f"{frame_ms}ms/frame sz={len(best_frames[0])}B")
     logger.debug(
         "NUS3AUDIO",
         f"_lopus_to_ogg: {len(best_frames)} frames via "
         f"{kind_names.get(best_kind_rank, '?')} [{best_extraction_info}] "
-        f"ch={force_channels or 'auto'}"
+        f"ch={force_channels or 'auto'}{toc_info}"
     )
 
     channel_count = force_channels if force_channels is not None else best_channel_count
@@ -2119,7 +2188,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r17"
+_DECODER_CACHE_REV = "r18"
 
 
 def _get_cache_dir() -> Path:
@@ -2678,8 +2747,8 @@ def _try_convert_audio(
         def _is_good_enough(c: dict) -> bool:
             """A candidate with clean audio — stop searching."""
             return (
-                c["zcr"] < 0.25
-                and c["corr"] > 0.50
+                c["zcr"] < 0.30
+                and c["corr"] > 0.40
                 and c["duration"] > 5.0
                 and c["score"] > 0.3
             )
@@ -2753,7 +2822,7 @@ def _try_convert_audio(
                 for c in candidates
             )
         ):
-            for payload_off in OPUS_PAYLOAD_OFFSETS[:3]:
+            for payload_off in OPUS_PAYLOAD_OFFSETS:
                 if _good_enough_found:
                     break
                 if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
