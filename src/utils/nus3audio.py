@@ -158,7 +158,7 @@ OPUS_CONTAINER_MAX_DATA_OFFSET = 0x100
 OPUS_CONTAINER_SAMPLE_RATE_MIN = 8000
 OPUS_CONTAINER_SAMPLE_RATE_MAX = 192000
 OPUS_CONTAINER_SIZE_SLACK_BYTES = 64
-OPUS_PAYLOAD_OFFSETS = (4, 0x20, 0x30, 0x40, 0x48, 0x50, 0x60, 0x70, 0x80)
+OPUS_PAYLOAD_OFFSETS = (4, 0x20, 0x30, 0x40, 0x48)
 OPUS_HEADER_SCAN_OFFSETS = (8, 12, 16, 20, 24, 28, 32, 48, 64, 0x28, 0x30)
 OPUS_FIXED_SLOT_SIZES = (0x280, 0x500, 0x200, 0x400, 0x100, 0x300, 0x600, 0x800)
 OPUS_FIXED_SLOT_SKIP_OFFSETS = (4, 8, 12, 16, 0x28, 0x30)
@@ -909,19 +909,32 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
     best_frames: list[bytes] = []
     best_channel_count = channel_candidates[0]
     best_kind_rank = -1  # 3=size-prefixed, 2=CBR, 1=auto-detect
+    best_extraction_info = ""  # diagnostic: what parameters won
+    _stop_inner_search = False  # early exit when size-prefixed finds ≥100 frames
 
-    def _consider(frames: list[bytes], kind_rank: int) -> None:
-        nonlocal best_frames, best_kind_rank
+    def _consider(frames: list[bytes], kind_rank: int,
+                  info: str = "") -> None:
+        nonlocal best_frames, best_kind_rank, best_extraction_info
+        nonlocal _stop_inner_search
         if len(frames) < OPUS_MIN_VALID_FRAME_COUNT or not _validate_opus_frames(frames):
             return
+        improved = False
         if kind_rank > best_kind_rank:
             best_frames = frames
             best_kind_rank = kind_rank
-            return
-        if kind_rank == best_kind_rank and len(frames) > len(best_frames):
+            best_extraction_info = info
+            improved = True
+        elif kind_rank == best_kind_rank and len(frames) > len(best_frames):
             best_frames = frames
+            best_extraction_info = info
+            improved = True
+        # Early exit: once size-prefixed finds ≥100 frames, stop searching
+        if improved and kind_rank >= 3 and len(frames) >= 100:
+            _stop_inner_search = True
 
     for frame_size in frame_size_candidates:
+        if _stop_inner_search:
+            break
         # Try the declared size, +4, +8 (different overhead variants),
         # and half / double (catches headers with wrong factor).
         candidate_slots = [
@@ -942,52 +955,75 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                 seen_slots.add(s)
                 unique_slots.append(s)
         for slot_size in unique_slots:
+            if _stop_inner_search:
+                break
             for frame_start in start_offsets:
+                if _stop_inner_search:
+                    break
                 _consider(
                     _extract_frames_with_slot(
                         lopus_data, frame_start, slot_size, '<'),
                     3,
+                    info=f"szpfx slot={slot_size} start={frame_start} LE",
                 )
                 _consider(
                     _extract_frames_with_slot(
                         lopus_data, frame_start, slot_size, '>'),
                     3,
+                    info=f"szpfx slot={slot_size} start={frame_start} BE",
                 )
 
-    # CBR fallback when no robust size-prefixed extraction was found.
-    # Apply the same slot-size variations as size-prefixed extraction:
-    # half, double, and ±4/±8 catch headers that report the wrong value.
-    for frame_size in frame_size_candidates:
-        cbr_slots = [
-            frame_size,
-            frame_size + 4,
-            frame_size + 8,
-        ]
-        if frame_size >= LOPUS_MIN_SLOT_SIZE * 2:
-            cbr_slots.append(frame_size // 2)
-        cbr_doubled = frame_size * 2
-        if cbr_doubled <= LOPUS_MAX_SLOT_SIZE:
-            cbr_slots.append(cbr_doubled)
-        seen_cbr: set[int] = set()
-        for cs in cbr_slots:
-            if cs in seen_cbr or not (LOPUS_MIN_SLOT_SIZE <= cs <= LOPUS_MAX_SLOT_SIZE):
-                continue
-            seen_cbr.add(cs)
-            for frame_start in start_offsets:
-                _consider(
-                    _extract_opus_cbr_frames(
-                        lopus_data, cs, search_start=frame_start),
-                    2,
-                )
+    # CBR fallback — only when size-prefixed didn't find a solid result.
+    if not _stop_inner_search:
+        for frame_size in frame_size_candidates:
+            if _stop_inner_search:
+                break
+            cbr_slots = [
+                frame_size,
+                frame_size + 4,
+                frame_size + 8,
+            ]
+            if frame_size >= LOPUS_MIN_SLOT_SIZE * 2:
+                cbr_slots.append(frame_size // 2)
+            cbr_doubled = frame_size * 2
+            if cbr_doubled <= LOPUS_MAX_SLOT_SIZE:
+                cbr_slots.append(cbr_doubled)
+            seen_cbr: set[int] = set()
+            for cs in cbr_slots:
+                if _stop_inner_search:
+                    break
+                if cs in seen_cbr or not (LOPUS_MIN_SLOT_SIZE <= cs <= LOPUS_MAX_SLOT_SIZE):
+                    continue
+                seen_cbr.add(cs)
+                for frame_start in start_offsets:
+                    if _stop_inner_search:
+                        break
+                    _consider(
+                        _extract_opus_cbr_frames(
+                            lopus_data, cs, search_start=frame_start),
+                        2,
+                        info=f"cbr slot={cs} start={frame_start}",
+                    )
 
     # Last resort: auto-detect slot size by scanning from each candidate start.
-    for frame_start in start_offsets:
-        detected = _auto_detect_slot_frames(lopus_data, frame_start)
-        if detected:
-            _consider(detected, 1)
+    if not _stop_inner_search:
+        for frame_start in start_offsets:
+            detected = _auto_detect_slot_frames(lopus_data, frame_start)
+            if detected:
+                _consider(detected, 1, info=f"autodetect start={frame_start}")
 
     if not best_frames:
         raise ValueError("No Opus frames extracted from LOPUS data")
+
+    # Log winning extraction parameters for diagnosis
+    from src.utils.logger import logger
+    kind_names = {3: "size-prefixed", 2: "CBR", 1: "auto-detect"}
+    logger.debug(
+        "NUS3AUDIO",
+        f"_lopus_to_ogg: {len(best_frames)} frames via "
+        f"{kind_names.get(best_kind_rank, '?')} [{best_extraction_info}] "
+        f"ch={force_channels or 'auto'}"
+    )
 
     channel_count = force_channels if force_channels is not None else best_channel_count
 
@@ -2083,7 +2119,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r16"
+_DECODER_CACHE_REV = "r17"
 
 
 def _get_cache_dir() -> Path:
@@ -2637,9 +2673,22 @@ def _try_convert_audio(
         from src.utils.logger import logger
         candidates: list[dict] = []
         best_candidate: Optional[dict] = None
+        _good_enough_found = False
+
+        def _is_good_enough(c: dict) -> bool:
+            """A candidate with clean audio — stop searching."""
+            return (
+                c["zcr"] < 0.25
+                and c["corr"] > 0.50
+                and c["duration"] > 5.0
+                and c["score"] > 0.3
+            )
 
         def _capture_best(ogg_data: bytes, label: str,
                           forced_channels: Optional[int] = None) -> None:
+            nonlocal _good_enough_found
+            if _good_enough_found:
+                return
             ogg_path = cache_dir / f"{cache_key}_{label}.ogg"
             ogg_path.write_bytes(ogg_data)
             wav_path = _convert_ogg_opus_to_wav(ogg_path)
@@ -2664,6 +2713,8 @@ def _try_convert_audio(
                     "wav": wav_path,
                 }
                 candidates.append(candidate)
+                if _is_good_enough(candidate):
+                    _good_enough_found = True
 
         # Main OPUS container path.
         try:
@@ -2671,37 +2722,51 @@ def _try_convert_audio(
         except Exception as e:
             logger.debug("NUS3AUDIO", f"OPUS container conversion: {e}")
 
-        # Fallback: try interpreting payload offsets as LOPUS. Keep mono as
-        # a strict last resort only.
-        for try_ch in [None, 2]:
-            ch_label = str(try_ch) if try_ch is not None else "auto"
-            for payload_off in OPUS_PAYLOAD_OFFSETS:
+        # Fallback: try interpreting payload offsets as LOPUS.
+        if not _good_enough_found:
+            for try_ch in [None, 2]:
+                if _good_enough_found:
+                    break
+                ch_label = str(try_ch) if try_ch is not None else "auto"
+                for payload_off in OPUS_PAYLOAD_OFFSETS:
+                    if _good_enough_found:
+                        break
+                    if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
+                        continue
+                    try:
+                        ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=try_ch)
+                        _capture_best(
+                            ogg_data,
+                            f"opus_lopus_{ch_label}_off{payload_off}",
+                            forced_channels=try_ch,
+                        )
+                    except Exception:
+                        pass
+
+        # Mono retry — only when all existing candidates look noisy.
+        if (
+            not _good_enough_found
+            and candidates
+            and all(
+                c["zcr"] > NOISE_GATE_ZCR_THRESHOLD * 0.9
+                or c["corr"] < NOISE_GATE_CORR_THRESHOLD * 2
+                for c in candidates
+            )
+        ):
+            for payload_off in OPUS_PAYLOAD_OFFSETS[:3]:
+                if _good_enough_found:
+                    break
                 if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
                     continue
                 try:
-                    ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=try_ch)
+                    ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=1)
                     _capture_best(
                         ogg_data,
-                        f"opus_lopus_{ch_label}_off{payload_off}",
-                        forced_channels=try_ch,
+                        f"opus_lopus_1_off{payload_off}",
+                        forced_channels=1,
                     )
                 except Exception:
                     pass
-
-        # Always try mono as well — some tracks have wrong channel count
-        # in their headers, causing stereo decode of mono data = noise.
-        for payload_off in OPUS_PAYLOAD_OFFSETS:
-            if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
-                continue
-            try:
-                ogg_data = _lopus_to_ogg(audio_data[payload_off:], force_channels=1)
-                _capture_best(
-                    ogg_data,
-                    f"opus_lopus_1_off{payload_off}",
-                    forced_channels=1,
-                )
-            except Exception:
-                pass
 
         best_idx = _select_best_candidate_index(candidates)
         if best_idx >= 0 and candidates:
