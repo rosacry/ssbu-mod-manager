@@ -1065,6 +1065,30 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                         2,
                         info=f"cbr slot={cs} start={frame_start} found={_cbr_found_off}",
                     )
+                    # When CBR found a valid alignment, the actual slot
+                    # boundary likely starts a few bytes earlier (a size
+                    # prefix that was not in start_offsets).  Try
+                    # size-prefixed extraction at the discovered offset
+                    # minus common header sizes — rank 3 beats CBR rank 2.
+                    if _cbr_found_off > 0 and not _stop_inner_search:
+                        for _spfx_hdr in (4, 8):
+                            _spfx_start = _cbr_found_off - _spfx_hdr
+                            if _spfx_start < 0:
+                                continue
+                            for _spfx_end in ('<', '>'):
+                                if _stop_inner_search:
+                                    break
+                                _consider(
+                                    _extract_frames_with_slot(
+                                        lopus_data, _spfx_start,
+                                        cs, _spfx_end),
+                                    3,
+                                    info=(
+                                        f"szpfx-cbr slot={cs}"
+                                        f" start={_spfx_start}"
+                                        f" {'LE' if _spfx_end == '<' else 'BE'}"
+                                    ),
+                                )
 
     # Last resort: auto-detect slot size by scanning from each candidate start.
     if not _stop_inner_search:
@@ -1096,11 +1120,19 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
         toc_info = (f" TOC=0x{toc_byte:02X} cfg={toc_config} "
                     f"{'stereo' if toc_stereo else 'mono'} "
                     f"{frame_ms}ms/frame sz={len(best_frames[0])}B")
+    # Hex dump of first frame for diagnostic purposes
+    _hex_head = _hex_tail = ""
+    if best_frames and len(best_frames[0]) >= 1:
+        _first = best_frames[0]
+        _hex_head = _first[:min(32, len(_first))].hex()
+        _hex_tail = _first[max(0, len(_first) - 16):].hex() if len(_first) > 32 else ""
     logger.debug(
         "NUS3AUDIO",
         f"_lopus_to_ogg: {len(best_frames)} frames via "
         f"{kind_names.get(best_kind_rank, '?')} [{best_extraction_info}] "
         f"ch={force_channels or 'auto'}{toc_info}"
+        + (f" head={_hex_head}" if _hex_head else "")
+        + (f" tail={_hex_tail}" if _hex_tail else "")
     )
 
     channel_count = force_channels if force_channels is not None else best_channel_count
@@ -1807,10 +1839,40 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
     if not frames:
         return frames, best_off
 
-    # Many SSBU custom CBR LOPUS tracks append an 8-byte trailer to each
-    # slot where the first 4 bytes are a BE payload length (commonly slot-8).
-    # Passing trailer bytes into Opus decoding causes global crunchy distortion.
-    # Detect this pattern conservatively and trim per-frame payloads.
+    # --- Phase-shifted per-slot header detection ---
+    # The CBR scanner locks onto the TOC byte which may sit *inside* a
+    # per-slot header region (e.g. after a 4- or 8-byte size prefix).
+    # Each extracted frame then contains the Opus payload plus trailing
+    # bytes from the NEXT slot's header.  Detect this by checking
+    # whether the last H bytes of each frame consistently encode a u32
+    # value equal to (slot_size − H) — the expected Opus payload size.
+    from collections import Counter as _Ctr
+    _pfx_probe_n = min(30, len(frames))
+    for _hdr_sz in (4, 8):
+        _payload_expected = slot_size - _hdr_sz
+        if _payload_expected < LOPUS_MIN_SLOT_SIZE:
+            continue
+        for _endian in ('>', '<'):
+            _pfx_vals: list[int] = []
+            for _fr in frames[:_pfx_probe_n]:
+                if len(_fr) < _hdr_sz + 4:
+                    break
+                _pfx_vals.append(
+                    struct.unpack_from(f'{_endian}I', _fr, len(_fr) - _hdr_sz)[0]
+                )
+            if len(_pfx_vals) < _pfx_probe_n:
+                continue
+            _pfx_mode, _pfx_cnt = _Ctr(_pfx_vals).most_common(1)[0]
+            if (
+                _pfx_mode == _payload_expected
+                and _pfx_cnt >= max(8, int(_pfx_probe_n * 0.80))
+            ):
+                _pfx_trimmed = [f[:_payload_expected] for f in frames]
+                if _validate_opus_frames(_pfx_trimmed):
+                    return _pfx_trimmed, best_off
+
+    # Legacy trailer trimmer — kept as fallback for tracks where the
+    # size prefix sits at an unusual offset within the trailer region.
     trailer_lengths: list[int] = []
     probe_n = min(80, len(frames))
     for fr in frames[:probe_n]:
@@ -1821,8 +1883,7 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
             trailer_lengths.append(declared)
 
     if trailer_lengths:
-        from collections import Counter
-        mode_len, mode_count = Counter(trailer_lengths).most_common(1)[0]
+        mode_len, mode_count = _Ctr(trailer_lengths).most_common(1)[0]
         # Require a strong majority before trimming to avoid false positives.
         if mode_count >= max(8, int(probe_n * 0.7)):
             trimmed: list[bytes] = []
@@ -2308,7 +2369,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r20"
+_DECODER_CACHE_REV = "r21"
 
 
 def _get_cache_dir() -> Path:
