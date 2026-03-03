@@ -18,6 +18,10 @@ from typing import Optional
 _ffmpeg_path: Optional[str] = None
 _ffmpeg_checked = False
 
+# Cache whether ffmpeg can decode raw NUS3AUDIO/OPUS entries.
+# Set to True after the first failure so we stop wasting ~100ms per track.
+_ffmpeg_raw_entry_failed = False
+
 RIFF_MAGIC = b"RIFF"
 WAV_HEADER_SIZE = 44
 WAV_MIN_HEADER_SIZE = WAV_HEADER_SIZE
@@ -154,7 +158,7 @@ OPUS_CONTAINER_MAX_DATA_OFFSET = 0x100
 OPUS_CONTAINER_SAMPLE_RATE_MIN = 8000
 OPUS_CONTAINER_SAMPLE_RATE_MAX = 192000
 OPUS_CONTAINER_SIZE_SLACK_BYTES = 64
-OPUS_PAYLOAD_OFFSETS = (4, 0x20, 0x30, 0x40)
+OPUS_PAYLOAD_OFFSETS = (4, 0x20, 0x30, 0x40, 0x48, 0x50, 0x60, 0x70, 0x80)
 OPUS_HEADER_SCAN_OFFSETS = (8, 12, 16, 20, 24, 28, 32, 48, 64, 0x28, 0x30)
 OPUS_FIXED_SLOT_SIZES = (0x280, 0x500, 0x200, 0x400, 0x100, 0x300, 0x600, 0x800)
 OPUS_FIXED_SLOT_SKIP_OFFSETS = (4, 8, 12, 16, 0x28, 0x30)
@@ -167,6 +171,10 @@ OPUS_CBR_SEARCH_START_DEFAULT = 0x18
 OPUS_CBR_TOC_CONSISTENCY_MIN_RATIO = 0.8
 FFMPEG_DIRECT_NOISE_ZCR_THRESHOLD = 0.38
 FFMPEG_DIRECT_NOISE_CORR_THRESHOLD = 0.45
+# Thresholds for rejecting clearly-bad decodes (noise gate).
+# If the best candidate exceeds these, the decode is garbage — refuse to play.
+NOISE_GATE_ZCR_THRESHOLD = 0.40
+NOISE_GATE_CORR_THRESHOLD = 0.15
 FFMPEG_RAW_MIN_WAV_BYTES = 1000
 OPUS_PAGE_SEQUENCE_START = 2
 OPUS_INNER_DATA_OFFSET_FALLBACK = 4
@@ -914,9 +922,26 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
             best_frames = frames
 
     for frame_size in frame_size_candidates:
-        for slot_size in [frame_size, frame_size + 4]:
-            if slot_size < LOPUS_MIN_SLOT_SIZE or slot_size > LOPUS_MAX_SLOT_SIZE:
-                continue
+        # Try the declared size, +4, +8 (different overhead variants),
+        # and half / double (catches headers with wrong factor).
+        candidate_slots = [
+            frame_size,
+            frame_size + 4,
+            frame_size + 8,
+        ]
+        if frame_size >= LOPUS_MIN_SLOT_SIZE * 2:
+            candidate_slots.append(frame_size // 2)
+        doubled = frame_size * 2
+        if doubled <= LOPUS_MAX_SLOT_SIZE:
+            candidate_slots.append(doubled)
+        # De-dup while preserving order
+        seen_slots: set[int] = set()
+        unique_slots: list[int] = []
+        for s in candidate_slots:
+            if s not in seen_slots and LOPUS_MIN_SLOT_SIZE <= s <= LOPUS_MAX_SLOT_SIZE:
+                seen_slots.add(s)
+                unique_slots.append(s)
+        for slot_size in unique_slots:
             for frame_start in start_offsets:
                 _consider(
                     _extract_frames_with_slot(
@@ -2041,7 +2066,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r14"
+_DECODER_CACHE_REV = "r15"
 
 
 def _get_cache_dir() -> Path:
@@ -2187,6 +2212,9 @@ def _try_ffmpeg_raw_entry(audio_data: bytes, cache_dir: Path,
     Useful for NX OPUS containers that ffmpeg can handle natively even
     though it may not support the outer NUS3AUDIO wrapper.
     """
+    global _ffmpeg_raw_entry_failed
+    if _ffmpeg_raw_entry_failed:
+        return None
     if not _find_ffmpeg():
         return None
     raw_path = cache_dir / f"{cache_key}.raw_entry"
@@ -2209,10 +2237,11 @@ def _try_ffmpeg_raw_entry(audio_data: bytes, cache_dir: Path,
                 except OSError:
                     pass
             if result and result.returncode != 0:
+                _ffmpeg_raw_entry_failed = True
                 stderr_preview = ""
                 if result.stderr:
                     stderr_preview = result.stderr.decode("utf-8", errors="replace")[:LOG_STDERR_PREVIEW_CHARS]
-                logger.debug("NUS3AUDIO", f"ffmpeg raw entry failed (rc={result.returncode}): {stderr_preview}")
+                logger.debug("NUS3AUDIO", f"ffmpeg raw entry failed (rc={result.returncode}), disabling for session: {stderr_preview}")
             return None
         if not wav_out.exists() or wav_out.stat().st_size < FFMPEG_RAW_MIN_WAV_BYTES:
             try:
@@ -2499,7 +2528,18 @@ def _try_convert_audio(
                     )
                 chosen_output = best_wav if best_wav and best_wav.exists() else best_ogg
                 if chosen_output is not None and chosen_output.exists():
-                    return True, f"Playing: {display_name}", chosen_output
+                    # Noise gate: refuse to serve obvious garbage
+                    if (
+                        best_candidate["zcr"] > NOISE_GATE_ZCR_THRESHOLD
+                        and best_candidate["corr"] < NOISE_GATE_CORR_THRESHOLD
+                    ):
+                        logger.warn(
+                            "NUS3AUDIO",
+                            f"LOPUS noise gate rejected {best_label} "
+                            f"(zcr={best_candidate['zcr']:.3f}, corr={best_candidate['corr']:.3f})"
+                        )
+                    else:
+                        return True, f"Playing: {display_name}", chosen_output
 
             if not _find_ffmpeg():
                 logger.warn(
@@ -2512,6 +2552,10 @@ def _try_convert_audio(
                 ), None
 
             logger.warn("NUS3AUDIO", "All LOPUS conversion attempts failed")
+            return False, (
+                "This track could not be decoded properly.\n"
+                "The audio format may require a full ffmpeg build (not essentials)."
+            ), None
 
     # IDSP (Nintendo DSP ADPCM)
     if audio_data[:4] == b'IDSP':
@@ -2658,7 +2702,18 @@ def _try_convert_audio(
                 )
             chosen_output = best_wav if best_wav and best_wav.exists() else best_ogg
             if chosen_output is not None and chosen_output.exists():
-                return True, f"Playing: {display_name}", chosen_output
+                # Noise gate: refuse to serve obvious garbage
+                if (
+                    best_candidate["zcr"] > NOISE_GATE_ZCR_THRESHOLD
+                    and best_candidate["corr"] < NOISE_GATE_CORR_THRESHOLD
+                ):
+                    logger.warn(
+                        "NUS3AUDIO",
+                        f"OPUS noise gate rejected {best_label} "
+                        f"(zcr={best_candidate['zcr']:.3f}, corr={best_candidate['corr']:.3f})"
+                    )
+                else:
+                    return True, f"Playing: {display_name}", chosen_output
 
         if not _find_ffmpeg():
             return False, (
@@ -2667,6 +2722,10 @@ def _try_convert_audio(
             ), None
 
         logger.warn("NUS3AUDIO", "All OPUS conversion attempts failed")
+        return False, (
+            "This track could not be decoded properly.\n"
+            "The audio format may require a full ffmpeg build (not essentials)."
+        ), None
 
     # --- ffmpeg raw fallback ---
     if _find_ffmpeg():
