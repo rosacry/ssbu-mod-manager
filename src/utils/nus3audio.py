@@ -955,6 +955,8 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
         nonlocal _stop_inner_search
         if len(frames) < OPUS_MIN_VALID_FRAME_COUNT or not _validate_opus_frames(frames):
             return
+        # Try stripping embedded size-prefixes / per-frame headers
+        frames = _try_strip_frame_headers(frames)
         improved = False
         if kind_rank > best_kind_rank:
             best_frames = frames
@@ -1620,6 +1622,7 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                                 frames = _extract_opus_le_slots(
                                     inner, frame_start, slot_size)
                                 if len(frames) >= OPUS_MIN_VALID_FRAME_COUNT and _validate_opus_frames(frames):
+                                    frames = _try_strip_frame_headers(frames)
                                     return _build_ogg_opus_from_frames(
                                         frames,
                                         channels=container_channels,
@@ -1632,6 +1635,7 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                                 frames = _extract_opus_be_slots(
                                     inner, frame_start, slot_size)
                                 if len(frames) >= OPUS_MIN_VALID_FRAME_COUNT and _validate_opus_frames(frames):
+                                    frames = _try_strip_frame_headers(frames)
                                     return _build_ogg_opus_from_frames(
                                         frames,
                                         channels=container_channels,
@@ -1652,6 +1656,7 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                             cbr_frames, _ = _extract_opus_cbr_frames(
                                 inner, slot_size, search_start=cbr_start)
                             if len(cbr_frames) >= OPUS_MIN_VALID_FRAME_COUNT and _validate_opus_frames(cbr_frames):
+                                cbr_frames = _try_strip_frame_headers(cbr_frames)
                                 return _build_ogg_opus_from_frames(
                                     cbr_frames,
                                     channels=container_channels,
@@ -1877,6 +1882,91 @@ def _extract_opus_le_slots(data: bytes, start_offset: int,
             break
         frames.append(data[pos + 4:pos + 4 + frame_size])
         pos += slot_size
+    return frames
+
+
+def _try_strip_frame_headers(frames: list[bytes]) -> list[bytes]:
+    """Detect and remove per-frame headers / embedded size prefixes.
+
+    Two patterns are handled:
+
+    1. **Embedded size prefix** — every CBR slot starts with a 4-byte
+       LE (or BE) integer whose value equals the actual Opus payload
+       length.  The CBR extractor treats the whole slot as one frame,
+       so the size prefix pollutes the packet data.  We detect
+       consistent u32 values in the first 4 bytes across many frames
+       and, if the value is a plausible payload size *and* the bytes
+       after the prefix start with a high-config Opus TOC, we strip
+       them.
+
+    2. **Unknown per-frame header** — Some NX Opus variants prepend
+       4 or 8 extra metadata bytes *inside* each payload (frame
+       number, timestamp, etc.).  When the resulting byte-0 has a
+       low Opus config (< 12 = SILK narrowband), we try skipping
+       4 then 8 bytes and re-validate.
+
+    Returns the (possibly improved) frame list.
+    """
+    if not frames or len(frames) < OPUS_MIN_VALID_FRAME_COUNT:
+        return frames
+
+    # ---- Pattern 1: embedded size prefix ----
+    probe_n = min(40, len(frames))
+    for endian in ('<', '>'):
+        fmt = f'{endian}I'
+        sizes: list[int] = []
+        for f in frames[:probe_n]:
+            if len(f) < 8:
+                break
+            sizes.append(struct.unpack_from(fmt, f, 0)[0])
+        if len(sizes) < probe_n:
+            continue
+        from collections import Counter
+        mode_size, mode_count = Counter(sizes).most_common(1)[0]
+        # Value must be a plausible Opus frame length AND very consistent
+        if (
+            2 <= mode_size <= len(frames[0]) - 4
+            and mode_count >= max(8, int(probe_n * 0.80))
+        ):
+            test_payload = frames[0][4:4 + mode_size]
+            if len(test_payload) >= 2:
+                test_cfg = (
+                    test_payload[0] >> OPUS_TOC_CONFIG_SHIFT
+                ) & OPUS_TOC_CONFIG_MASK
+                if test_cfg >= OPUS_MIN_MUSIC_CONFIG:
+                    trimmed: list[bytes] = []
+                    for f in frames:
+                        if len(f) < 6:
+                            trimmed.append(f)
+                            continue
+                        sz = struct.unpack_from(fmt, f, 0)[0]
+                        if not (2 <= sz <= len(f) - 4):
+                            sz = mode_size
+                        trimmed.append(f[4:4 + sz])
+                    if (
+                        len(trimmed) >= OPUS_MIN_VALID_FRAME_COUNT
+                        and _validate_opus_frames(trimmed)
+                    ):
+                        return trimmed
+
+    # ---- Pattern 2: low-config header skip ----
+    first_cfg = (
+        frames[0][0] >> OPUS_TOC_CONFIG_SHIFT
+    ) & OPUS_TOC_CONFIG_MASK
+    if first_cfg < OPUS_MIN_MUSIC_CONFIG:
+        for skip in (4, 8):
+            trimmed = [f[skip:] for f in frames if len(f) > skip + 2]
+            if len(trimmed) < OPUS_MIN_VALID_FRAME_COUNT:
+                continue
+            trimmed_cfg = (
+                trimmed[0][0] >> OPUS_TOC_CONFIG_SHIFT
+            ) & OPUS_TOC_CONFIG_MASK
+            if (
+                trimmed_cfg >= OPUS_MIN_MUSIC_CONFIG
+                and _validate_opus_frames(trimmed)
+            ):
+                return trimmed
+
     return frames
 
 
@@ -2218,7 +2308,7 @@ def _build_ogg_opus_from_frames(
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r19"
+_DECODER_CACHE_REV = "r20"
 
 
 def _get_cache_dir() -> Path:
@@ -2856,9 +2946,7 @@ def _try_convert_audio(
                     "toc_config": toc_config,
                 }
                 candidates.append(candidate)
-                # Only trigger early exit once we have >= 2 candidates
-                # so opus_container alone never short-circuits.
-                if len(candidates) >= 2 and _is_good_enough(candidate):
+                if _is_good_enough(candidate):
                     _good_enough_found = True
 
         # Main OPUS container path.
