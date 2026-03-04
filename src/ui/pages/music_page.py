@@ -24,7 +24,7 @@ class MusicPage(BasePage):
     _PLAYBACK_POLL_MS = 500
     _SEEK_UPDATE_MS = 500
     _PLAY_CLICK_DELAY_MS = 50
-    _VOLUME_DEBOUNCE_MS = 300
+    _VOLUME_DEBOUNCE_MS = 50
     _ZERO_DELAY_MS = 0
     _MAX_PERCENT = 100.0
     _MIN_VOLUME = 0.0
@@ -49,6 +49,7 @@ class MusicPage(BasePage):
         self._track_id_map = {}
         self._stage_ids = []
         self._is_playing = False
+        self._is_paused = False
         self._spinner_index = 0
         self._spinner_active = False
         self._spinner_after_id = None
@@ -325,14 +326,14 @@ class MusicPage(BasePage):
         player_frame = ctk.CTkFrame(right, fg_color=theme.BG_CARD_INNER, corner_radius=6)
         player_frame.pack(fill="x", padx=10, pady=(2, 4))
 
-        # Now-playing status — only visible when there is text to show,
-        # so it doesn't reserve vertical whitespace when idle.
+        # Now-playing status — always packed to avoid layout shifts.
+        # Text is set to empty when idle; the label occupies a fixed line.
         self.player_status = ctk.CTkLabel(
-            player_frame, text="",
+            player_frame, text=" ",
             font=ctk.CTkFont(size=theme.FONT_CAPTION), text_color=theme.SUCCESS,
             anchor="w",
         )
-        # Starts hidden; _set_player_status() will pack/forget as needed.
+        self.player_status.pack(fill="x", padx=8, pady=(5, 0))
 
         self.queue_status = ctk.CTkLabel(
             player_frame,
@@ -2028,12 +2029,14 @@ class MusicPage(BasePage):
 
     # Audio playback methods
     def _on_track_click(self, event):
-        """When user clicks a track while music is already playing,
+        """When user clicks a track while music is already playing or paused,
         auto-play the newly selected track.  Debounced to prevent duplicate
-        play calls when <<ListboxSelect>> fires more than once per click."""
+        play calls when <<ListboxSelect>> fires more than once per click.
+        Does NOT auto-play when multiple tracks are highlighted."""
         if self._suppress_track_selection_autoplay:
             return
-        if self._is_playing and len(self._get_selected_tracks()) == 1:
+        selected = self._get_selected_tracks()
+        if (self._is_playing or self._is_paused) and len(selected) == 1:
             aid = getattr(self, "_track_click_after_id", None)
             if aid:
                 try:
@@ -2045,9 +2048,11 @@ class MusicPage(BasePage):
             )
 
     def _toggle_playback(self):
-        """Toggle between play and stop."""
+        """Toggle between play/pause/resume."""
         if self._is_playing:
-            self._stop_playback()
+            self._pause_playback()
+        elif self._is_paused:
+            self._resume_playback()
         else:
             self._play_selected()
 
@@ -2093,30 +2098,23 @@ class MusicPage(BasePage):
                 text=text,
                 text_color=color or theme.SUCCESS,
             )
-            # Pack above queue_status if not already visible.
-            try:
-                self.player_status.pack_info()
-            except tk.TclError:
-                self.player_status.pack(
-                    before=self.queue_status, fill="x", padx=8, pady=(5, 0))
             if clear_after > 0:
                 self._status_clear_after_id = self.after(
                     clear_after, lambda: self._set_player_status(""))
         else:
-            self.player_status.configure(text="")
-            try:
-                self.player_status.pack_forget()
-            except tk.TclError:
-                pass
+            # Use a single space so the label keeps its line height
+            # and the layout below it never shifts.
+            self.player_status.configure(text=" ")
 
     def _play_track(self, track):
         """Play a specific track in a background thread."""
         self._manual_stop_requested = False
 
-        # Stop any current playback first to prevent concurrent threads
-        if self._is_playing:
+        # Stop any current or paused playback first to prevent concurrent threads
+        if self._is_playing or self._is_paused:
             audio_player.stop()
             self._is_playing = False
+            self._is_paused = False
 
         self._cancel_playback_timers()
 
@@ -2188,10 +2186,34 @@ class MusicPage(BasePage):
             return
         self._poll_after_id = self.after(self._PLAYBACK_POLL_MS, self._poll_playback_end)
 
+    def _pause_playback(self):
+        """Pause the current track so it can be resumed later."""
+        audio_player.pause()
+        self._is_playing = False
+        self._is_paused = True
+        self._cancel_playback_timers()
+        self.play_toggle_btn.configure(
+            text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)
+        self._set_player_status("Paused", theme.TEXT_DIM)
+
+    def _resume_playback(self):
+        """Resume a previously paused track."""
+        audio_player.unpause()
+        self._is_playing = True
+        self._is_paused = False
+        self.play_toggle_btn.configure(
+            text="Stop", fg_color=theme.DANGER, hover_color=theme.HOVER_DANGER)
+        self._set_player_status("Resumed", theme.SUCCESS,
+                                clear_after=self._PLAYBACK_STOPPED_CLEAR_MS)
+        # Restart polling
+        self._poll_playback_end()
+        self._update_seek_bar()
+
     def _stop_playback(self):
         self._manual_stop_requested = True
         audio_player.stop()
         self._is_playing = False
+        self._is_paused = False
         self._cancel_playback_timers()
         self.play_toggle_btn.configure(
             text="Play", fg_color=theme.SUCCESS, hover_color=theme.HOVER_SUCCESS)

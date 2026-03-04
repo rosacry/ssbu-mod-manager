@@ -338,14 +338,3 @@ COMPETITIVE_STAGES = {
     "ui_stage_ff_cave",          # Northern Cave
     "ui_stage_yoshi_story",      # Super Happy Tree (Yoshi's Story)
 }
-
-# File categories based on path patterns
-FILE_CATEGORIES = {
-    "character": ["fighter/", "ui/replace/chara/", "sound/bank/narration/"],
-    "music": ["sound/bgm/", "stream/"],
-    "stage": ["stage/", "ui/replace/stage/"],
-    "ui": ["ui/", "param/"],
-    "effect": ["effect/"],
-}
-
-SIDEBAR_WIDTH = 200

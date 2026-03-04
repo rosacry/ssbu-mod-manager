@@ -1,6 +1,7 @@
 """Plugins management page."""
 import customtkinter as ctk
 import tkinter as tk
+import threading
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from src.ui import theme
@@ -159,7 +160,18 @@ class PluginsPage(BasePage):
             return
 
         logger.info("Plugins", "Loading plugin list...")
-        plugins = self.app.plugin_manager.list_plugins()
+        self.count_label.configure(text="Loading plugins...")
+
+        def _load():
+            plugins = self.app.plugin_manager.list_plugins()
+            try:
+                self.after(0, lambda: self._on_plugins_loaded(plugins))
+            except Exception:
+                pass
+
+        threading.Thread(target=_load, daemon=True).start()
+
+    def _on_plugins_loaded(self, plugins):
         self._loaded = True
 
         for widget in self.plugin_list.winfo_children():

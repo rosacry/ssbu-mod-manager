@@ -1317,9 +1317,8 @@ class ConflictsPage(BasePage):
             self.conflict_list.update_idletasks()
             canvas = getattr(self.conflict_list, "_parent_canvas", None)
             if canvas is not None:
-                # Force canvas window origin/scrollregion to stay canonical.
-                # This prevents occasional top-gap drift where yview=0.0 but
-                # the embedded frame is visually offset downward.
+                # Force canonical canvas origin to prevent top-gap drift
+                # when yview=0.0 but the frame is visually offset.
                 canvas_w = max(1, int(canvas.winfo_width()))
                 try:
                     window_id = getattr(self.conflict_list, "_create_window_id", None)

@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+DEFAULT_WINDOW_GEOMETRY = "1400x900"
+DEFAULT_PAGE = "dashboard"
+DEFAULT_UI_SCALE = 1.2
+
 
 @dataclass
 class AppSettings:
@@ -11,15 +15,15 @@ class AppSettings:
     css_mod_folder: Optional[Path] = None
     mod_disable_method: str = "move"
     theme: str = "Dark"
-    window_geometry: str = "1400x900"
-    last_opened_page: str = "dashboard"
+    window_geometry: str = DEFAULT_WINDOW_GEOMETRY
+    last_opened_page: str = DEFAULT_PAGE
     auto_detect_eden: bool = True
     backup_before_merge: bool = True
-    emulator: str = ""  # Empty = auto-detect
+    emulator: str = ""
     emulator_version: str = ""
     game_version: str = ""
     debug_mode: bool = False
-    ui_scale: float = 1.2  # 100% baseline (matches previous 120% density)
+    ui_scale: float = DEFAULT_UI_SCALE
     use_plugin_friendly_names: bool = True
     plugin_name_overrides: dict[str, str] = field(default_factory=dict)
     plugin_description_overrides: dict[str, str] = field(default_factory=dict)

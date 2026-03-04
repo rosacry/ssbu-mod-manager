@@ -3089,9 +3089,9 @@ def _quarantine_shared_path_effect_files(
     When a single-slot skin mod ships such files the override poisons all
     other costumes, often causing black-screen hangs on match load.
 
-    This function moves the offending files into a quarantine directory
-    inside the mod so the existing config sanitiser drops the now-stale
-    ``new-dir-files`` references automatically.
+    Offending files are moved into a quarantine directory inside the mod
+    so the config sanitiser drops the now-stale ``new-dir-files``
+    references automatically.
     """
     fighter = (
         str(analysis.primary_fighter).lower()

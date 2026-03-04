@@ -5,6 +5,11 @@ import tkinter as tk
 from src.ui import theme
 
 SCROLL_SPEED = 5
+_DIALOG_CENTER_PAD = 20
+_DIALOG_FALLBACK_POS = 200
+_MIN_SCREEN_WIDTH = 640
+_MIN_SCREEN_HEIGHT = 480
+_POPUP_EDGE_MARGIN = 6
 
 
 def _patch_scrollable_frame_speed(frame: ctk.CTkScrollableFrame, speed: int = SCROLL_SPEED):
@@ -230,10 +235,10 @@ class BasePage(ctk.CTkFrame):
     def _center_dialog(self, dialog, width: int, height: int):
         try:
             self.update_idletasks()
-            x = self.winfo_rootx() + max(20, (self.winfo_width() - width) // 2)
-            y = self.winfo_rooty() + max(20, (self.winfo_height() - height) // 2)
+            x = self.winfo_rootx() + max(_DIALOG_CENTER_PAD, (self.winfo_width() - width) // 2)
+            y = self.winfo_rooty() + max(_DIALOG_CENTER_PAD, (self.winfo_height() - height) // 2)
         except Exception:
-            x, y = 200, 200
+            x, y = _DIALOG_FALLBACK_POS, _DIALOG_FALLBACK_POS
         dialog.geometry(f"{width}x{height}+{x}+{y}")
 
     @staticmethod
@@ -242,10 +247,10 @@ class BasePage(ctk.CTkFrame):
             root = tk._default_root
             if root is None:
                 return x, y
-            sw = max(640, root.winfo_screenwidth())
-            sh = max(480, root.winfo_screenheight())
-            cx = min(max(6, int(x)), max(6, sw - int(width) - 6))
-            cy = min(max(6, int(y)), max(6, sh - int(height) - 6))
+            sw = max(_MIN_SCREEN_WIDTH, root.winfo_screenwidth())
+            sh = max(_MIN_SCREEN_HEIGHT, root.winfo_screenheight())
+            cx = min(max(_POPUP_EDGE_MARGIN, int(x)), max(_POPUP_EDGE_MARGIN, sw - int(width) - _POPUP_EDGE_MARGIN))
+            cy = min(max(_POPUP_EDGE_MARGIN, int(y)), max(_POPUP_EDGE_MARGIN, sh - int(height) - _POPUP_EDGE_MARGIN))
             return cx, cy
         except Exception:
             return x, y

@@ -1,9 +1,4 @@
-"""Emulator Migration page - migrate, export, and import SSBU data between emulators.
-
-Different emulators and forks may not interoperate for multiplayer on a given
-build. This page makes it easy to migrate all SSBU data (mods, plugins, saves,
-etc.) to a different emulator with one click.
-"""
+"""Emulator Migration page."""
 
 
 import threading
@@ -433,8 +428,24 @@ class MigrationPage(BasePage):
         for w in self.scan_result_frame.winfo_children():
             w.destroy()
 
-        items = scan_emulator_data(src_path)
-        found = [i for i in items if i.exists]
+        ctk.CTkLabel(self.scan_result_frame,
+                     text="Scanning emulator data...",
+                     font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_DIM
+                     ).pack(anchor="w", pady=5)
+
+        def _do_scan():
+            items = scan_emulator_data(src_path)
+            found = [i for i in items if i.exists]
+            try:
+                self.after(0, lambda: self._render_scan_source(found, src_name))
+            except Exception:
+                pass
+
+        threading.Thread(target=_do_scan, daemon=True).start()
+
+    def _render_scan_source(self, found, src_name):
+        for w in self.scan_result_frame.winfo_children():
+            w.destroy()
 
         if not found:
             ctk.CTkLabel(self.scan_result_frame,
@@ -919,7 +930,23 @@ class MigrationPage(BasePage):
                 "Old and new paths are the same. Select a different destination.")
             return
 
-        plan = scan_upgrade_data(emu, old, new)
+        for w in self._upgrade_results_frame.winfo_children():
+            w.destroy()
+        self._upgrade_check_vars.clear()
+
+        self.upgrade_status.configure(
+            text="Scanning upgrade data...", text_color=theme.TEXT_DIM)
+
+        def _do_scan():
+            plan = scan_upgrade_data(emu, old, new)
+            try:
+                self.after(0, lambda: self._render_upgrade_scan(plan))
+            except Exception:
+                pass
+
+        threading.Thread(target=_do_scan, daemon=True).start()
+
+    def _render_upgrade_scan(self, plan):
         self._upgrade_plan = plan
 
         for w in self._upgrade_results_frame.winfo_children():

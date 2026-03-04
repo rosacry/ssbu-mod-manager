@@ -926,18 +926,73 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
     if header_size == 0 or header_size > len(lopus_data):
         header_size = LOPUS_DEFAULT_HEADER_SIZE
 
+    # Diagnostic: log parsed LOPUS header fields
+    from src.utils.logger import logger as _lopus_logger
+    _lopus_logger.debug(
+        "NUS3AUDIO",
+        f"LOPUS header: magic=0x{magic:08X} header_size={header_size}"
+        f" sample_rate={sample_rate} channels={channel_candidates}"
+        f" frame_sizes={frame_size_candidates} pre_skip={pre_skip}"
+        f" data_len={len(lopus_data)}"
+    )
+    # First 64 bytes of frame data region for alignment analysis
+    _fd_start = min(header_size, len(lopus_data))
+    _fd_end = min(_fd_start + 64, len(lopus_data))
+    if _fd_end > _fd_start:
+        _lopus_logger.debug(
+            "NUS3AUDIO",
+            f"LOPUS data[{_fd_start}:{_fd_end}] = {lopus_data[_fd_start:_fd_end].hex()}"
+        )
+
+    # ── LOPUS v1 extended header detection ──
+    # Many LOPUS v1 files (magic=0x80000001, header_size=24) contain a
+    # 24-byte extended header at [24:48].  Layout:
+    #   [24:28] = padding (zeros)
+    #   [28:32] = pre_skip  (LE u32, typically 312)
+    #   [32:36] = sub-version / flags (often 0x80000004 LE)
+    #   [36:40] = total data size (LE u32)
+    #   [40:44] = opus payload size per slot (BE u32) = frame_size − 8
+    #   [44:48] = varies
+    #   [48: ]  = actual Opus frame data
+    _v1_payload_size = 0     # real Opus bytes per slot (excludes 8-byte overhead)
+    _v1_slot_size = 0        # full slot size (payload + 8)
+    _v1_data_start = 0       # byte offset where Opus frames begin
+    if (
+        magic == LOPUS_MAGIC_V1
+        and header_size <= 28
+        and len(lopus_data) >= 48
+    ):
+        _ext_payload_be = struct.unpack_from('>I', lopus_data, 40)[0]
+        if 4 < _ext_payload_be < LOPUS_MAX_SLOT_SIZE:
+            for _fs_cand in frame_size_candidates:
+                if _ext_payload_be == _fs_cand - 8:
+                    _v1_payload_size = _ext_payload_be
+                    _v1_slot_size = _fs_cand
+                    _v1_data_start = 48
+                    break
+    if _v1_data_start:
+        _lopus_logger.debug(
+            "NUS3AUDIO",
+            f"LOPUS v1 extended header detected: data_start={_v1_data_start} "
+            f"slot={_v1_slot_size} payload={_v1_payload_size}"
+        )
+
         # Some OPUS/LOPUS variants keep valid frame slots at offsets beyond
     # header_size.  Scan a small set of candidate starts and prefer
     # size-prefixed extraction over CBR if both validate.
     start_offsets: list[int] = []
-    for off in [
+    # Prefer the v1 extended header data start when detected
+    _so_candidates = [
         header_size,
         header_size + U32_BYTE_WIDTH,
         header_size + U32_BYTE_WIDTH * 2,
         header_size + U32_BYTE_WIDTH * 3,
         header_size + U32_BYTE_WIDTH * 4,
         *LOPUS_START_OFFSET_BASES,
-    ]:
+    ]
+    if _v1_data_start and _v1_data_start not in _so_candidates:
+        _so_candidates.insert(0, _v1_data_start)
+    for off in _so_candidates:
         if 0 <= off <= len(lopus_data) - LOPUS_MIN_SLOT_SIZE and off not in start_offsets:
             start_offsets.append(off)
     if not start_offsets:
@@ -959,6 +1014,18 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
         frames = _try_strip_frame_headers(frames)
         improved = False
         if kind_rank > best_kind_rank:
+            # Prevent a higher-rank extraction with very few frames from
+            # overriding a lower-rank extraction with many more frames.
+            # A rank-3 result must have at least 20% of the existing
+            # best's frame count to be accepted (avoids spurious
+            # size-prefixed matches beating large CBR extractions).
+            if (
+                best_frames
+                and kind_rank >= 3
+                and best_kind_rank >= 2
+                and len(frames) < max(50, len(best_frames) * 0.20)
+            ):
+                return
             best_frames = frames
             best_kind_rank = kind_rank
             best_extraction_info = info
@@ -970,6 +1037,24 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
         # Early exit: once size-prefixed finds ≥100 frames, stop searching
         if improved and kind_rank >= 3 and len(frames) >= 100:
             _stop_inner_search = True
+
+    # ── LOPUS v1 dedicated extraction ──
+    # When the extended header gives us exact payload size and data offset,
+    # extract correctly-trimmed frames at slot boundaries.  This avoids the
+    # CBR alignment ambiguity (offset 43 vs 48) and the double-slot issue.
+    if _v1_data_start and _v1_payload_size and _v1_slot_size:
+        _v1_frames: list[bytes] = []
+        _v1_pos = _v1_data_start
+        while _v1_pos + _v1_payload_size <= len(lopus_data):
+            _v1_frames.append(lopus_data[_v1_pos:_v1_pos + _v1_payload_size])
+            _v1_pos += _v1_slot_size
+        _consider(
+            _v1_frames, 3,
+            info=(
+                f"lopus-v1-ext start={_v1_data_start} "
+                f"slot={_v1_slot_size} payload={_v1_payload_size}"
+            ),
+        )
 
     for frame_size in frame_size_candidates:
         if _stop_inner_search:
@@ -1065,29 +1150,45 @@ def _lopus_to_ogg(lopus_data: bytes, force_channels: Optional[int] = None) -> by
                         2,
                         info=f"cbr slot={cs} start={frame_start} found={_cbr_found_off}",
                     )
-                    # When CBR found a valid alignment, the actual slot
-                    # boundary likely starts a few bytes earlier (a size
-                    # prefix that was not in start_offsets).  Try
-                    # size-prefixed extraction at the discovered offset
-                    # minus common header sizes — rank 3 beats CBR rank 2.
-                    if _cbr_found_off > 0 and not _stop_inner_search:
-                        for _spfx_hdr in (4, 8):
-                            _spfx_start = _cbr_found_off - _spfx_hdr
-                            if _spfx_start < 0:
-                                continue
-                            for _spfx_end in ('<', '>'):
-                                if _stop_inner_search:
-                                    break
-                                _consider(
-                                    _extract_frames_with_slot(
-                                        lopus_data, _spfx_start,
-                                        cs, _spfx_end),
-                                    3,
-                                    info=(
-                                        f"szpfx-cbr slot={cs}"
-                                        f" start={_spfx_start}"
-                                        f" {'LE' if _spfx_end == '<' else 'BE'}"
-                                    ),
+
+    # Post-CBR size-prefixed retry — when the best result is CBR (rank 2),
+    # try reading size-prefixed frames at the CBR's found offset minus
+    # common header sizes.  Only accept if ≥80% of the CBR frame count
+    # (prevents spurious matches from stealing rank).  Rank kept at 2 so
+    # it only wins on frame count within the same tier.
+    if (
+        not _stop_inner_search
+        and best_kind_rank == 2
+        and best_frames
+        and best_extraction_info.startswith("cbr ")
+    ):
+        import re as _re_post_cbr
+        _m_slot = _re_post_cbr.search(r'slot=(\d+)', best_extraction_info)
+        _m_found = _re_post_cbr.search(r'found=(-?\d+)', best_extraction_info)
+        if _m_slot and _m_found:
+            _post_cbr_slot = int(_m_slot.group(1))
+            _post_cbr_found = int(_m_found.group(1))
+            if _post_cbr_found > 0:
+                _cbr_frame_count = len(best_frames)
+                _min_required = max(50, int(_cbr_frame_count * 0.80))
+                for _hdr_sz in (3, 4, 8):
+                    _retry_start = _post_cbr_found - _hdr_sz
+                    if _retry_start < 0:
+                        continue
+                    for _endian in ('<', '>'):
+                        _retry_frames = _extract_frames_with_slot(
+                            lopus_data, _retry_start, _post_cbr_slot, _endian)
+                        if (
+                            len(_retry_frames) >= _min_required
+                            and _validate_opus_frames(_retry_frames)
+                        ):
+                            _retry_frames = _try_strip_frame_headers(_retry_frames)
+                            if len(_retry_frames) > len(best_frames):
+                                best_frames = _retry_frames
+                                best_extraction_info = (
+                                    f"post-cbr-szpfx slot={_post_cbr_slot}"
+                                    f" start={_retry_start}"
+                                    f" {'LE' if _endian == '<' else 'BE'}"
                                 )
 
     # Last resort: auto-detect slot size by scanning from each candidate start.
@@ -1590,6 +1691,22 @@ def _opus_container_to_ogg(audio_data: bytes) -> bytes:
                 parsed_data_offset = container_data_offset
                 inner = audio_data[container_data_offset:]
 
+                # Hex dump of inner data for diagnostic purposes
+                from src.utils.logger import logger as _opus_logger
+                _inner_hex_len = min(256, len(inner))
+                _opus_logger.debug(
+                    "NUS3AUDIO",
+                    f"OPUS container: data_offset=0x{container_data_offset:X}"
+                    f" data_size=0x{container_data_size:X}"
+                    f" channels={container_channels}"
+                    f" sample_rate={container_sample_rate}"
+                    f" inner_len={len(inner)}"
+                )
+                _opus_logger.debug(
+                    "NUS3AUDIO",
+                    f"OPUS inner[0:{_inner_hex_len}] = {inner[:_inner_hex_len].hex()}"
+                )
+
                 # Check for LOPUS sub-header inside the inner data
                 if len(inner) >= OPUS_CONTAINER_HEADER_MIN_SIZE:
                     sub_magic = struct.unpack_from('<I', inner, 0)[0]
@@ -1801,7 +1918,7 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
         return [], -1
 
     end_search = min(search_start + slot_size, len(data) - slot_size * 3)
-    candidates: list[tuple[int, int, int]] = []  # (config, offset, num_frames)
+    candidates: list[tuple[int, int, int, int]] = []  # (config, consistent, offset, num_frames)
 
     for test_off in range(search_start, max(search_start, end_search)):
         if test_off + slot_size * 3 > len(data):
@@ -1821,15 +1938,17 @@ def _extract_opus_cbr_frames(data: bytes, slot_size: int,
         )
         if consistent >= total * OPUS_CBR_TOC_CONSISTENCY_MIN_RATIO and consistent >= 3:
             num_frames = (len(data) - test_off) // slot_size
-            candidates.append((cfg, test_off, num_frames))
+            candidates.append((cfg, consistent, test_off, num_frames))
 
     if not candidates:
         return [], -1
 
-    # Pick the candidate with the highest config value.
-    # Music files use fullband CELT (configs 28-31) which sorts highest.
-    candidates.sort(key=lambda c: c[0], reverse=True)
-    best_cfg, best_off, _ = candidates[0]
+    # Pick the candidate with the highest config value, then highest
+    # consistency count as tiebreaker.  This ensures the correctly
+    # aligned offset wins when multiple offsets share the same config
+    # (e.g. metadata byte 0xFD at offset 43 vs real TOC at offset 48).
+    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    best_cfg, _best_consistent, best_off, _ = candidates[0]
 
     frames: list[bytes] = []
     pos = best_off
@@ -2061,7 +2180,32 @@ def _validate_opus_frames(frames: list[bytes], min_consistent: int = 5) -> bool:
     # random config distributions.
     most_common_count = max(configs.values())
     threshold = max(min_consistent, sample_count * 7 // 10)
-    return most_common_count >= threshold
+    if most_common_count < threshold:
+        return False
+
+    # Reject frames that are mostly zero bytes (silence / zero-padded
+    # data masquerading as Opus).  Sample up to 20 frames *uniformly*
+    # across the whole track and reject if more than half are >80%
+    # zero after the TOC byte.  Uniform sampling avoids false
+    # rejection when tracks have a legitimate silent intro (e.g. 21
+    # leading silence frames in "Catch Me If You Can").
+    zero_sample_n = min(20, len(frames))
+    zero_step = max(1, len(frames) // zero_sample_n)
+    zero_heavy = 0
+    _zs_checked = 0
+    for _zi in range(0, len(frames), zero_step):
+        if _zs_checked >= zero_sample_n:
+            break
+        f = frames[_zi]
+        if len(f) > 4:
+            zero_count = sum(1 for b in f[1:] if b == 0)
+            if zero_count > len(f) * 0.8:
+                zero_heavy += 1
+        _zs_checked += 1
+    if zero_heavy > zero_sample_n * 0.5:
+        return False
+
+    return True
 
 
 def _scan_opus_frames(
@@ -2236,8 +2380,7 @@ def _raw_opus_frames_to_ogg(
 
 def _raw_opus_to_ogg_fallback(data: bytes) -> bytes:
     """Last-resort conversion: treat data as LOPUS with default params."""
-    # Construct a synthetic LOPUS header and parse with _lopus_to_ogg
-    # This creates a fake 0x80000001 header wrapping the data
+    # Construct a synthetic LOPUS header wrapping the data
     header_size = LOPUS_DEFAULT_HEADER_SIZE
     synthetic = struct.pack("<II", LOPUS_MAGIC_V1, header_size)
     # Pad to header_size
@@ -2367,9 +2510,59 @@ def _build_ogg_opus_from_frames(
     return b''.join(pages)
 
 
+def _flip_ogg_opus_stereo_bits(ogg_data: bytes) -> Optional[bytes]:
+    """Return a copy of *ogg_data* with the stereo bit (bit 2) of every
+    Opus frame's TOC byte cleared (forced mono).
+
+    This is a lightweight in-place fixup that walks the OGG pages and
+    mutates each TOC byte.  Returns ``None`` on any structural error.
+    """
+    out = bytearray(ogg_data)
+    pos = 0
+    pages_seen = 0
+    try:
+        while pos < len(out) - 27:
+            if out[pos:pos + 4] != b'OggS':
+                pos += 1
+                continue
+            pages_seen += 1
+            page_flags = out[pos + 5]
+            is_continuation = bool(page_flags & 0x01)
+            n_segs = out[pos + 26]
+            seg_table_start = pos + 27
+            seg_table = out[seg_table_start:seg_table_start + n_segs]
+            data_start = seg_table_start + n_segs
+            if pages_seen >= 3:
+                # Walk segments to find packet boundaries and flip TOC.
+                # If this page starts with a continuation from the prev
+                # page, the first data byte is NOT a new packet's TOC.
+                accumulated = 0
+                in_continuation = is_continuation
+                for seg_sz in seg_table:
+                    if not in_continuation:
+                        # This is the start of a new packet — flip TOC
+                        toc_pos = data_start + accumulated
+                        if toc_pos < len(out):
+                            out[toc_pos] = out[toc_pos] & ~0x04
+                    accumulated += seg_sz
+                    if seg_sz < 255:
+                        # Packet ended; next segment starts a new packet
+                        in_continuation = False
+                    else:
+                        # Packet continues in the next segment
+                        in_continuation = True
+            page_size = data_start - pos + sum(seg_table)
+            pos += page_size
+    except Exception:
+        return None
+    if pages_seen < 3:
+        return None
+    return bytes(out)
+
+
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r21"
+_DECODER_CACHE_REV = "r25"
 
 
 def _get_cache_dir() -> Path:
@@ -2935,12 +3128,24 @@ def _try_convert_audio(
             """
             if c["score"] <= 0.3 or c["duration"] <= 5.0:
                 return False
-            if c["zcr"] >= 0.30 or c["corr"] <= 0.40:
+            if c["zcr"] >= 0.50 or c["corr"] <= 0.35:
+                return False
+            # Reject silence (zcr near zero means the decode is empty)
+            if c["zcr"] < 0.003:
                 return False
             # Reject low-config (SILK) candidates from early-exit
             if 0 <= c.get("toc_config", -1) < OPUS_MIN_MUSIC_CONFIG:
                 return False
             return True
+
+        def _is_acceptable(c: dict) -> bool:
+            """Candidate is decent enough to limit remaining search budget.
+
+            When the primary opus_container extraction succeeds with
+            reasonable quality we don't need 15+ fallback attempts that
+            almost always produce identical results.
+            """
+            return c["score"] > 1.0 and c["duration"] > 20.0
 
         def _read_first_toc_config(ogg_data: bytes) -> int:
             """Return the Opus config index from the first audio frame
@@ -3011,19 +3216,26 @@ def _try_convert_audio(
                     _good_enough_found = True
 
         # Main OPUS container path.
+        _acceptable_found = False
         try:
             _capture_best(_opus_container_to_ogg(audio_data), "opus_container")
+            if candidates and _is_acceptable(candidates[-1]):
+                _acceptable_found = True
         except Exception as e:
             logger.debug("NUS3AUDIO", f"OPUS container conversion: {e}")
 
         # Fallback: try interpreting payload offsets as LOPUS.
+        # When the primary path already produced an acceptable candidate,
+        # run only ONE verification pass to avoid 15+ redundant ffmpeg calls.
         if not _good_enough_found:
+            _fallback_budget = 1 if _acceptable_found else None
+            _fallback_spent = 0
             for try_ch in [None, 2]:
-                if _good_enough_found:
+                if _good_enough_found or (_fallback_budget is not None and _fallback_spent >= _fallback_budget):
                     break
                 ch_label = str(try_ch) if try_ch is not None else "auto"
                 for payload_off in OPUS_PAYLOAD_OFFSETS:
-                    if _good_enough_found:
+                    if _good_enough_found or (_fallback_budget is not None and _fallback_spent >= _fallback_budget):
                         break
                     if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
                         continue
@@ -3034,12 +3246,15 @@ def _try_convert_audio(
                             f"opus_lopus_{ch_label}_off{payload_off}",
                             forced_channels=try_ch,
                         )
+                        _fallback_spent += 1
                     except Exception:
                         pass
 
-        # Mono retry — only when all existing candidates look noisy.
+        # Mono retry — only when all existing candidates look noisy
+        # and the primary path didn't already produce acceptable output.
         if (
             not _good_enough_found
+            and not _acceptable_found
             and candidates
             and all(
                 c["zcr"] > NOISE_GATE_ZCR_THRESHOLD * 0.9
@@ -3059,6 +3274,41 @@ def _try_convert_audio(
                         f"opus_lopus_1_off{payload_off}",
                         forced_channels=1,
                     )
+                except Exception:
+                    pass
+
+        # TOC stereo-bit-flip — when all stereo attempts produce noise,
+        # the tracks may have the stereo bit set in the TOC but actually
+        # encode mono data.  Flip bit 2 of each frame's TOC byte and
+        # decode as mono to produce a clean mono candidate.
+        # Skip when the primary path already produced acceptable output.
+        if (
+            not _good_enough_found
+            and not _acceptable_found
+            and candidates
+            and all(
+                c["zcr"] > 0.35
+                for c in candidates
+                if c.get("forced_channels") is None or c["forced_channels"] == 2
+            )
+        ):
+            for payload_off in OPUS_PAYLOAD_OFFSETS:
+                if _good_enough_found:
+                    break
+                if len(audio_data) <= payload_off + LOPUS_MIN_SLOT_SIZE:
+                    continue
+                try:
+                    ogg_data = _lopus_to_ogg(
+                        audio_data[payload_off:], force_channels=1)
+                    # Flip the stereo bit (bit 2) of each Opus frame's
+                    # TOC byte inside the OGG stream.
+                    flipped_ogg = _flip_ogg_opus_stereo_bits(ogg_data)
+                    if flipped_ogg:
+                        _capture_best(
+                            flipped_ogg,
+                            f"opus_lopus_tocflip_off{payload_off}",
+                            forced_channels=1,
+                        )
                 except Exception:
                     pass
 

@@ -5,14 +5,13 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Optional
-from src.models.settings import AppSettings
+from src.models.settings import AppSettings, DEFAULT_WINDOW_GEOMETRY, DEFAULT_PAGE, DEFAULT_UI_SCALE
 
 CONFIG_DIR = Path.home() / ".ssbu-mod-manager"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 UI_SCALE_MIN = 0.6
 UI_SCALE_MAX = 2.0
-UI_SCALE_DEFAULT = 1.2
 
 class ConfigManager:
     def __init__(self):
@@ -45,15 +44,15 @@ class ConfigManager:
                     css_mod_folder=Path(data["css_mod_folder"]) if data.get("css_mod_folder") else None,
                     mod_disable_method=data.get("mod_disable_method", "move"),
                     theme=data.get("theme", "Dark"),
-                    window_geometry=data.get("window_geometry", "1400x900"),
-                    last_opened_page=data.get("last_opened_page", "dashboard"),
+                    window_geometry=data.get("window_geometry", DEFAULT_WINDOW_GEOMETRY),
+                    last_opened_page=data.get("last_opened_page", DEFAULT_PAGE),
                     auto_detect_eden=data.get("auto_detect_eden", True),
                     backup_before_merge=data.get("backup_before_merge", True),
                     emulator=data.get("emulator", ""),
                     emulator_version=str(data.get("emulator_version", "") or ""),
                     game_version=str(data.get("game_version", "") or ""),
                     debug_mode=data.get("debug_mode", False),
-                    ui_scale=max(UI_SCALE_MIN, min(UI_SCALE_MAX, float(data.get("ui_scale", UI_SCALE_DEFAULT)))),
+                    ui_scale=max(UI_SCALE_MIN, min(UI_SCALE_MAX, float(data.get("ui_scale", DEFAULT_UI_SCALE)))),
                     use_plugin_friendly_names=bool(data.get("use_plugin_friendly_names", True)),
                     plugin_name_overrides={
                         str(k): str(v)

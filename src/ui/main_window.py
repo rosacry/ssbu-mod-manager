@@ -41,30 +41,30 @@ class MainWindow(ctk.CTkFrame):
         right = ctk.CTkFrame(self, fg_color=theme.BG_APP, corner_radius=0)
         right.pack(side="left", fill="both", expand=True)
 
-        self.toolbar = ctk.CTkFrame(right, height=40, fg_color=theme.BG_TOOLBAR, corner_radius=0)
+        self.toolbar = ctk.CTkFrame(right, height=theme.HEIGHT_TOOLBAR, fg_color=theme.BG_TOOLBAR, corner_radius=theme.RADIUS_NONE)
         self.toolbar.pack(fill="x", side="top")
         self.toolbar.pack_propagate(False)
 
         toolbar_inner = ctk.CTkFrame(self.toolbar, fg_color="transparent")
-        toolbar_inner.pack(fill="x", padx=14, pady=4)
+        toolbar_inner.pack(fill="x", padx=theme.PAD_CONTENT, pady=4)
 
         self.undo_btn = ctk.CTkButton(
-            toolbar_inner, text="\u21b6 Undo", width=80, height=30,
+            toolbar_inner, text="\u21b6 Undo", width=theme.WIDTH_NARROW_BUTTON, height=theme.HEIGHT_COMPACT,
             fg_color=theme.BG_CARD_INNER, hover_color=theme.TOOLBAR_HOVER,
-            font=ctk.CTkFont(size=theme.FONT_BODY), corner_radius=6,
+            font=ctk.CTkFont(size=theme.FONT_BODY), corner_radius=theme.RADIUS_SMALL,
             state="disabled", command=self._undo,
             text_color=theme.TEXT_SUBTLE,
         )
         self.undo_btn.pack(side="left", padx=(0, 4))
 
         self.redo_btn = ctk.CTkButton(
-            toolbar_inner, text="\u21b7 Redo", width=80, height=30,
+            toolbar_inner, text="\u21b7 Redo", width=theme.WIDTH_NARROW_BUTTON, height=theme.HEIGHT_COMPACT,
             fg_color=theme.BG_CARD_INNER, hover_color=theme.TOOLBAR_HOVER,
-            font=ctk.CTkFont(size=theme.FONT_BODY), corner_radius=6,
+            font=ctk.CTkFont(size=theme.FONT_BODY), corner_radius=theme.RADIUS_SMALL,
             state="disabled", command=self._redo,
             text_color=theme.TEXT_SUBTLE,
         )
-        self.redo_btn.pack(side="left", padx=(0, 12))
+        self.redo_btn.pack(side="left", padx=(0, theme.PAD_MEDIUM))
 
         self.action_label = ctk.CTkLabel(
             toolbar_inner, text="",
@@ -73,18 +73,18 @@ class MainWindow(ctk.CTkFrame):
         self.action_label.pack(side="left")
 
         self.save_btn = ctk.CTkButton(
-            toolbar_inner, text="\u2713 Save", width=80, height=30,
+            toolbar_inner, text="\u2713 Save", width=theme.WIDTH_NARROW_BUTTON, height=theme.HEIGHT_COMPACT,
             fg_color=theme.SUCCESS_ALT, hover_color=theme.SUCCESS_HOVER_ALT,
-            font=ctk.CTkFont(size=theme.FONT_BODY, weight="bold"), corner_radius=6,
+            font=ctk.CTkFont(size=theme.FONT_BODY, weight="bold"), corner_radius=theme.RADIUS_SMALL,
             state="disabled", command=self._save,
             text_color=theme.TEXT_PRIMARY,
         )
         self.save_btn.pack(side="right", padx=(4, 0))
 
         self.discard_btn = ctk.CTkButton(
-            toolbar_inner, text="\u2716 Discard", width=90, height=30,
+            toolbar_inner, text="\u2716 Discard", width=theme.WIDTH_DIALOG_BUTTON, height=theme.HEIGHT_COMPACT,
             fg_color=theme.TEXT_INACTIVE, hover_color=theme.HOVER_MUTED,
-            font=ctk.CTkFont(size=theme.FONT_BODY, weight="bold"), corner_radius=6,
+            font=ctk.CTkFont(size=theme.FONT_BODY, weight="bold"), corner_radius=theme.RADIUS_SMALL,
             state="disabled", command=self._discard,
             text_color=theme.TEXT_PRIMARY,
         )
@@ -134,14 +134,6 @@ class MainWindow(ctk.CTkFrame):
         for _ in range(loops):
             try:
                 page.update_idletasks()
-            except Exception:
-                pass
-            try:
-                self.content.update_idletasks()
-            except Exception:
-                pass
-            try:
-                self.update_idletasks()
             except Exception:
                 pass
 
@@ -381,7 +373,7 @@ class MainWindow(ctk.CTkFrame):
             page.on_show()
         except Exception:
             pass
-        self._settle_page_layout(page, passes=2 if first_visit else 0)
+        self._settle_page_layout(page, passes=1 if first_visit else 0)
 
         self.current_page = page_id
         self._shown_pages.add(page_id)
@@ -389,7 +381,7 @@ class MainWindow(ctk.CTkFrame):
             page.lift()
         except Exception:
             pass
-        self._settle_page_layout(page, passes=2 if first_visit else 0)
+        self._settle_page_layout(page, passes=1 if first_visit else 0)
         if prev_page is not None and prev_page is not page:
             try:
                 prev_page.place_forget()

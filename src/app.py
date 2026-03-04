@@ -25,15 +25,14 @@ from src.ui.main_window import MainWindow
 
 
 class ModManagerApp(ctk.CTk):
-    # Base dimensions (at 100% scale)
     _BASE_WIDTH = 1480
     _BASE_HEIGHT = 940
     _MIN_WIDTH = 1100
     _MIN_HEIGHT = 680
-    # "100%" should match the old 120% visual density.
     _DEFAULT_VISUAL_SCALE = 1.2
     _MIN_SCALE = 0.6
     _MAX_SCALE = 2.0
+    _ZOOM_STEP_PERCENT = 10
     _ZOOM_APPLY_DEBOUNCE_MS = 90
     _ZOOM_FIRST_TAP_DELAY_MS = 1
     _ZOOM_MIN_REPEAT_DELAY_MS = 70
@@ -41,7 +40,14 @@ class ModManagerApp(ctk.CTk):
     _ZOOM_LAYOUT_SETTLE_DEBOUNCE_MS = 340
     _ZOOM_PERSIST_DEBOUNCE_MS = 850
     _ZOOM_PAGE_EVICT_MIN_PAGE_COUNT = 4
+    _ZOOM_OVERLAY_HIDE_DELAY_MS = 28
+    _ZOOM_REPEAT_DETECT_THRESHOLD_S = 0.35
+    _ZOOM_BREATHING_THRESHOLD_MS = 220.0
+    _ZOOM_MIN_REPEAT_FLOOR_MS = 42
+    _ZOOM_ADAPTIVE_DELAY_MULTIPLIER = 1.15
     _ENABLE_ZOOM_OVERLAY = False
+    _SCREEN_EDGE_MARGIN_H = 40
+    _SCREEN_EDGE_MARGIN_V = 80
     _RESIZE_SETTLE_MS = 84
     _DRAG_REDRAW_INTERVAL_MS = 10
     _SCROLL_REFRESH_INTERVAL_MS = 10
@@ -49,19 +55,36 @@ class ModManagerApp(ctk.CTk):
     _DRAG_FORCE_UPDATE_EVERY_TICKS = 1
     _STARTUP_REVEAL_DELAY_MS = 210
     _STARTUP_REVEAL_SETTLE_PASSES = 4
+    _STARTUP_STATUS_DELAY_MS = 100
+    _STARTUP_FADE_TRIGGER_DELAY_MS = 25
     _WINDOW_FADE_STEP_MS = 15
     _WINDOW_FADE_IN_MS = 120
     _WINDOW_FADE_OUT_MS = 120
     _ENABLE_WINDOW_FADE = False
+    _DPI_SNAP_RESTORE_DELAY_MS = 200
     _PAGE_WARMUP_INITIAL_DELAY_MS = 2600
     _PAGE_WARMUP_STEP_DELAY_MS = 260
     _PAGE_WARMUP_IDLE_REQUIRED_MS = 1600
     _PAGE_WARMUP_RETRY_DELAY_MS = 320
     _PAGE_WARMUP_PAGE_IDS = ()
-    _STARTUP_PREWARM_PAGE_IDS = (
-    )
-    _STARTUP_PREWARM_ON_SHOW_PAGE_IDS = (
-    )
+    _PAGE_CREATE_SCROLL_FIX_DELAY_MS = 80
+    _PAGE_WARMUP_QUEUE_STEP_DELAY_MS = 40
+    _POINTER_RELEASE_REFRESH_MS_1 = 8
+    _POINTER_RELEASE_REFRESH_MS_2 = 14
+    _POINTER_RELEASE_REFRESH_MS_3 = 30
+    _SCROLL_SUPPRESS_DRAG_S = 0.02
+    _SCROLL_SUPPRESS_PRESS_S = 0.05
+    _SCROLL_SUPPRESS_RESIZE_S = 0.08
+    _STATUS_REFRESH_RETRY_MS = 20
+    _WIN_WHEEL_DELTA_UNIT = 120
+    _WIN_WHEEL_MAX_TICKS = 4
+    _GEOMETRY_MIN_VALID_PX = 50
+    _GEOMETRY_FALLBACK_MIN_W = 600
+    _GEOMETRY_FALLBACK_MIN_H = 450
+    _VISIBILITY_RETRY_DELAY_MS = 250
+    _VISIBILITY_MAX_ATTEMPTS = 12
+    _STARTUP_PREWARM_PAGE_IDS = ()
+    _STARTUP_PREWARM_ON_SHOW_PAGE_IDS = ()
 
     def __init__(self):
         import sys as _sys
@@ -305,7 +328,7 @@ class ModManagerApp(ctk.CTk):
         self._page_classes = {}
         self._register_page_classes()
 
-        self.after(100, self._update_status)
+        self.after(self._STARTUP_STATUS_DELAY_MS, self._update_status)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Resize handler intentionally not bound. Keeping this hot path free
@@ -413,7 +436,7 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
         if fade_in_supported and self._ENABLE_WINDOW_FADE:
-            self.after(25, self._fade_in_window)
+            self.after(self._STARTUP_FADE_TRIGGER_DELAY_MS, self._fade_in_window)
         else:
             self._schedule_startup_reveal(force_alpha_hidden=force_alpha_hidden)
         _dbg(f"window shown, state={self.wm_state()}, mapped={self.winfo_ismapped()}")
@@ -540,7 +563,7 @@ class ModManagerApp(ctk.CTk):
         ))
 
         # Shorter delay before restoring real min/max constraints.
-        self.after(200, self._set_scaled_min_max)
+        self.after(self._DPI_SNAP_RESTORE_DELAY_MS, self._set_scaled_min_max)
 
         # Rescale raw Tk listbox fonts that don't participate in CTk scaling.
         try:
@@ -582,10 +605,10 @@ class ModManagerApp(ctk.CTk):
         min_w = int(self._MIN_WIDTH * scale)
         min_h = int(self._MIN_HEIGHT * scale)
 
-        scaled_w = min(scaled_w, screen_w - 40)
-        scaled_h = min(scaled_h, screen_h - 80)
-        min_w = min(min_w, screen_w - 40)
-        min_h = min(min_h, screen_h - 80)
+        scaled_w = min(scaled_w, screen_w - self._SCREEN_EDGE_MARGIN_H)
+        scaled_h = min(scaled_h, screen_h - self._SCREEN_EDGE_MARGIN_V)
+        min_w = min(min_w, screen_w - self._SCREEN_EDGE_MARGIN_H)
+        min_h = min(min_h, screen_h - self._SCREEN_EDGE_MARGIN_V)
 
         self.geometry(f"{scaled_w}x{scaled_h}")
         self.minsize(min_w, min_h)
@@ -601,8 +624,8 @@ class ModManagerApp(ctk.CTk):
             self._prune_invalid_scaling_callbacks()
             ctk.set_widget_scaling(scale)
             screen_w, screen_h = self._get_primary_screen_size()
-            min_w = min(int(self._MIN_WIDTH * scale), screen_w - 40)
-            min_h = min(int(self._MIN_HEIGHT * scale), screen_h - 80)
+            min_w = min(int(self._MIN_WIDTH * scale), screen_w - self._SCREEN_EDGE_MARGIN_H)
+            min_h = min(int(self._MIN_HEIGHT * scale), screen_h - self._SCREEN_EDGE_MARGIN_V)
             self.minsize(min_w, min_h)
             if save:
                 self._persist_scale(scale)
@@ -615,25 +638,23 @@ class ModManagerApp(ctk.CTk):
         finally:
             if overlay_shown:
                 try:
-                    self.after(28, self._hide_zoom_overlay)
+                    self.after(self._ZOOM_OVERLAY_HIDE_DELAY_MS, self._hide_zoom_overlay)
                 except Exception:
                     self._hide_zoom_overlay()
 
     def _zoom_in(self):
-        """Increase visual zoom by 10% (relative to the 100%=old120 baseline)."""
         base_scale = self._pending_scale_apply
         if base_scale is None:
             base_scale = self._current_scale
         pct = self._scale_to_display_percent(base_scale)
-        self._queue_scale_change(self._display_percent_to_scale(pct + 10))
+        self._queue_scale_change(self._display_percent_to_scale(pct + self._ZOOM_STEP_PERCENT))
 
     def _zoom_out(self):
-        """Decrease visual zoom by 10%."""
         base_scale = self._pending_scale_apply
         if base_scale is None:
             base_scale = self._current_scale
         pct = self._scale_to_display_percent(base_scale)
-        self._queue_scale_change(self._display_percent_to_scale(pct - 10))
+        self._queue_scale_change(self._display_percent_to_scale(pct - self._ZOOM_STEP_PERCENT))
 
     def _zoom_reset(self):
         """Reset visual zoom to 100% (old 120% density)."""
@@ -665,17 +686,17 @@ class ModManagerApp(ctk.CTk):
             since_last_apply_ms = 0.0
             if self._last_scale_apply_monotonic > 0.0:
                 since_last_apply_ms = max(0.0, (now - self._last_scale_apply_monotonic) * 1000.0)
-            if previous_input <= 0.0 or (now - previous_input) >= 0.35:
+            if previous_input <= 0.0 or (now - previous_input) >= self._ZOOM_REPEAT_DETECT_THRESHOLD_S:
                 # If we're immediately after a heavy scale apply, give Tk a
                 # short breath to drain queued key-repeat events so they can
                 # coalesce into one target zoom step.
-                if since_last_apply_ms and since_last_apply_ms < 220.0:
-                    delay_ms = max(42, int(self._ZOOM_MIN_REPEAT_DELAY_MS))
+                if since_last_apply_ms and since_last_apply_ms < self._ZOOM_BREATHING_THRESHOLD_MS:
+                    delay_ms = max(self._ZOOM_MIN_REPEAT_FLOOR_MS, int(self._ZOOM_MIN_REPEAT_DELAY_MS))
                 else:
                     delay_ms = int(self._ZOOM_FIRST_TAP_DELAY_MS)
             else:
                 recent_cost = max(0.0, float(getattr(self, "_last_scale_apply_duration_ms", 0.0)))
-                adaptive = int(round(recent_cost * 1.15))
+                adaptive = int(round(recent_cost * self._ZOOM_ADAPTIVE_DELAY_MULTIPLIER))
                 delay_ms = max(
                     int(self._ZOOM_MIN_REPEAT_DELAY_MS),
                     min(int(self._ZOOM_MAX_REPEAT_DELAY_MS), adaptive or int(self._ZOOM_APPLY_DEBOUNCE_MS)),
@@ -1216,7 +1237,7 @@ class ModManagerApp(ctk.CTk):
         except Exception:
             pass
         self._suppress_scroll_refresh_until = max(
-            self._suppress_scroll_refresh_until, time.monotonic() + 0.02
+            self._suppress_scroll_refresh_until, time.monotonic() + self._SCROLL_SUPPRESS_DRAG_S
         )
         if self._active_drag_scroll_widget is not None:
             self._schedule_scroll_refresh(self._active_drag_scroll_widget)
@@ -1234,7 +1255,7 @@ class ModManagerApp(ctk.CTk):
                 pass
             self._drag_refresh_after_id = None
         try:
-            self.after(8, lambda w=target: self._refresh_after_pointer_release(w))
+            self.after(self._POINTER_RELEASE_REFRESH_MS_1, lambda w=target: self._refresh_after_pointer_release(w))
         except Exception:
             pass
         if target is not None:
@@ -1270,7 +1291,7 @@ class ModManagerApp(ctk.CTk):
         self._pointer_left_down = bool(pressed)
         if pressed:
             self._scrollbar_drag_active = self._widget_belongs_to_scrollbar(source_widget)
-            self._suppress_scroll_refresh_until = time.monotonic() + 0.05
+            self._suppress_scroll_refresh_until = time.monotonic() + self._SCROLL_SUPPRESS_PRESS_S
             if self._scrollbar_drag_active:
                 self._active_drag_scroll_widget = self._resolve_scroll_target_from_scrollbar(source_widget)
             # Drop pending refreshes before scrollbar dragging starts.
@@ -1351,13 +1372,13 @@ class ModManagerApp(ctk.CTk):
         try:
             if widget is not None and bool(widget.winfo_exists()):
                 widget.update_idletasks()
-                self.after(8, widget.update)
-                self.after(14, widget.update_idletasks)
-                self.after(30, widget.update_idletasks)
+                self.after(self._POINTER_RELEASE_REFRESH_MS_1, widget.update)
+                self.after(self._POINTER_RELEASE_REFRESH_MS_2, widget.update_idletasks)
+                self.after(self._POINTER_RELEASE_REFRESH_MS_3, widget.update_idletasks)
             self.update_idletasks()
-            self.after(8, self.update_idletasks)
-            self.after(14, self.update_idletasks)
-            self.after(30, self.update_idletasks)
+            self.after(self._POINTER_RELEASE_REFRESH_MS_1, self.update_idletasks)
+            self.after(self._POINTER_RELEASE_REFRESH_MS_2, self.update_idletasks)
+            self.after(self._POINTER_RELEASE_REFRESH_MS_3, self.update_idletasks)
         except Exception:
             pass
 
@@ -1376,7 +1397,7 @@ class ModManagerApp(ctk.CTk):
             self._last_window_activity_size = size
             self._suppress_scroll_refresh_until = max(
                 self._suppress_scroll_refresh_until,
-                time.monotonic() + 0.08,
+                time.monotonic() + self._SCROLL_SUPPRESS_RESIZE_S,
             )
             if self._resize_after_id:
                 try:
@@ -1875,7 +1896,7 @@ class ModManagerApp(ctk.CTk):
             if self._pointer_left_down:
                 return "break"
             direction = -1 if event.delta > 0 else 1
-            ticks = max(1, min(4, int(round(abs(event.delta) / 120))))
+            ticks = max(1, min(self._WIN_WHEEL_MAX_TICKS, int(round(abs(event.delta) / self._WIN_WHEEL_DELTA_UNIT))))
             # Conflicts page is pinned to top after scan while the list
             # stabilizes. Hold wheel input briefly, then release guard on the
             # first explicit user wheel action.
@@ -2022,23 +2043,22 @@ class ModManagerApp(ctk.CTk):
                 h = int(m.group(2))
                 # Some Tk startup paths briefly report 1x1 while withdrawn.
                 # Ignore that transient size so centering doesn't visibly jump.
-                if w > 50 and h > 50:
+                if w > self._GEOMETRY_MIN_VALID_PX and h > self._GEOMETRY_MIN_VALID_PX:
                     return w, h
         except Exception:
             pass
         try:
             w = int(self.winfo_width())
             h = int(self.winfo_height())
-            if w > 50 and h > 50:
+            if w > self._GEOMETRY_MIN_VALID_PX and h > self._GEOMETRY_MIN_VALID_PX:
                 return w, h
         except Exception:
             pass
-        # Fallback to expected scaled base size
         scale = getattr(self, "_current_scale", 1.0)
         sw, sh = self._get_primary_screen_size()
-        w = min(int(self._BASE_WIDTH * scale), sw - 40)
-        h = min(int(self._BASE_HEIGHT * scale), sh - 80)
-        return max(600, w), max(450, h)
+        w = min(int(self._BASE_WIDTH * scale), sw - self._SCREEN_EDGE_MARGIN_H)
+        h = min(int(self._BASE_HEIGHT * scale), sh - self._SCREEN_EDGE_MARGIN_V)
+        return max(self._GEOMETRY_FALLBACK_MIN_W, w), max(self._GEOMETRY_FALLBACK_MIN_H, h)
 
     def _center_window_on_screen(self):
         """Center the window using DPI-consistent Tk screen dimensions."""
@@ -2174,9 +2194,9 @@ class ModManagerApp(ctk.CTk):
                 f"Startup visibility recovery attempt={attempt} state={state} mapped={int(mapped)} viewable={int(viewable)}",
             )
 
-        if attempt < 12:
+        if attempt < self._VISIBILITY_MAX_ATTEMPTS:
             try:
-                self.after(250, lambda: self._ensure_window_visible(attempt + 1))
+                self.after(self._VISIBILITY_RETRY_DELAY_MS, lambda: self._ensure_window_visible(attempt + 1))
             except Exception:
                 pass
 
@@ -2633,7 +2653,7 @@ class ModManagerApp(ctk.CTk):
             except Exception as e:
                 logger.warn("App", f"Failed to neutralize CTk scroll on page: {e}")
 
-        self.after(80, _safe_neutralize)
+        self.after(self._PAGE_CREATE_SCROLL_FIX_DELAY_MS, _safe_neutralize)
         return page
 
     def _start_background_page_warmup(self):
@@ -2650,7 +2670,7 @@ class ModManagerApp(ctk.CTk):
         ]
         if not self._page_warmup_queue:
             return
-        self._page_warmup_after_id = self.after(40, self._run_page_warmup_step)
+        self._page_warmup_after_id = self.after(self._PAGE_WARMUP_QUEUE_STEP_DELAY_MS, self._run_page_warmup_step)
 
     def _run_page_warmup_step(self):
         self._page_warmup_after_id = None
@@ -2875,7 +2895,7 @@ class ModManagerApp(ctk.CTk):
                 if self._status_refresh_pending:
                     self._status_refresh_pending = False
                     try:
-                        self.after(20, self._update_status)
+                        self.after(self._STATUS_REFRESH_RETRY_MS, self._update_status)
                     except Exception:
                         pass
 

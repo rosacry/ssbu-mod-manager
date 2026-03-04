@@ -1,6 +1,7 @@
 """Mods management page with category grouping, virtual scrolling, and undo/redo."""
 import customtkinter as ctk
 import tkinter as tk
+import threading
 from tkinter import filedialog, messagebox
 from collections import defaultdict
 from pathlib import Path
@@ -73,9 +74,7 @@ class ModsPage(BasePage):
         self._build_ui()
 
     def _patch_all_scroll_speeds(self):
-        """Use app-global wheel handling for parity with Plugins page."""
-        # Intentionally no per-widget wheel bindings on this page.
-        # This keeps Mods and Plugins scrolling behavior consistent.
+        """Rely on app-global wheel handling for consistent scroll behavior."""
         return
 
     def _build_ui(self):
@@ -244,7 +243,19 @@ class ModsPage(BasePage):
             return
 
         logger.info("Mods", "Loading mod list...")
-        self._all_mods = self.app.mod_manager.list_mods()
+        self.count_label.configure(text="Loading mods...")
+
+        def _load():
+            mods = self.app.mod_manager.list_mods()
+            try:
+                self.after(0, lambda: self._on_mods_loaded(mods))
+            except Exception:
+                pass
+
+        threading.Thread(target=_load, daemon=True).start()
+
+    def _on_mods_loaded(self, mods):
+        self._all_mods = mods
         self._loaded = True
         logger.info("Mods", f"Found {len(self._all_mods)} mods")
         self._render_mods()
@@ -310,11 +321,16 @@ class ModsPage(BasePage):
         else:
             self._render_flat(filtered)
 
-        # Force scroll region update
-        self._inner_frame.update_idletasks()
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        # Defer scroll region update to let Tk settle naturally
+        self.after(10, self._update_scroll_region)
 
         logger.debug("Mods", f"Rendered {len(filtered)} mod entries")
+
+    def _update_scroll_region(self):
+        try:
+            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        except tk.TclError:
+            pass
 
     def _render_grouped(self, mods):
         groups = defaultdict(list)

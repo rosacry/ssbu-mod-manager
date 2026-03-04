@@ -303,10 +303,10 @@ class AudioPlayer:
                 if logger:
                     logger.warn("AudioPlayer", f"NUS3AUDIO conversion failed: {message}")
                 return False, message
-            if self._ffplay:
-                ok, play_msg = self._play_file_ffplay(temp_path, start=0.0)
-            else:
-                ok, play_msg = self._play_file(temp_path)
+            # Always route through _play_file so pygame handles WAV
+            # (seamless real-time volume) and ffplay is only used as a
+            # last-resort fallback for formats pygame cannot decode.
+            ok, play_msg = self._play_file(temp_path)
             if ok:
                 return True, f"Playing: {file_path.name}"
             return False, play_msg
