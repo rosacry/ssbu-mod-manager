@@ -1106,6 +1106,9 @@ class MusicManager:
 
         # Handle main menu music separately
         menu_tracks = self.get_tracks_for_stage(MENU_STAGE_ID)
+        has_menu_replacement = bool(
+            self.replacement_assignments.get(MENU_STAGE_ID, {}).get(MENU_BGM_FILENAME)
+        )
         if menu_tracks:
             try:
                 self._apply_menu_music(menu_tracks[0], mods_root)
@@ -1113,7 +1116,10 @@ class MusicManager:
             except Exception as e:
                 logger.error("MusicManager", f"Failed to apply menu music: {e}")
                 result["menu_music_set"] = False
-        else:
+        elif not has_menu_replacement:
+            # Only remove legacy menu music when no Wi-Fi-safe replacement
+            # covers the slot — avoids deleting a file that the overlay pass
+            # is about to recreate.
             self._remove_managed_menu_music(mods_root)
 
         replacement_result = self._apply_replacement_overlays(mods_root)
@@ -1184,9 +1190,10 @@ class MusicManager:
                 logger.warn("MusicManager", f"Failed to clear managed menu music: {exc}")
 
     def _apply_replacement_overlays(self, mods_root: Path) -> dict:
-        result = {
+        result: dict[str, object] = {
             "replacement_files": 0,
             "replacement_output_mod": "",
+            "replacement_failures": [],
         }
         config_mod = self._music_config_dir(mods_root)
         stream_dir = self._music_config_stream_dir(mods_root)
@@ -1195,24 +1202,40 @@ class MusicManager:
         previous_files = self._load_previous_replacement_manifest(mods_root)
         current_files: set[str] = set()
         metadata_rows: list[dict[str, str | int | bool]] = []
+        failures: list[str] = []
 
         track_lookup = {track.track_id: track for track in self.tracks}
         for stage_id, slot_map in self.replacement_assignments.items():
             for slot_key, assignment in slot_map.items():
                 track = track_lookup.get(assignment.replacement_track_id)
                 if track is None:
+                    reason = f"Track '{assignment.replacement_track_id}' not found in library (mod may have been removed)"
+                    logger.warn("MusicManager", f"Replacement skipped for '{slot_key}': {reason}")
+                    failures.append(reason)
                     continue
                 filename = Path(slot_key).name if Path(slot_key).suffix else f"{slot_key}{NUS3AUDIO_SUFFIX}"
                 if not filename.lower().endswith(NUS3AUDIO_SUFFIX):
                     filename = f"{Path(filename).stem}{NUS3AUDIO_SUFFIX}"
+                src = Path(track.file_path)
                 dest = stream_dir / filename
-                try:
-                    shutil.copy2(str(track.file_path), str(dest))
-                except OSError as exc:
-                    logger.warn("MusicManager", f"Failed to copy replacement '{filename}': {exc}")
+                if not src.exists():
+                    reason = f"Source file missing for '{track.display_name or track.track_id}': {src}"
+                    logger.warn("MusicManager", f"Replacement skipped for '{filename}': {reason}")
+                    failures.append(reason)
                     continue
+                try:
+                    shutil.copy2(str(src), str(dest))
+                except OSError as exc:
+                    reason = f"Copy failed for '{track.display_name or track.track_id}': {exc}"
+                    logger.warn("MusicManager", f"Replacement '{filename}': {reason}")
+                    failures.append(reason)
+                    continue
+                logger.info(
+                    "MusicManager",
+                    f"Replacement written: {filename} <- {src.name} ({track.display_name or track.track_id})",
+                )
                 current_files.add(filename)
-                result["replacement_files"] += 1
+                result["replacement_files"] = int(result["replacement_files"]) + 1
                 metadata_rows.append(
                     {
                         "stage_id": stage_id,
@@ -1240,6 +1263,7 @@ class MusicManager:
 
         if current_files:
             result["replacement_output_mod"] = str(config_mod)
+        result["replacement_failures"] = failures
         return result
 
     def _apply_menu_music(self, track: MusicTrack, mods_root: Path) -> None:

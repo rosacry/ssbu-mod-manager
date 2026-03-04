@@ -327,8 +327,8 @@ class MusicPage(BasePage):
         self.track_listbox.pack(side="left", fill="both", expand=True)
         track_scroll.pack(side="right", fill="y")
 
-        self.track_listbox.bind("<Double-1>", lambda e: self._add_selected_track())
-        # Single-click to auto-play when already playing
+        self.track_listbox.bind("<Double-1>", lambda e: self._play_selected())
+        # Single-click selects only; double-click plays
         self.track_listbox.bind("<<ListboxSelect>>", self._on_track_selection_changed)
 
         player_frame = ctk.CTkFrame(right, fg_color=theme.BG_CARD_INNER, corner_radius=6)
@@ -397,16 +397,6 @@ class MusicPage(BasePage):
 
         ctk.CTkButton(
             queue_controls,
-            text="Favorites",
-            width=90,
-            height=26,
-            fg_color=theme.BTN_VANILLA,
-            hover_color=theme.HOVER_VANILLA,
-            font=ctk.CTkFont(size=theme.FONT_BODY),
-            command=lambda: self._start_queue_from_source("favorites"),
-        ).pack(side="left", padx=(0, 4))
-        ctk.CTkButton(
-            queue_controls,
             text="Prev",
             width=65,
             height=26,
@@ -458,7 +448,9 @@ class MusicPage(BasePage):
             corner_radius=6,
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
         )
-        self.spotify_export_btn.pack(fill="x")
+        # Only show Spotify button when the feature is enabled in Settings
+        if self._spotify_enabled():
+            self.spotify_export_btn.pack(fill="x")
 
     def on_show(self):
         if not self._loaded:
@@ -1500,13 +1492,15 @@ class MusicPage(BasePage):
                 fg_color=theme.PRIMARY,
                 hover_color=theme.HOVER_PRIMARY,
             )
+            try:
+                self.spotify_export_btn.pack(fill="x")
+            except Exception:
+                pass
         else:
-            self.spotify_export_btn.configure(
-                text="Spotify Export Disabled in Settings",
-                state="disabled",
-                fg_color=theme.DISABLED_DISCARD,
-                hover_color=theme.DISABLED_DISCARD,
-            )
+            try:
+                self.spotify_export_btn.pack_forget()
+            except Exception:
+                pass
 
     def _resolve_track_by_id(self, track_id: str):
         for track in self.app.music_manager.get_all_available_tracks():
@@ -2072,23 +2066,12 @@ class MusicPage(BasePage):
 
     # Audio playback methods
     def _on_track_click(self, event):
-        """When user clicks a track while music is already playing or paused,
-        auto-play the newly selected track.  Debounced to prevent duplicate
-        play calls when <<ListboxSelect>> fires more than once per click.
-        Does NOT auto-play when multiple tracks are highlighted."""
-        if self._suppress_track_selection_autoplay:
-            return
-        selected = self._get_selected_tracks()
-        if (self._is_playing or self._is_paused) and len(selected) == 1:
-            aid = getattr(self, "_track_click_after_id", None)
-            if aid:
-                try:
-                    self.after_cancel(aid)
-                except Exception:
-                    pass
-            self._track_click_after_id = self.after(
-                self._PLAY_CLICK_DELAY_MS, self._play_selected
-            )
+        """Handle single-click on a track.
+
+        Single-click only selects; playback is triggered by double-click.
+        We still warm the audio cache eagerly so double-click play is instant.
+        """
+        pass
 
     def _toggle_playback(self):
         """Toggle between play/pause/resume."""
@@ -2356,11 +2339,16 @@ class MusicPage(BasePage):
 
         try:
             result = self.app.music_manager.save_assignments(settings.mods_path)
+            failures = result.get("replacement_failures") or []
             msg = f"Music configuration saved!\n\n"
             msg += f"Wi-Fi-safe replacement stages: {result.get('replacement_stages', 0)}\n"
             msg += f"Wi-Fi-safe replacement files: {result.get('replacement_files', 0)}\n"
             msg += f"Wi-Fi-unsafe legacy stages: {result['stages_configured']}\n"
             msg += f"Wi-Fi-unsafe legacy assignments: {result['tracks_assigned']}\n"
+            if failures:
+                msg += f"\nWarning: {len(failures)} replacement(s) failed:\n"
+                for reason in failures[:5]:
+                    msg += f"  - {reason}\n"
             if result["stages_configured"] > 0:
                 msg += "\nWarning: legacy playlist edits are not Wi-Fi-safe."
             if result.get("menu_music_set"):
@@ -2374,10 +2362,14 @@ class MusicPage(BasePage):
                 "Saved music config: "
                 f"{result.get('replacement_files', 0)} Wi-Fi-safe replacements, "
                 f"{result['stages_configured']} unsafe legacy stages, "
-                f"{result['tracks_assigned']} unsafe legacy tracks",
+                f"{result['tracks_assigned']} unsafe legacy tracks"
+                + (f", {len(failures)} failures" if failures else ""),
             )
             self.app.mark_saved()
-            messagebox.showinfo("Saved", msg)
+            if failures:
+                messagebox.showwarning("Saved with warnings", msg)
+            else:
+                messagebox.showinfo("Saved", msg)
             return
         except Exception as e:
             logger.error("Music", f"Save failed: {e}")

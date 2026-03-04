@@ -1,13 +1,21 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.0.2**.
+Current release version: **1.0.3**.
 
 One place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
 ## Download
 
 Grab the latest zip from the [Releases](https://github.com/rosacry/ssbu-mod-manager/releases) page, extract it, and run `SSBUModManager.exe`.
+
+## What's New in 1.0.3
+
+- Fixed menu song replacement: Wi-Fi-safe replacements for the main menu slot now persist correctly instead of being silently deleted during save.
+- Replacement save now validates source files exist before copying and reports failures in the save dialog instead of silently skipping.
+- Removed redundant Favorites button from queue controls (the "Favorites only" checkbox already provides this).
+- Single-click on a track now only selects it; double-click plays the track.
+- Spotify export button is now hidden entirely when the feature is disabled in Settings.
 
 ## What's New in 1.0.2
 
