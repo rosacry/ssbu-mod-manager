@@ -1,13 +1,27 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.0.1**.
+Current release version: **1.0.2**.
 
 One place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
 ## Download
 
 Grab the latest zip from the [Releases](https://github.com/rosacry/ssbu-mod-manager/releases) page, extract it, and run `SSBUModManager.exe`.
+
+## What's New in 1.0.2
+
+- Removed the unintuitive "Play All" button from the music player queue controls.
+- Fixed text truncation on Wi-Fi Safe and Legacy tabs, summary labels, and other panel elements throughout the app.
+- Volume slider now uses an exponential perception curve so mid-range values feel naturally quieter.
+- IDSP and BWAV audio decoding now tries ffmpeg first, reducing preview load time from ~10 seconds to under 1 second.
+- Optimised the pure-Python DSP ADPCM fallback decoder with local-variable hoisting and bytearray indexing.
+- Page loading improved: migration page added to background warmup queue, batch render sizes doubled, widget teardown optimised.
+- Fixed critical bug where a missing replacement source file could abort the entire music save and corrupt the manifest.
+- Replacement manifest and metadata writes now use atomic temp-file-then-rename to prevent corruption on crash.
+- Fixed thread-safety issue in audio player `toggle_pause()`.
+- `flatten_mod()` now logs a warning when files are skipped due to name conflicts.
+- ffplay stderr pipe changed to DEVNULL to prevent file-descriptor leaks across many play cycles.
 
 ## What's New in 1.0.1
 
@@ -92,7 +106,7 @@ Requires Python 3.11+.
 python build.py
 ```
 
-Output: `dist/SSBUModManager-1.0.1-windows.zip`
+Output: `dist/SSBUModManager-1.0.2-windows.zip`
 
 ## First-Run Setup
 

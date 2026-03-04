@@ -235,7 +235,7 @@ class AudioPlayer:
             self._ffplay_proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self._backend = "ffplay"
@@ -450,9 +450,12 @@ class AudioPlayer:
 
     def toggle_pause(self):
         """Toggle pause/unpause."""
-        if self._paused:
+        with self._lock:
+            paused = self._paused
+            playing = self._playing
+        if paused:
             self.unpause()
-        elif self._playing:
+        elif playing:
             self.pause()
 
     def set_volume(self, volume: float):

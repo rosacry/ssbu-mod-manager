@@ -172,7 +172,7 @@ class PluginsPage(BasePage):
         threading.Thread(target=_load, daemon=True).start()
 
     # Number of plugin rows to render per event-loop tick.
-    _RENDER_BATCH_SIZE = 25
+    _RENDER_BATCH_SIZE = 50
 
     def _on_plugins_loaded(self, plugins):
         self._loaded = True
@@ -185,7 +185,8 @@ class PluginsPage(BasePage):
                 pass
             self._plugin_batch_id = None
 
-        for widget in self.plugin_list.winfo_children():
+        children = list(self.plugin_list.winfo_children())
+        for widget in reversed(children):
             widget.destroy()
 
         # Pre-compute classification once per plugin (avoids double call)

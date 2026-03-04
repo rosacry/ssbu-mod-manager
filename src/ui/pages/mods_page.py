@@ -283,7 +283,7 @@ class ModsPage(BasePage):
         return filtered
 
     # Number of mod rows to render per event-loop tick during batched rendering.
-    _RENDER_BATCH_SIZE = 25
+    _RENDER_BATCH_SIZE = 50
 
     def _render_mods(self, *_args):
         # Cancel any in-flight batched render
@@ -294,8 +294,10 @@ class ModsPage(BasePage):
                 pass
             self._render_batch_id = None
 
-        # Clear all existing widgets
-        for w in self._inner_frame.winfo_children():
+        # Clear all existing widgets (snapshot + reverse destroy reduces
+        # incremental layout recalculations inside tk)
+        children = list(self._inner_frame.winfo_children())
+        for w in reversed(children):
             w.destroy()
         self._rendered_widgets.clear()
 

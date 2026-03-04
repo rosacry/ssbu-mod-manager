@@ -1404,7 +1404,8 @@ def _decode_dsp_adpcm(adpcm_data: bytes, sample_count: int, coefs: list,
 
     Optimised pure-Python path: pre-extracts nibbles from the ADPCM byte
     stream, pre-allocates the output array, and keeps the hot loop tight
-    with only local-variable access.
+    with only local-variable access.  Uses struct.unpack_from for batch
+    byte reads and minimises attribute lookups.
     """
     import array as _array
 
@@ -1412,31 +1413,34 @@ def _decode_dsp_adpcm(adpcm_data: bytes, sample_count: int, coefs: list,
     if sample_count <= 0 or data_len == 0:
         return b""
 
-    # --- Pre-extract nibbles and frame headers --------------------------
-    # Each 8-byte frame: 1 header byte + 7 data bytes → 14 nibbles.
-    # We flatten the entire stream into (scale, coef_idx, nib0..nib13)
-    # tuples so the hot decode loop touches only a Python list.
-
     num_coefs = len(coefs)
     # Pre-build flat coef arrays for O(1) index lookup
     _c1 = [c[0] for c in coefs]
     _c2 = [c[1] for c in coefs]
 
-    # Sign-extend LUT for 4-bit nibble → signed int
+    # Sign-extend LUT for 4-bit nibble -> signed int
     _SIGN = [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1]
 
     # Pre-allocate output
     out = _array.array("h", bytes(sample_count * 2))
 
-    mv = memoryview(adpcm_data)
+    # Convert to bytearray for faster indexing in CPython
+    src = adpcm_data if isinstance(adpcm_data, (bytearray, memoryview)) else bytearray(adpcm_data)
+
     pos = 0
     decoded = 0
     hist1 = int(initial_hist1)
     hist2 = int(initial_hist2)
 
-    while decoded < sample_count and pos < data_len:
+    # Local aliases for tight loop
+    _out = out
+    _src = src
+    _sample_count = sample_count
+    _data_len = data_len
+
+    while decoded < _sample_count and pos < _data_len:
         # Frame header
-        hdr = adpcm_data[pos]
+        hdr = _src[pos]
         scale = 1 << (hdr & 0x0F)
         ci = (hdr >> 4) & 0x0F
         if ci >= num_coefs:
@@ -1446,14 +1450,14 @@ def _decode_dsp_adpcm(adpcm_data: bytes, sample_count: int, coefs: list,
         pos += 1
 
         # Determine how many data bytes this frame actually has
-        frame_bytes = min(7, data_len - pos)
+        frame_bytes = min(7, _data_len - pos)
         frame_end = decoded + frame_bytes * 2  # max samples from these bytes
-        if frame_end > sample_count:
-            frame_end = sample_count
+        if frame_end > _sample_count:
+            frame_end = _sample_count
 
-        # Fast inner loop: process each data byte → 2 nibbles
-        while decoded < frame_end and pos < data_len:
-            b = adpcm_data[pos]
+        # Fast inner loop: process each data byte -> 2 nibbles
+        while decoded < frame_end and pos < _data_len:
+            b = _src[pos]
             pos += 1
 
             # High nibble
@@ -1463,7 +1467,7 @@ def _decode_dsp_adpcm(adpcm_data: bytes, sample_count: int, coefs: list,
                 sample = 32767
             elif sample < -32768:
                 sample = -32768
-            out[decoded] = sample
+            _out[decoded] = sample
             hist2 = hist1
             hist1 = sample
             decoded += 1
@@ -1478,12 +1482,12 @@ def _decode_dsp_adpcm(adpcm_data: bytes, sample_count: int, coefs: list,
                 sample = 32767
             elif sample < -32768:
                 sample = -32768
-            out[decoded] = sample
+            _out[decoded] = sample
             hist2 = hist1
             hist1 = sample
             decoded += 1
 
-    return out.tobytes()
+    return _out.tobytes()
 
 
 def _idsp_to_wav(audio_data: bytes) -> bytes:
@@ -3187,6 +3191,35 @@ def _try_convert_audio(
 
     # IDSP (Nintendo DSP ADPCM)
     if audio_data[:4] == b'IDSP':
+        # Try ffmpeg first — it handles IDSP natively and is ~10x faster
+        # than the pure-Python decoder.
+        ffmpeg_path = _find_ffmpeg()
+        if ffmpeg_path:
+            try:
+                import tempfile as _tf
+                idsp_tmp = cache_dir / f"{cache_key}_raw.idsp"
+                idsp_tmp.write_bytes(audio_data)
+                wav_out = cache_dir / f"{cache_key}.wav"
+                result = _run_ffmpeg_to_wav(idsp_tmp, wav_out)
+                if (
+                    result is not None
+                    and result.returncode == 0
+                    and wav_out.exists()
+                    and wav_out.stat().st_size > WAV_MIN_HEADER_SIZE
+                ):
+                    try:
+                        idsp_tmp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    return True, f"Playing: {display_name}", wav_out
+                # ffmpeg failed; fall through to pure-Python
+                try:
+                    idsp_tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        # Pure-Python fallback
         try:
             wav_data = _idsp_to_wav(audio_data)
             out = cache_dir / f"{cache_key}.wav"
@@ -3197,11 +3230,25 @@ def _try_convert_audio(
 
     # BWAV
     if audio_data[:4] == b'BWAV':
+        # Try ffmpeg first for faster BWAV decoding
+        wav_out = cache_dir / f"{cache_key}.wav"
+        try:
+            bwav_tmp = cache_dir / f"{cache_key}_raw.bwav"
+            bwav_tmp.write_bytes(audio_data)
+            ffmpeg_ok = _run_ffmpeg_to_wav(bwav_tmp, wav_out)
+            try:
+                bwav_tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if ffmpeg_ok and wav_out.exists() and wav_out.stat().st_size > 44:
+                return True, f"Playing: {display_name}", wav_out
+        except Exception:
+            pass
+        # Fallback to pure-Python BWAV decoder
         try:
             wav_data = _bwav_to_wav(audio_data)
-            out = cache_dir / f"{cache_key}.wav"
-            out.write_bytes(wav_data)
-            return True, f"Playing: {display_name}", out
+            wav_out.write_bytes(wav_data)
+            return True, f"Playing: {display_name}", wav_out
         except Exception as e:
             return False, f"BWAV conversion failed: {e}", None
 

@@ -1173,8 +1173,7 @@ class MusicManager:
         manifest_path = self._replacement_manifest_path(mods_root)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"managed_filenames": sorted(filenames)}
-        with open(manifest_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
+        _atomic_json_write(manifest_path, payload)
 
     def _remove_managed_menu_music(self, mods_root: Path) -> None:
         dest = self._music_config_stream_dir(mods_root) / MENU_BGM_FILENAME
@@ -1207,7 +1206,11 @@ class MusicManager:
                 if not filename.lower().endswith(NUS3AUDIO_SUFFIX):
                     filename = f"{Path(filename).stem}{NUS3AUDIO_SUFFIX}"
                 dest = stream_dir / filename
-                shutil.copy2(str(track.file_path), str(dest))
+                try:
+                    shutil.copy2(str(track.file_path), str(dest))
+                except OSError as exc:
+                    logger.warn("MusicManager", f"Failed to copy replacement '{filename}': {exc}")
+                    continue
                 current_files.add(filename)
                 result["replacement_files"] += 1
                 metadata_rows.append(
@@ -1233,8 +1236,7 @@ class MusicManager:
         self._write_replacement_manifest(mods_root, current_files)
         metadata_path = self._replacement_metadata_path(mods_root)
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(metadata_path, "w", encoding="utf-8") as handle:
-            json.dump({"replacements": metadata_rows}, handle, indent=2)
+        _atomic_json_write(metadata_path, {"replacements": metadata_rows})
 
         if current_files:
             result["replacement_output_mod"] = str(config_mod)

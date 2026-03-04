@@ -452,11 +452,16 @@ class ModManager:
                    if c.is_dir() and not c.name.startswith(".")]
         sole_subdir = subdirs[0]
 
+        skipped = 0
         for item in sole_subdir.iterdir():
             dest = mod.path / item.name
             if dest.exists():
+                skipped += 1
                 continue
             item.rename(dest)
+
+        if skipped:
+            logger.warn("ModManager", f"Flatten '{mod.original_name}': skipped {skipped} item(s) due to name conflicts")
 
         try:
             if sole_subdir.exists() and not any(sole_subdir.iterdir()):

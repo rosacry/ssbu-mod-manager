@@ -95,8 +95,9 @@ class MusicPage(BasePage):
         self.summary_label = ctk.CTkLabel(
             info_frame, text="Configure Wi-Fi-safe slot replacements or unsafe legacy playlist edits.",
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
+            wraplength=theme.WRAP_LARGE,
         )
-        self.summary_label.pack(side="left")
+        self.summary_label.pack(side="left", fill="x", expand=True)
 
         self.loading_label = ctk.CTkLabel(
             info_frame, text="",
@@ -187,22 +188,25 @@ class MusicPage(BasePage):
 
         self.stage_tabs = ctk.CTkTabview(middle, fg_color=theme.BG_CARD)
         self.stage_tabs.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        safe_tab = self.stage_tabs.add("Wi-Fi-Safe Slots")
-        playlist_tab = self.stage_tabs.add("Legacy / Unsafe")
+        safe_tab = self.stage_tabs.add("Wi-Fi Safe")
+        playlist_tab = self.stage_tabs.add("Legacy")
 
         self.safe_slot_note = ctk.CTkLabel(
             safe_tab,
             text=(
-                "Replace an existing vanilla/discovered slot instead of adding a new one. "
-                "This is the Wi-Fi-safe workflow for custom music."
+                "Replace an existing vanilla/discovered slot instead of adding a "
+                "new one. This is the Wi-Fi-safe workflow for custom music."
             ),
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.TEXT_SOFT,
             justify="left",
-            wraplength=theme.WRAP_COLUMN,
+            wraplength=0,
             anchor="w",
         )
         self.safe_slot_note.pack(fill="x", padx=10, pady=(10, 6))
+        # Dynamically adjust wraplength on resize so text never gets clipped
+        self.safe_slot_note.bind("<Configure>", lambda e: self.safe_slot_note.configure(
+            wraplength=max(100, e.width - 10)) if e.width > 50 else None)
 
         self.safe_slot_source = ctk.CTkLabel(
             safe_tab,
@@ -230,7 +234,7 @@ class MusicPage(BasePage):
             font=ctk.CTkFont(size=theme.FONT_BODY),
         ).pack(side="right")
 
-        ctk.CTkLabel(
+        self._legacy_warn_label = ctk.CTkLabel(
             playlist_tab,
             text=(
                 "Legacy playlist editing is Wi-Fi-unsafe. It can append extra tracks or "
@@ -240,9 +244,12 @@ class MusicPage(BasePage):
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.WARNING_FAVORITES,
             justify="left",
-            wraplength=theme.WRAP_COLUMN,
+            wraplength=0,
             anchor="w",
-        ).pack(fill="x", padx=10, pady=(10, 6))
+        )
+        self._legacy_warn_label.pack(fill="x", padx=10, pady=(10, 6))
+        self._legacy_warn_label.bind("<Configure>", lambda e: self._legacy_warn_label.configure(
+            wraplength=max(100, e.width - 10)) if e.width > 50 else None)
 
         self.playlist_frame = ctk.CTkScrollableFrame(playlist_tab, fg_color="transparent")
         self.playlist_frame.pack(fill="both", expand=True, padx=5, pady=5)
@@ -388,16 +395,6 @@ class MusicPage(BasePage):
         queue_controls = ctk.CTkFrame(player_frame, fg_color="transparent")
         queue_controls.pack(fill="x", padx=8, pady=(0, 6))
 
-        ctk.CTkButton(
-            queue_controls,
-            text="Play All",
-            width=90,
-            height=26,
-            fg_color=theme.PRIMARY,
-            hover_color=theme.HOVER_PRIMARY,
-            font=ctk.CTkFont(size=theme.FONT_BODY),
-            command=lambda: self._start_queue_from_source("filtered"),
-        ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
             queue_controls,
             text="Favorites",
@@ -1179,6 +1176,44 @@ class MusicPage(BasePage):
     def _on_track_selection_changed(self, event):
         self._update_track_selection_state()
         self._on_track_click(event)
+        # Eagerly warm the audio cache for the selected track so playback
+        # starts instantly (especially beneficial for IDSP tracks whose
+        # pure-Python decode takes several seconds).
+        selected = self._get_selected_tracks()
+        if len(selected) == 1:
+            self._prefetch_track_audio(selected[0])
+
+    # ------------------------------------------------------------------
+    # Eager audio cache warm-up
+    # ------------------------------------------------------------------
+    _prefetch_generation: int = 0
+
+    def _prefetch_track_audio(self, track):
+        """Decode *track* in a background thread to warm the disk cache.
+
+        When the user later presses Play the cached file is found
+        immediately, eliminating the perceived decode latency for
+        slow-to-decode formats like IDSP DSP-ADPCM.
+        """
+        if track is None:
+            return
+        fp = track.file_path
+        if not fp or fp.suffix.lower() != ".nus3audio":
+            return
+
+        self._prefetch_generation += 1
+        gen = self._prefetch_generation
+
+        def _warm():
+            if gen != self._prefetch_generation:
+                return  # superseded by a newer selection
+            try:
+                from src.utils.nus3audio import extract_and_convert
+                extract_and_convert(fp)  # result is cached on disk
+            except Exception:
+                pass  # best-effort; failures are handled at play time
+
+        threading.Thread(target=_warm, daemon=True, name="audio-prefetch").start()
 
     def _toggle_selected_favorites(self):
         selected_tracks = self._get_selected_tracks()
@@ -1545,6 +1580,13 @@ class MusicPage(BasePage):
             return
         self._select_visible_track(track.track_id)
         self._play_track(track)
+        # Eagerly pre-decode the NEXT track in the queue so auto-advance
+        # is instant even for slow-to-decode formats like IDSP.
+        next_idx = index + 1
+        if next_idx < len(self._queue_track_ids):
+            next_track = self._resolve_track_by_id(self._queue_track_ids[next_idx])
+            if next_track is not None:
+                self._prefetch_track_audio(next_track)
 
     def _step_queue(self, direction: int):
         if not self._queue_track_ids:
@@ -2224,8 +2266,16 @@ class MusicPage(BasePage):
         self.seek_label.configure(text=self._ZERO_TIME_TEXT)
         self.seek_duration_label.configure(text=self._ZERO_TIME_TEXT)
 
+    # Volume curve exponent: human hearing is logarithmic, so we use an
+    # exponential mapping from slider position to actual volume.  An
+    # exponent of ~2.5 means the slider mid-point corresponds to roughly
+    # 18% actual volume which sounds like "half loudness".
+    _VOLUME_CURVE_EXP = 2.5
+
     def _on_volume_change(self, value):
-        new_volume = max(self._MIN_VOLUME, min(self._MAX_VOLUME, float(value) / self._MAX_PERCENT))
+        # Apply exponential curve: linear slider 0-100 -> perceptual volume 0.0-1.0
+        linear = max(self._MIN_VOLUME, min(self._MAX_VOLUME, float(value) / self._MAX_PERCENT))
+        new_volume = linear ** self._VOLUME_CURVE_EXP
         if abs(new_volume - self._pending_volume_value) < self._VOLUME_EPSILON:
             return
         self._pending_volume_value = new_volume
