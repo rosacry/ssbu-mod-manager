@@ -627,20 +627,30 @@ class MigrationPage(BasePage):
 
         if sdmc:
             self._export_emu_status.configure(text=f"Found: {sdmc}", text_color=theme.SUCCESS)
-            # Show extended data info
-            extra_items = scan_emulator_extended_data(emu)
-            found_extra = [i for i in extra_items if i.exists]
-            if found_extra:
-                labels = ", ".join(i.label for i in found_extra)
-                self._extra_details.configure(
-                    text=f"Available extended data: {labels}")
-            else:
-                self._extra_details.configure(
-                    text="No extended data directories found for this emulator.")
+            self._extra_details.configure(text="Scanning extended data...")
+
+            def _scan():
+                extra_items = scan_emulator_extended_data(emu)
+                found_extra = [i for i in extra_items if i.exists]
+                try:
+                    self.after(0, lambda: self._show_extra_details(found_extra))
+                except Exception:
+                    pass
+
+            threading.Thread(target=_scan, daemon=True).start()
         else:
             self._export_emu_status.configure(
                 text="Not installed or no data found", text_color=theme.ACCENT)
             self._extra_details.configure(text="")
+
+    def _show_extra_details(self, found_extra):
+        if found_extra:
+            labels = ", ".join(i.label for i in found_extra)
+            self._extra_details.configure(
+                text=f"Available extended data: {labels}")
+        else:
+            self._extra_details.configure(
+                text="No extended data directories found for this emulator.")
 
     def _direct_export(self):
         if self._migrating:

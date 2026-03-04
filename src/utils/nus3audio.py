@@ -1400,64 +1400,127 @@ _DSP_COEF = [
 
 def _decode_dsp_adpcm(adpcm_data: bytes, sample_count: int, coefs: list,
                        initial_hist1: int = 0, initial_hist2: int = 0) -> bytes:
-    """Decode Nintendo DSP ADPCM to 16-bit PCM."""
-    samples = []
-    hist1 = initial_hist1
-    hist2 = initial_hist2
+    """Decode Nintendo DSP ADPCM to 16-bit PCM.
+
+    Optimised pure-Python path: pre-extracts nibbles from the ADPCM byte
+    stream, pre-allocates the output array, and keeps the hot loop tight
+    with only local-variable access.
+    """
+    import array as _array
+
+    data_len = len(adpcm_data)
+    if sample_count <= 0 or data_len == 0:
+        return b""
+
+    # --- Pre-extract nibbles and frame headers --------------------------
+    # Each 8-byte frame: 1 header byte + 7 data bytes → 14 nibbles.
+    # We flatten the entire stream into (scale, coef_idx, nib0..nib13)
+    # tuples so the hot decode loop touches only a Python list.
+
+    num_coefs = len(coefs)
+    # Pre-build flat coef arrays for O(1) index lookup
+    _c1 = [c[0] for c in coefs]
+    _c2 = [c[1] for c in coefs]
+
+    # Sign-extend LUT for 4-bit nibble → signed int
+    _SIGN = [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1]
+
+    # Pre-allocate output
+    out = _array.array("h", bytes(sample_count * 2))
+
+    mv = memoryview(adpcm_data)
     pos = 0
     decoded = 0
+    hist1 = int(initial_hist1)
+    hist2 = int(initial_hist2)
 
-    while decoded < sample_count and pos < len(adpcm_data):
-        # Each frame is 8 bytes: 1 header + 7 data bytes = 14 samples
-        if pos >= len(adpcm_data):
-            break
-        header = adpcm_data[pos]
-        scale = 1 << (header & 0x0F)
-        coef_idx = (header >> 4) & 0x0F
-        if coef_idx >= len(coefs):
-            coef_idx = 0
-        coef1, coef2 = coefs[coef_idx]
+    while decoded < sample_count and pos < data_len:
+        # Frame header
+        hdr = adpcm_data[pos]
+        scale = 1 << (hdr & 0x0F)
+        ci = (hdr >> 4) & 0x0F
+        if ci >= num_coefs:
+            ci = 0
+        c1 = _c1[ci]
+        c2 = _c2[ci]
         pos += 1
 
-        for byte_i in range(7):
-            if pos >= len(adpcm_data):
-                break
-            byte = adpcm_data[pos]
+        # Determine how many data bytes this frame actually has
+        frame_bytes = min(7, data_len - pos)
+        frame_end = decoded + frame_bytes * 2  # max samples from these bytes
+        if frame_end > sample_count:
+            frame_end = sample_count
+
+        # Fast inner loop: process each data byte → 2 nibbles
+        while decoded < frame_end and pos < data_len:
+            b = adpcm_data[pos]
             pos += 1
 
-            for nibble in range(2):
-                if decoded >= sample_count:
-                    break
-                if nibble == 0:
-                    nib = (byte >> 4) & 0x0F
-                else:
-                    nib = byte & 0x0F
+            # High nibble
+            nib = _SIGN[(b >> 4) & 0x0F]
+            sample = (((nib * scale) << 11) + c1 * hist1 + c2 * hist2 + 1024) >> 11
+            if sample > 32767:
+                sample = 32767
+            elif sample < -32768:
+                sample = -32768
+            out[decoded] = sample
+            hist2 = hist1
+            hist1 = sample
+            decoded += 1
 
-                # Sign extend
-                if nib >= 8:
-                    nib -= 16
+            if decoded >= frame_end:
+                break
 
-                sample = (nib * scale + (coef1 * hist1 + coef2 * hist2 + 1024)) >> 11
-                sample = max(-32768, min(32767, sample))
-                samples.append(sample)
-                hist2 = hist1
-                hist1 = sample
-                decoded += 1
+            # Low nibble
+            nib = _SIGN[b & 0x0F]
+            sample = (((nib * scale) << 11) + c1 * hist1 + c2 * hist2 + 1024) >> 11
+            if sample > 32767:
+                sample = 32767
+            elif sample < -32768:
+                sample = -32768
+            out[decoded] = sample
+            hist2 = hist1
+            hist1 = sample
+            decoded += 1
 
-    # Convert to bytes (16-bit little-endian PCM)
-    import array
-    pcm = array.array('h', samples)
-    return pcm.tobytes()
+    return out.tobytes()
 
 
 def _idsp_to_wav(audio_data: bytes) -> bytes:
-    """Convert IDSP (Nintendo DSP ADPCM) to WAV."""
+    """Convert IDSP (Nintendo DSP ADPCM) to WAV.
+
+    IDSP is a Nintendo container wrapping standard DSP ADPCM channels.
+    The layout (version 0, used in SSBU / mod tools) is:
+
+      0x00-0x3F  IDSP main header
+        0x00  magic "IDSP"
+        0x04  version (BE u32, typically 0)
+        0x08  channel count (BE u32)
+        0x0C  sample rate (BE u32)
+        0x10  sample count (BE u32)
+        0x14  loop start sample (BE u32)
+        0x18  loop end sample (BE u32)
+        0x1C  interleave block size in bytes (BE u32, typically 0x10)
+        0x20  DSP-headers offset (BE u32)  — typically 0x40
+        0x24  DSP-header size per channel (BE u32)  — typically 0x60
+        0x28  data start offset (BE u32)  — where interleaved data begins
+        0x2C  per-channel data size (BE u32)
+
+      Per-channel standard DSP headers (0x60 bytes each):
+        +0x00  sample count, +0x04 nibble count, +0x08 sample rate,
+        +0x0C loop flag, +0x10 loop start, +0x14 loop end,
+        +0x1C  16 x int16 coefficients (big-endian),
+        +0x3E  initial predictor/scale,
+        +0x40  initial hist1, +0x42  initial hist2
+
+      ADPCM data is block-interleaved between channels:
+        [CH0 block0][CH1 block0][CH0 block1][CH1 block1]...
+      Each block is *interleave* bytes (last block may be smaller).
+    """
     if len(audio_data) < 0x60:
         raise ValueError("IDSP data too short")
 
-    # IDSP header parsing
-    # Offset 0x00: "IDSP" magic
-    # Offset 0x04: version/channel count varies
+    # ----- Main IDSP header -----
     channel_count = struct.unpack_from('>I', audio_data, 0x08)[0]
     sample_rate = struct.unpack_from('>I', audio_data, 0x0C)[0]
     sample_count = struct.unpack_from('>I', audio_data, 0x10)[0]
@@ -1471,49 +1534,80 @@ def _idsp_to_wav(audio_data: bytes) -> bytes:
     if sample_count == 0 or sample_count > 100000000:
         raise ValueError("Invalid sample count in IDSP")
 
-    # Try to find header size and coefficient locations
-    # IDSP v2/v3 structure varies; try common layouts
-    header_size = struct.unpack_from('>I', audio_data, 0x04)[0]
-    if header_size < 0x40 or header_size > len(audio_data):
-        header_size = 0x60  # Common default
+    # ----- Header field parsing -----
+    interleave = struct.unpack_from('>I', audio_data, 0x1C)[0] if len(audio_data) > 0x20 else 0
+    ch0_hdr_off = struct.unpack_from('>I', audio_data, 0x20)[0] if len(audio_data) > 0x24 else 0
+    dsp_hdr_size = struct.unpack_from('>I', audio_data, 0x24)[0] if len(audio_data) > 0x28 else 0
+    data_start = struct.unpack_from('>I', audio_data, 0x28)[0] if len(audio_data) > 0x2C else 0
+    per_ch_size = struct.unpack_from('>I', audio_data, 0x2C)[0] if len(audio_data) > 0x30 else 0
 
-    # Read DSP coefficients (16 pairs per channel, big-endian int16)
+    # Validate / apply sensible defaults
+    if ch0_hdr_off < 0x20 or ch0_hdr_off >= len(audio_data):
+        ch0_hdr_off = 0x40
+    if dsp_hdr_size < 0x40 or dsp_hdr_size > 0x200:
+        dsp_hdr_size = 0x60
+    if data_start < ch0_hdr_off or data_start >= len(audio_data):
+        data_start = ch0_hdr_off + dsp_hdr_size * channel_count
+    if interleave <= 0 or interleave > len(audio_data):
+        # Fallback: treat as one big block per channel
+        interleave = per_ch_size if per_ch_size > 0 else (len(audio_data) - data_start) // max(channel_count, 1)
+    if per_ch_size <= 0:
+        per_ch_size = ((sample_count + 13) // 14) * 8
+
+    ch_hdr_offsets = [ch0_hdr_off + ch * dsp_hdr_size for ch in range(channel_count)]
+
+    # ----- Decode each channel -----
     channels_pcm = []
     for ch in range(min(channel_count, 2)):
-        coefs = []
-        coef_offset = 0x14 + ch * 0x3C  # Approximate offset for coefficients
-        if coef_offset + 32 > len(audio_data):
-            coefs = list(_DSP_COEF)  # Use defaults
-        else:
-            for j in range(16):
-                if coef_offset + j * 2 + 2 <= len(audio_data):
-                    c = struct.unpack_from('>h', audio_data, coef_offset + j * 2)[0]
-                    coefs.append(c)
-                else:
-                    coefs.append(0)
-            # Reform into pairs
-            coefs = [(coefs[i], coefs[i + 1]) for i in range(0, min(len(coefs), 32), 2)]
+        hdr_off = ch_hdr_offsets[ch]
 
-        # Calculate data position
-        data_start = header_size + ch * ((sample_count + 13) // 14 * 8)
-        if data_start >= len(audio_data):
-            data_start = header_size
-        adpcm = audio_data[data_start:]
-        pcm = _decode_dsp_adpcm(adpcm, sample_count, coefs)
+        # Read 16 coefficients from the DSP header (+0x1C)
+        coef_base = hdr_off + 0x1C
+        if coef_base + 32 <= len(audio_data):
+            raw_coefs = []
+            for j in range(16):
+                c = struct.unpack_from('>h', audio_data, coef_base + j * 2)[0]
+                raw_coefs.append(c)
+            coefs = [(raw_coefs[i], raw_coefs[i + 1]) for i in range(0, 16, 2)]
+        else:
+            coefs = list(_DSP_COEF)
+
+        # Read initial history samples from DSP header (+0x40, +0x42)
+        hist1 = 0
+        hist2 = 0
+        if hdr_off + 0x44 <= len(audio_data):
+            hist1 = struct.unpack_from('>h', audio_data, hdr_off + 0x40)[0]
+            hist2 = struct.unpack_from('>h', audio_data, hdr_off + 0x42)[0]
+
+        # De-interleave: extract this channel's ADPCM blocks
+        blocks = []
+        pos = data_start + ch * interleave
+        stride = interleave * channel_count
+        remaining = per_ch_size
+        while pos < len(audio_data) and remaining > 0:
+            block_size = min(interleave, remaining, len(audio_data) - pos)
+            blocks.append(audio_data[pos:pos + block_size])
+            remaining -= block_size
+            pos += stride
+        adpcm = b''.join(blocks)
+
+        pcm = _decode_dsp_adpcm(adpcm, sample_count, coefs,
+                                initial_hist1=hist1, initial_hist2=hist2)
         channels_pcm.append(pcm)
 
     # Interleave channels if stereo
     if len(channels_pcm) == 2:
-        import array
-        left = array.array('h')
+        import array as _arr
+        left = _arr.array('h')
         left.frombytes(channels_pcm[0])
-        right = array.array('h')
+        right = _arr.array('h')
         right.frombytes(channels_pcm[1])
         min_len = min(len(left), len(right))
-        interleaved = array.array('h')
+        interleaved = _arr.array('h', bytes(min_len * 4))
         for i in range(min_len):
-            interleaved.append(left[i])
-            interleaved.append(right[i])
+            j = i * 2
+            interleaved[j] = left[i]
+            interleaved[j + 1] = right[i]
         pcm_data = interleaved.tobytes()
     else:
         pcm_data = channels_pcm[0]
@@ -2562,7 +2656,7 @@ def _flip_ogg_opus_stereo_bits(ogg_data: bytes) -> Optional[bytes]:
 
 # Cache directory for converted audio
 _CACHE_DIR: Optional[Path] = None
-_DECODER_CACHE_REV = "r25"
+_DECODER_CACHE_REV = "r28"
 
 
 def _get_cache_dir() -> Path:

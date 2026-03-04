@@ -282,7 +282,18 @@ class ModsPage(BasePage):
             filtered.append(mod)
         return filtered
 
+    # Number of mod rows to render per event-loop tick during batched rendering.
+    _RENDER_BATCH_SIZE = 25
+
     def _render_mods(self, *_args):
+        # Cancel any in-flight batched render
+        if getattr(self, "_render_batch_id", None) is not None:
+            try:
+                self.after_cancel(self._render_batch_id)
+            except Exception:
+                pass
+            self._render_batch_id = None
+
         # Clear all existing widgets
         for w in self._inner_frame.winfo_children():
             w.destroy()
@@ -316,56 +327,76 @@ class ModsPage(BasePage):
             count_text += "  \u2014  " + ", ".join(cat_strs[:6])
         self.count_label.configure(text=count_text)
 
+        # Build the flat list of render jobs [(type, args), ...]
+        jobs = self._build_render_jobs(filtered)
+        if not jobs:
+            self.after(10, self._update_scroll_region)
+            return
+
+        # Render first batch immediately so the page isn't blank, then schedule
+        # the rest in ticks to keep the UI responsive.
+        self._render_batch_queue = jobs
+        self._render_batch_gen = getattr(self, '_render_batch_token', 0) + 1
+        self._render_batch_token = self._render_batch_gen
+        self._process_render_batch()
+
+    def _build_render_jobs(self, filtered):
+        """Build a flat list of (type, args) render jobs for batched dispatch."""
+        jobs = []
         if self.group_var.get():
-            self._render_grouped(filtered)
+            groups = defaultdict(list)
+            for mod in filtered:
+                primary = mod.metadata.categories[0] if mod.metadata.categories else "Other"
+                groups[primary].append(mod)
+
+            order = ["Character", "Stage", "Music", "Audio", "UI", "Effect",
+                     "Camera", "Assist Trophy", "Item", "Params", "Other"]
+            sorted_groups = []
+            for key in order:
+                if key in groups:
+                    sorted_groups.append((key, groups.pop(key)))
+            for key in sorted(groups.keys()):
+                sorted_groups.append((key, groups[key]))
+
+            for category, category_mods in sorted_groups:
+                color = CATEGORY_COLORS.get(category, theme.BTN_NEUTRAL)
+                is_collapsed = category in self._collapsed
+                enabled = sum(1 for m in category_mods if m.status == ModStatus.ENABLED)
+                jobs.append(("header", (category, color, is_collapsed, enabled, len(category_mods))))
+                if not is_collapsed:
+                    for mod in category_mods:
+                        jobs.append(("row", (mod, color)))
         else:
-            self._render_flat(filtered)
+            for mod in filtered:
+                color = CATEGORY_COLORS.get(
+                    mod.metadata.categories[0] if mod.metadata.categories else "Other",
+                    theme.BTN_NEUTRAL,
+                )
+                jobs.append(("row", (mod, color)))
+        return jobs
 
-        # Defer scroll region update to let Tk settle naturally
-        self.after(10, self._update_scroll_region)
+    def _process_render_batch(self):
+        """Render the next batch of rows, then yield to the event loop."""
+        self._render_batch_id = None
+        token = self._render_batch_token
+        if token != self._render_batch_gen:
+            return  # superseded by a newer render call
+        queue = self._render_batch_queue
+        batch_size = self._RENDER_BATCH_SIZE
+        count = 0
+        while queue and count < batch_size:
+            kind, args = queue.pop(0)
+            if kind == "header":
+                self._render_category_header(*args)
+            else:
+                self._render_mod_row(*args)
+            count += 1
 
-        logger.debug("Mods", f"Rendered {len(filtered)} mod entries")
-
-    def _update_scroll_region(self):
-        try:
-            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
-        except tk.TclError:
-            pass
-
-    def _render_grouped(self, mods):
-        groups = defaultdict(list)
-        for mod in mods:
-            primary = mod.metadata.categories[0] if mod.metadata.categories else "Other"
-            groups[primary].append(mod)
-
-        order = ["Character", "Stage", "Music", "Audio", "UI", "Effect",
-                 "Camera", "Assist Trophy", "Item", "Params", "Other"]
-        sorted_groups = []
-        for key in order:
-            if key in groups:
-                sorted_groups.append((key, groups.pop(key)))
-        for key in sorted(groups.keys()):
-            sorted_groups.append((key, groups[key]))
-
-        for category, category_mods in sorted_groups:
-            color = CATEGORY_COLORS.get(category, theme.BTN_NEUTRAL)
-            is_collapsed = category in self._collapsed
-            enabled = sum(1 for m in category_mods if m.status == ModStatus.ENABLED)
-
-            self._render_category_header(
-                category, color, is_collapsed, enabled, len(category_mods))
-
-            if not is_collapsed:
-                for mod in category_mods:
-                    self._render_mod_row(mod, color)
-
-    def _render_flat(self, mods):
-        for mod in mods:
-            color = CATEGORY_COLORS.get(
-                mod.metadata.categories[0] if mod.metadata.categories else "Other",
-                theme.BTN_NEUTRAL
-            )
-            self._render_mod_row(mod, color)
+        if queue:
+            self._render_batch_id = self.after(1, self._process_render_batch)
+        else:
+            self.after(10, self._update_scroll_region)
+            logger.debug("Mods", "Batched render complete")
 
     def _render_category_header(self, category, color, is_collapsed, enabled, total):
         header = tk.Frame(self._inner_frame, bg=theme.BG_ROW_HEADER, cursor="hand2",

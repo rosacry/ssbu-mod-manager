@@ -1,7 +1,7 @@
 # SSBU Mod Manager
 
 Desktop manager for **Super Smash Bros. Ultimate** mod setups on emulator SDMC paths.
-Current release version: **1.0.0**.
+Current release version: **1.0.1**.
 
 One place to manage mods, Skyline plugins, music assignments, CSS edits, conflict resolution, profiles, and emulator migration.
 
@@ -9,9 +9,13 @@ One place to manage mods, Skyline plugins, music assignments, CSS edits, conflic
 
 Grab the latest zip from the [Releases](https://github.com/rosacry/ssbu-mod-manager/releases) page, extract it, and run `SSBUModManager.exe`.
 
-## What's New in 1.0.0
+## What's New in 1.0.1
 
-Initial public release.
+- Music Wi-Fi safety now distinguishes vanilla-slot replacements from unsafe added-track / tracklist-extension mods.
+- Online compatibility codes now include unsafe added-track music edits by default, with strict audio reserved for full replacement-audio parity.
+- Music page messaging now warns before saving Wi-Fi-unsafe legacy playlist edits.
+- Migration, Mods, and Plugins pages stay more responsive during heavy scans and large list renders.
+- Audio preview decoding received IDSP / DSP ADPCM handling improvements and cache rev updates.
 
 ## Features
 
@@ -88,7 +92,7 @@ Requires Python 3.11+.
 python build.py
 ```
 
-Output: `dist/SSBUModManager-1.0.0-windows.zip`
+Output: `dist/SSBUModManager-1.0.1-windows.zip`
 
 ## First-Run Setup
 

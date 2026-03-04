@@ -171,18 +171,34 @@ class PluginsPage(BasePage):
 
         threading.Thread(target=_load, daemon=True).start()
 
+    # Number of plugin rows to render per event-loop tick.
+    _RENDER_BATCH_SIZE = 25
+
     def _on_plugins_loaded(self, plugins):
         self._loaded = True
+
+        # Cancel any in-flight batched render
+        if getattr(self, "_plugin_batch_id", None) is not None:
+            try:
+                self.after_cancel(self._plugin_batch_id)
+            except Exception:
+                pass
+            self._plugin_batch_id = None
 
         for widget in self.plugin_list.winfo_children():
             widget.destroy()
 
-        active = sum(1 for p in plugins if p.status == PluginStatus.ENABLED)
+        # Pre-compute classification once per plugin (avoids double call)
+        risk_map = {}
         desync_plugins = 0
         for plugin in plugins:
-            rep = classify_plugin_filename(self._base_plugin_filename(plugin))
+            base = self._base_plugin_filename(plugin)
+            rep = classify_plugin_filename(base)
+            risk_map[id(plugin)] = rep
             if rep.level.value == "desync_vulnerable":
                 desync_plugins += 1
+
+        active = sum(1 for p in plugins if p.status == PluginStatus.ENABLED)
         summary = f"{active} active \u00b7 {len(plugins)} total plugins"
         if desync_plugins:
             summary += f" \u00b7 {desync_plugins} desync-vulnerable"
@@ -195,17 +211,35 @@ class PluginsPage(BasePage):
                          ).pack(pady=40)
             return
 
-        for plugin in plugins:
-            self._render_plugin_row(plugin)
+        # Build render queue and dispatch in batches
+        self._plugin_batch_queue = [(p, risk_map[id(p)]) for p in plugins]
+        self._plugin_batch_gen = getattr(self, "_plugin_batch_token", 0) + 1
+        self._plugin_batch_token = self._plugin_batch_gen
+        self._process_plugin_batch()
 
-        logger.info("Plugins", f"Rendered {len(plugins)} plugins")
+    def _process_plugin_batch(self):
+        """Render the next batch of plugin rows, then yield to the event loop."""
+        self._plugin_batch_id = None
+        if self._plugin_batch_token != self._plugin_batch_gen:
+            return
+        queue = self._plugin_batch_queue
+        count = 0
+        while queue and count < self._RENDER_BATCH_SIZE:
+            plugin, risk_report = queue.pop(0)
+            self._render_plugin_row(plugin, risk_report=risk_report)
+            count += 1
+        if queue:
+            self._plugin_batch_id = self.after(1, self._process_plugin_batch)
+        else:
+            logger.info("Plugins", "Batched render complete")
 
-    def _render_plugin_row(self, plugin):
+    def _render_plugin_row(self, plugin, *, risk_report=None):
         is_enabled = plugin.status == PluginStatus.ENABLED
         is_required = bool(plugin.known_info and plugin.known_info.required)
         use_friendly_names = self._friendly_names_var.get()
         show_descriptions = self._show_descriptions_var.get()
-        risk_report = classify_plugin_filename(self._base_plugin_filename(plugin))
+        if risk_report is None:
+            risk_report = classify_plugin_filename(self._base_plugin_filename(plugin))
         risk_text, risk_color = PLUGIN_RISK_BADGES.get(
             risk_report.level.value,
             ("REVIEW", theme.WARNING_ALT),
