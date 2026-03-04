@@ -1,9 +1,10 @@
 """Online Compatibility page — mod compatibility guide, mod analysis by online
 impact, and a Compatibility Code system for tournament/multiplayer verification.
 
-The checker fingerprints gameplay-affecting files (fighter params, stage
-collision, gameplay plugins, ExeFS patches).  Visual-only mods are ignored
-by default; strict audio mode includes audio/BGM for tournament parity.
+The checker fingerprints gameplay-affecting files, unsafe added-track music
+edits, gameplay plugins, and ExeFS patches. Visual-only mods and vanilla-slot
+BGM replacements are ignored by default; strict audio mode also includes
+ordinary replacement audio/BGM for tournament parity.
 """
 
 import threading
@@ -34,11 +35,18 @@ COMPAT_CATEGORIES = {
                        "Only the player using them needs to have them installed.",
     },
     "audio_only": {
-        "label": "Client-Side Only (Audio)",
+        "label": "Client-Side Audio Replacements",
         "icon": "\u2713",
         "color": theme.SUCCESS,
-        "description": "These mods only change audio/music. "
-                       "Only the player using them needs to have them installed.",
+        "description": "These mods replace existing audio or vanilla music slots only. "
+                       "Only the player using them needs them.",
+    },
+    "audio_shared": {
+        "label": "Shared Music Extensions",
+        "icon": "\u25b2",
+        "color": theme.WARNING,
+        "description": "These mods add new BGM entries, extend tracklists, or edit music "
+                       "databases. Match both setups or use vanilla-slot replacements instead.",
     },
     "stage_mods": {
         "label": "Shared if Stage is Used",
@@ -88,22 +96,44 @@ VISUAL_PLUGINS = {
     "libarc_randomizer.nro",
 }
 
+SHARED_AUDIO_REASON_CODES = {"bgm_track_extension", "music_db_edit"}
+
+
+def _online_reason_codes(mod: Mod) -> set[str]:
+    reasons = list(getattr(getattr(mod, "metadata", None), "online_reasons", []) or [])
+    codes: set[str] = set()
+    for reason in reasons:
+        code = str(reason).split(":", 1)[0].strip()
+        if code:
+            codes.add(code)
+    return codes
+
 
 def categorize_mod_online(mod: Mod) -> str:
     """Determine a mod's online compatibility category.
 
     Returns one of: 'required_both', 'visual_only', 'audio_only',
-    'stage_mods', 'unknown'
+    'audio_shared', 'stage_mods', 'unknown'
     """
     name_lower = mod.name.lower()
     cats = mod.metadata.categories if mod.metadata else []
     cats_lower = [c.lower() for c in cats]
+    reason_codes = _online_reason_codes(mod)
+
+    if reason_codes & SHARED_AUDIO_REASON_CODES:
+        return "audio_shared"
 
     # Prefer centralized risk classification when available.
     risk = (mod.metadata.online_risk if mod.metadata else "") or ""
     if risk == "desync_vulnerable":
         return "required_both"
     if risk == "conditionally_shared":
+        if mod.metadata and mod.metadata.has_music:
+            return "audio_shared"
+        if "music" in cats_lower or "audio" in cats_lower:
+            return "audio_shared"
+        if any(kw in name_lower for kw in AUDIO_KEYWORDS):
+            return "audio_shared"
         return "stage_mods"
     if risk == "unknown_needs_review":
         return "unknown"
@@ -204,10 +234,14 @@ class OnlineCompatPage(BasePage):
              "will see the default character skin. No desync occurs because skins are "
              "purely visual and processed client-side only.",
              theme.SUCCESS),
-            ("\u2713  Custom Audio / Music",
-             "Default policy treats audio/music as client-side local content. "
-             "If an event enforces Strict Audio Sync, both players should match audio/BGM files.",
+            ("\u2713  Vanilla-Slot Audio / Music Replacements",
+             "Replacing an existing built-in audio or BGM slot is Wi-Fi-safe. "
+             "The modded player hears the replacement while the other side keeps the default asset.",
              theme.SUCCESS),
+            ("\u25b2  Added Songs / Extended Tracklists",
+             "Adding extra BGM entries or editing stage music databases is not Wi-Fi-safe. "
+             "Both players should match those music mods, or you should replace an existing vanilla slot instead.",
+             theme.WARNING),
             ("\u25b2  Custom Stages",
              "If a custom stage is selected for play, BOTH players need the same stage mod. "
              "If playing on standard/vanilla stages, no stage mods are needed by either player.",
@@ -284,8 +318,9 @@ class OnlineCompatPage(BasePage):
 
         ctk.CTkLabel(checker,
             text="Generate a compatibility code to share with tournament hosts or friends. "
-                 "By default, only gameplay-affecting files are fingerprinted. Enable Strict Audio Sync "
-                 "to include audio/BGM files for tournament rulesets that require exact parity.",
+                 "By default, gameplay-affecting files and unsafe added-track music edits are fingerprinted. "
+                 "Enable Strict Audio Sync to also include ordinary replacement audio/BGM for rulesets "
+                 "that require exact parity.",
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
             wraplength=theme.WRAP_MEDIUM, justify="left"
         ).pack(fill="x", padx=15, pady=(0, 12))
@@ -312,7 +347,7 @@ class OnlineCompatPage(BasePage):
 
         ctk.CTkLabel(
             policy_row,
-            text="Strict audio includes BGM files; strict environment requires emulator/build/game metadata.",
+            text="Strict audio also fingerprints replacement BGM/audio files; strict environment requires emulator/build/game metadata.",
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.INFO_EMU,
             anchor="w",
@@ -330,7 +365,8 @@ class OnlineCompatPage(BasePage):
             "1.  The host/TO clicks 'Generate My Code' and copies the code.",
             "2.  The host pastes the code in their Discord server or tournament page.",
             "3.  Each participant pastes the host's code into 'Check Against Code' below.",
-            "4.  The tool compares gameplay files (and audio if Strict Audio Sync is enabled).",
+            "4.  The tool compares gameplay files plus unsafe added-track music edits.",
+            "     With Strict Audio Sync enabled, ordinary replacement audio/BGM is compared too.",
             "     With Strict Environment Match enabled, emulator/build/game metadata must also match.",
         ]
         for step in steps:
@@ -357,8 +393,9 @@ class OnlineCompatPage(BasePage):
         self._gen_btn.pack(side="right")
 
         ctk.CTkLabel(gen_frame,
-            text="Scans all your enabled mods and generates a code containing only gameplay file hashes. "
-                 "Skins and UI are excluded; audio/BGM is included only if Strict Audio Sync is enabled.",
+            text="Scans all your enabled mods and generates a code containing gameplay hashes and unsafe "
+                 "added-track music edits. Skins and UI are excluded; replacement audio/BGM is included "
+                 "only if Strict Audio Sync is enabled.",
             font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.TEXT_DIM, anchor="w",
             wraplength=theme.WRAP_STANDARD, justify="left"
         ).pack(fill="x", padx=12, pady=(0, 5))
@@ -622,7 +659,7 @@ class OnlineCompatPage(BasePage):
         if not fp.gameplay_hashes and not fp.plugin_hashes:
             note = ctk.CTkLabel(self._gen_code_frame,
                 text="\u2713  No gameplay-affecting mods detected under current policy â€” "
-                     "you appear to be running vanilla or visual-only content.",
+                     "you appear to be running vanilla, visual-only, or replacement-only audio content.",
                 font=ctk.CTkFont(size=theme.FONT_BODY), text_color=theme.SUCCESS, anchor="w",
                 wraplength=theme.WRAP_STANDARD, justify="left")
             note.pack(fill="x", pady=(0, 5))
@@ -1113,6 +1150,13 @@ class OnlineCompatPage(BasePage):
         if client_side:
             lines.append(f"CLIENT-SIDE ONLY ({len(client_side)} mods - only I need these):")
             for m in sorted(client_side, key=lambda m: m.name.lower()):
+                lines.append(f"  - {m.original_name}")
+            lines.append("")
+
+        shared_audio = categorized.get("audio_shared", [])
+        if shared_audio:
+            lines.append("SHARED MUSIC EXTENSIONS (match both setups or avoid online):")
+            for m in sorted(shared_audio, key=lambda m: m.name.lower()):
                 lines.append(f"  - {m.original_name}")
             lines.append("")
 

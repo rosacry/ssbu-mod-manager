@@ -23,7 +23,7 @@ Initial public release.
 - Support-pack retargeting: move voice, effect, or camera packs to other costume slots via right-click.
 - Import repair: normalizes `config.txt` to `config.json`, synthesizes missing manifests, prunes stale entries, quarantines incomplete model packs.
 - BNTX portrait patching: fixes mismatched internal texture names from reslotting.
-- `Wi-Fi Safe` mode: one-click enable of only client-side-safe mods.
+- `Wi-Fi Safe` mode: one-click enable of only client-side-safe mods, excluding unsafe music tracklist/database edits.
 - `Repair Installed`: audits all mod folders, fixes safe issues in-place, reports remaining conflicts.
 - `Repair Runtime`: resets Yuzu runtime state (renderer profile, shader cache, ARCropolis cache).
 - Right-click renaming with app-only alias or on-disk folder rename.
@@ -38,11 +38,11 @@ Initial public release.
 - Edit `ui_chara_db.prc` and `msg_name.msbt` to customize the Character Select Screen.
 
 ### Music
-- PRC-backed stage slot discovery using the real SSBU stage playlist structure, with a safe Main Menu replacement slot.
-- Wi-Fi-safer existing-slot replacement overlays.
+- PRC-backed stage slot discovery using the real SSBU stage playlist structure, with a Wi-Fi-safe Main Menu replacement slot.
+- Wi-Fi-safe existing-slot replacement overlays for vanilla/discovered BGM slots.
 - Standalone library player with queue, favorites, and preview playback.
 - `.nus3audio` Opus stream playback via `ffplay` when available.
-- Legacy stage-playlist editing.
+- Legacy stage-playlist editing for local or fully matched setups only; additive tracklists are not Wi-Fi-safe.
 - Experimental Spotify playlist export (opt-in via Settings).
 
 ### Conflicts
@@ -52,9 +52,9 @@ Initial public release.
 - Locale MSBT rename safety tools.
 
 ### Online Compatibility
-- Check mod setups for online desync risk.
+- Check mod setups for online desync risk, including unsafe added-track music edits by default.
 - Shareable profile codes for comparing setups.
-- Optional strict audio/environment policy modes.
+- Optional strict audio/environment policy modes for tournament parity of replacement audio/BGM.
 
 ### Migration
 - Copy, export/import, and upgrade flows between emulator SDMC paths.
@@ -120,5 +120,6 @@ build.py                 # PyInstaller build script
 
 - **No mods/plugins found**: Re-check SDMC path in Settings.
 - **Music page shows no safe slots**: Rescan after adding or enabling a mod containing both `ui_stage_db.prc` and `ui_bgm_db.prc`. The app now also checks `disabled_mods`.
+- **Legacy playlist edits and online play**: Adding extra songs or extending a stage tracklist is not Wi-Fi-safe. Use the Music page's slot-replacement workflow if you want one-sided custom music online.
 - **Audio preview fails**: Ensure `ffmpeg` is installed and in `PATH`.
 - **Startup diagnostics**: Set `SSBUMM_HEARTBEAT=1` before launch to enable heartbeat logging in `crash.log`.

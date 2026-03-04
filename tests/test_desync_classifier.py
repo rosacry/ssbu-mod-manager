@@ -1,6 +1,7 @@
 from src.core.desync_classifier import (
     DesyncRiskLevel,
     classify_mod_file,
+    classify_mod_path,
     classify_plugin_filename,
     is_gameplay_affecting_mod_file,
     is_gameplay_affecting_plugin,
@@ -33,16 +34,55 @@ def test_classify_mod_file_ui_param_variants_are_safe_client_only() -> None:
     assert classify_mod_file("ui/param/database/ui_chara_db.prcxml")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
 
 
-def test_classify_mod_file_audio_strict_mode() -> None:
-    relaxed = classify_mod_file("sound/bgm/my_song.nus3audio", strict_audio_sync=False)[0]
-    strict = classify_mod_file("sound/bgm/my_song.nus3audio", strict_audio_sync=True)[0]
+def test_classify_mod_file_vanilla_bgm_replacement_respects_strict_audio_policy() -> None:
+    relaxed = classify_mod_file("sound/bgm/bgm_z90_menu.nus3audio", strict_audio_sync=False)[0]
+    strict = classify_mod_file("sound/bgm/bgm_z90_menu.nus3audio", strict_audio_sync=True)[0]
     assert relaxed == DesyncRiskLevel.SAFE_CLIENT_ONLY
     assert strict == DesyncRiskLevel.CONDITIONALLY_SHARED
+
+
+def test_classify_mod_file_added_bgm_track_is_not_wifi_safe() -> None:
+    relaxed = classify_mod_file("sound/bgm/bgm_custom_song.nus3audio", strict_audio_sync=False)[0]
+    strict = classify_mod_file("sound/bgm/bgm_custom_song.nus3audio", strict_audio_sync=True)[0]
+    assert relaxed == DesyncRiskLevel.CONDITIONALLY_SHARED
+    assert strict == DesyncRiskLevel.CONDITIONALLY_SHARED
+    assert is_gameplay_affecting_mod_file("sound/bgm/bgm_custom_song.nus3audio")
+
+
+def test_classify_mod_file_music_db_edits_are_not_wifi_safe() -> None:
+    assert classify_mod_file("ui/param/database/ui_bgm_db.prc")[0] == DesyncRiskLevel.CONDITIONALLY_SHARED
+    assert classify_mod_file("ui/param/database/ui_stage_db.prcxml")[0] == DesyncRiskLevel.CONDITIONALLY_SHARED
 
 
 def test_classify_mod_file_preview_and_effect_assets_are_safe_client_only() -> None:
     assert classify_mod_file("preview.webp")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
     assert classify_mod_file("fighter/edge/ef_edge_c01.eff")[0] == DesyncRiskLevel.SAFE_CLIENT_ONLY
+
+
+def test_classify_mod_path_vanilla_bgm_replacement_mod_is_wifi_safe(tmp_path) -> None:
+    mod_path = tmp_path / "ReplacementOnly"
+    bgm_dir = mod_path / "sound" / "bgm"
+    bgm_dir.mkdir(parents=True)
+    (bgm_dir / "bgm_z90_menu.nus3audio").write_bytes(b"menu")
+
+    report = classify_mod_path(mod_path)
+
+    assert report.level == DesyncRiskLevel.SAFE_CLIENT_ONLY
+
+
+def test_classify_mod_path_added_track_mod_is_not_wifi_safe(tmp_path) -> None:
+    mod_path = tmp_path / "TracklistExpansion"
+    bgm_dir = mod_path / "sound" / "bgm"
+    bgm_dir.mkdir(parents=True)
+    (bgm_dir / "bgm_custom_song.nus3audio").write_bytes(b"custom")
+    db_dir = mod_path / "ui" / "param" / "database"
+    db_dir.mkdir(parents=True)
+    (db_dir / "ui_bgm_db.prc").write_bytes(b"db")
+
+    report = classify_mod_path(mod_path)
+
+    assert report.level == DesyncRiskLevel.CONDITIONALLY_SHARED
+    assert any(reason.code in {"bgm_track_extension", "music_db_edit"} for reason in report.reasons)
 
 
 def test_unknown_mod_file_is_review_and_gameplay_affecting() -> None:

@@ -113,11 +113,11 @@ def test_generate_fingerprint_sets_strict_environment_policy(tmp_path: Path) -> 
     assert fp.strict_environment_match is True
 
 
-def test_generate_fingerprint_strict_audio_sync_includes_audio_files(tmp_path: Path) -> None:
+def test_generate_fingerprint_standard_policy_ignores_vanilla_bgm_replacements(tmp_path: Path) -> None:
     mods_path = tmp_path / "mods"
     bgm_dir = mods_path / "AudioOnly" / "sound" / "bgm"
     bgm_dir.mkdir(parents=True)
-    (bgm_dir / "song.nus3audio").write_bytes(b"audio")
+    (bgm_dir / "bgm_z90_menu.nus3audio").write_bytes(b"audio")
 
     standard_fp = generate_fingerprint(mods_path=mods_path, strict_audio_sync=False)
     strict_fp = generate_fingerprint(mods_path=mods_path, strict_audio_sync=True)
@@ -125,6 +125,19 @@ def test_generate_fingerprint_strict_audio_sync_includes_audio_files(tmp_path: P
     assert standard_fp.strict_audio_sync is False
     assert strict_fp.strict_audio_sync is True
     assert standard_fp.gameplay_hashes == {}
+    assert len(strict_fp.gameplay_hashes) == 1
+
+
+def test_generate_fingerprint_always_includes_added_bgm_tracks(tmp_path: Path) -> None:
+    mods_path = tmp_path / "mods"
+    bgm_dir = mods_path / "TracklistExpansion" / "sound" / "bgm"
+    bgm_dir.mkdir(parents=True)
+    (bgm_dir / "bgm_custom_song.nus3audio").write_bytes(b"audio")
+
+    standard_fp = generate_fingerprint(mods_path=mods_path, strict_audio_sync=False)
+    strict_fp = generate_fingerprint(mods_path=mods_path, strict_audio_sync=True)
+
+    assert len(standard_fp.gameplay_hashes) == 1
     assert len(strict_fp.gameplay_hashes) == 1
 
 

@@ -93,7 +93,7 @@ class MusicPage(BasePage):
         info_frame.pack(fill="x", padx=30, pady=(2, 5))
 
         self.summary_label = ctk.CTkLabel(
-            info_frame, text="Configure which music tracks play on which stages.",
+            info_frame, text="Configure Wi-Fi-safe slot replacements or unsafe legacy playlist edits.",
             font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM), text_color=theme.TEXT_MUTED, anchor="w",
         )
         self.summary_label.pack(side="left")
@@ -187,14 +187,14 @@ class MusicPage(BasePage):
 
         self.stage_tabs = ctk.CTkTabview(middle, fg_color=theme.BG_CARD)
         self.stage_tabs.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        safe_tab = self.stage_tabs.add("Safe Slots")
-        playlist_tab = self.stage_tabs.add("Legacy Playlist")
+        safe_tab = self.stage_tabs.add("Wi-Fi-Safe Slots")
+        playlist_tab = self.stage_tabs.add("Legacy / Unsafe")
 
         self.safe_slot_note = ctk.CTkLabel(
             safe_tab,
             text=(
-                "Replace an existing discovered slot instead of adding a new one. "
-                "This is the safer community workflow for online play."
+                "Replace an existing vanilla/discovered slot instead of adding a new one. "
+                "This is the Wi-Fi-safe workflow for custom music."
             ),
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.TEXT_SOFT,
@@ -220,7 +220,7 @@ class MusicPage(BasePage):
         safe_btns.pack(fill="x", padx=10, pady=(0, 8))
         ctk.CTkButton(
             safe_btns,
-            text="Clear Safe Replacements",
+            text="Clear Wi-Fi-Safe Replacements",
             width=150,
             fg_color=theme.DANGER,
             hover_color=theme.HOVER_DANGER,
@@ -233,8 +233,9 @@ class MusicPage(BasePage):
         ctk.CTkLabel(
             playlist_tab,
             text=(
-                "Legacy playlist editing can append extra stage entries and modify the "
-                "stage database. Use this only when you intentionally want that behavior."
+                "Legacy playlist editing is Wi-Fi-unsafe. It can append extra tracks or "
+                "reroute the stage music database, which can desync against players who "
+                "do not share the same music setup."
             ),
             font=ctk.CTkFont(size=theme.FONT_BODY),
             text_color=theme.WARNING_FAVORITES,
@@ -760,10 +761,10 @@ class MusicPage(BasePage):
         favorite_count = summary.get("favorite_tracks", 0)
         if summary["stages_configured"] > 0 or summary.get("replacement_stages", 0) > 0:
             parts = [
-                f"{summary.get('replacement_stages', 0)} safe stages",
-                f"{summary.get('replacement_slots', 0)} safe slots",
-                f"{summary['stages_configured']} legacy stages",
-                f"{summary['total_assignments']} legacy assignments",
+                f"{summary.get('replacement_stages', 0)} Wi-Fi-safe stages",
+                f"{summary.get('replacement_slots', 0)} Wi-Fi-safe slots",
+                f"{summary['stages_configured']} unsafe legacy stages",
+                f"{summary['total_assignments']} unsafe legacy entries",
                 "Vanilla excluded" if summary["exclude_vanilla"] else "Vanilla included",
             ]
             if summary.get("slot_catalog_stages", 0):
@@ -772,9 +773,9 @@ class MusicPage(BasePage):
                 parts.append(f"{favorite_count} favorites")
             self.summary_label.configure(
                 text=" | ".join(parts),
-                text_color=theme.SUCCESS)
+                text_color=theme.WARNING if summary["stages_configured"] > 0 else theme.SUCCESS)
         else:
-            text = "Select a stage to manage safe slots or legacy playlist entries."
+            text = "Select a stage to manage Wi-Fi-safe slot replacements or unsafe legacy playlist entries."
             if favorite_count:
                 text += f" {favorite_count} favorite track(s) saved."
             self.summary_label.configure(
@@ -796,7 +797,7 @@ class MusicPage(BasePage):
         if safe_count:
             suffix_parts.append(f"S{safe_count}")
         if legacy_count:
-            suffix_parts.append(f"L{legacy_count}")
+            suffix_parts.append(f"U{legacy_count}")
         if not suffix_parts:
             return ""
         return f" ({' '.join(suffix_parts)})"
@@ -807,7 +808,7 @@ class MusicPage(BasePage):
             return
         safe_count = self._get_effective_safe_count(self._selected_stage)
         legacy_count = len(self.app.music_manager.get_tracks_for_stage(self._selected_stage))
-        self.playlist_count.configure(text=f"Safe {safe_count} | Legacy {legacy_count}")
+        self.playlist_count.configure(text=f"Safe {safe_count} | Unsafe {legacy_count}")
 
     def _populate_stages(self):
         stages = self.app.music_manager.get_stage_list()
@@ -907,7 +908,7 @@ class MusicPage(BasePage):
 
         if not tracks:
             ctk.CTkLabel(self.playlist_frame,
-                         text="No legacy playlist entries.\n\nSelect tracks from the right panel\nand click '+ Add Selected Tracks'.",
+                         text="No unsafe legacy playlist entries.\n\nSelect tracks from the right panel\nand click '+ Add Selected Tracks'.",
                          text_color=theme.TEXT_DISABLED, font=ctk.CTkFont(size=theme.FONT_BODY_MEDIUM),
                          justify="center").pack(pady=30)
             return
@@ -1324,7 +1325,7 @@ class MusicPage(BasePage):
                 self._restore_legacy_menu_tracks(previous_menu_tracks)
 
         action = Action(
-            description=f"Clear safe replacements for {VANILLA_STAGES.get(stage_id, stage_id)}",
+            description=f"Clear Wi-Fi-safe replacements for {VANILLA_STAGES.get(stage_id, stage_id)}",
             do=do_clear,
             undo=undo_clear,
             page="music",
@@ -1426,7 +1427,7 @@ class MusicPage(BasePage):
         self.app.mark_unsaved()
 
     def _clear_all_stages(self):
-        if messagebox.askyesno("Clear All", "Remove ALL legacy playlist assignments from ALL stages?"):
+        if messagebox.askyesno("Clear All", "Remove ALL Wi-Fi-unsafe legacy playlist assignments from ALL stages?"):
             self.app.music_manager.stage_playlists.clear()
             self._render_playlist()
             self._populate_stages()
@@ -2290,31 +2291,44 @@ class MusicPage(BasePage):
 
         summary = self.app.music_manager.get_assignment_summary()
         if summary["stages_configured"] == 0 and summary.get("replacement_slots", 0) == 0:
-            messagebox.showwarning("Warning", "No safe replacements or legacy playlist entries configured yet.")
+            messagebox.showwarning("Warning", "No Wi-Fi-safe replacements or unsafe legacy playlist entries configured yet.")
             return
+
+        if summary["stages_configured"] > 0:
+            confirm = messagebox.askyesno(
+                "Wi-Fi-Unsafe Legacy Playlist",
+                "Legacy playlist changes can add extra tracks or reroute stage music databases.\n\n"
+                "That is not Wi-Fi-safe and can desync against players who do not share the same music setup.\n\n"
+                "Continue saving these legacy playlist changes?",
+            )
+            if not confirm:
+                return
 
         try:
             result = self.app.music_manager.save_assignments(settings.mods_path)
             msg = f"Music configuration saved!\n\n"
-            msg += f"Safe replacement stages: {result.get('replacement_stages', 0)}\n"
-            msg += f"Safe replacement files: {result.get('replacement_files', 0)}\n"
-            msg += f"Legacy playlist stages: {result['stages_configured']}\n"
-            msg += f"Legacy playlist assignments: {result['tracks_assigned']}\n"
+            msg += f"Wi-Fi-safe replacement stages: {result.get('replacement_stages', 0)}\n"
+            msg += f"Wi-Fi-safe replacement files: {result.get('replacement_files', 0)}\n"
+            msg += f"Wi-Fi-unsafe legacy stages: {result['stages_configured']}\n"
+            msg += f"Wi-Fi-unsafe legacy assignments: {result['tracks_assigned']}\n"
+            if result["stages_configured"] > 0:
+                msg += "\nWarning: legacy playlist edits are not Wi-Fi-safe."
             if result.get("menu_music_set"):
                 msg += f"\nMain menu music has been set!"
             if result.get("replacement_output_mod"):
-                msg += f"\nReplacement overlay: {result['replacement_output_mod']}"
+                msg += f"\nWi-Fi-safe replacement overlay: {result['replacement_output_mod']}"
             if result.get("prc_updated"):
-                msg += f"\nPRC updated in: {result['output_mod']}"
+                msg += f"\nLegacy playlist PRC updated in: {result['output_mod']}"
             logger.info(
                 "Music",
                 "Saved music config: "
-                f"{result.get('replacement_files', 0)} safe replacements, "
-                f"{result['stages_configured']} legacy stages, "
-                f"{result['tracks_assigned']} legacy tracks",
+                f"{result.get('replacement_files', 0)} Wi-Fi-safe replacements, "
+                f"{result['stages_configured']} unsafe legacy stages, "
+                f"{result['tracks_assigned']} unsafe legacy tracks",
             )
             self.app.mark_saved()
             messagebox.showinfo("Saved", msg)
+            return
         except Exception as e:
             logger.error("Music", f"Save failed: {e}")
             messagebox.showerror("Error", f"Failed to save: {e}")

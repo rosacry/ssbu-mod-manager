@@ -12,7 +12,10 @@ import os
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
+
+from src.utils.resource_path import resource_path
 
 
 class DesyncRiskLevel(str, Enum):
@@ -80,6 +83,24 @@ SAFE_DIR_PARTS = frozenset({
     "sound",
     "stream",
 })
+
+STRICT_AUDIO_EXTENSIONS = frozenset({
+    ".nus3audio", ".nus3bank", ".wav", ".ogg", ".mp3", ".flac",
+})
+BGM_AUDIO_EXTENSIONS = frozenset({
+    ".nus3audio", ".nus3bank", ".wav", ".ogg", ".mp3", ".flac",
+    ".bfsar", ".bfstm", ".bfwav", ".lopus", ".opus", ".idsp", ".bwav",
+})
+MUSIC_DB_FILENAMES = frozenset({
+    "ui_bgm_db.prc",
+    "ui_bgm_db.prcx",
+    "ui_bgm_db.prcxml",
+    "ui_stage_db.prc",
+    "ui_stage_db.prcx",
+    "ui_stage_db.prcxml",
+})
+VANILLA_BGM_REFERENCE_PATH = "assets/vanilla_bgm_ids.txt"
+EXTRA_SAFE_BGM_STEMS = frozenset({"bgm_z90_menu"})
 
 _COSTUME_MOTION_PATH_RE = re.compile(
     r"^fighter/[^/]+/motion/[^/]+/c\d{2,3}/[^/]+$",
@@ -164,6 +185,9 @@ _EVIDENCE_URLS: dict[str, str] = {
     "gameplay_param_file": "https://github.com/blu-dev/smashline",
     "fighter_model_only": "https://yuzu-mirror.github.io/help/feature/game-modding/",
     "fighter_cosmetic_support": "https://yuzu-mirror.github.io/help/feature/game-modding/",
+    "bgm_replacement": "https://github.com/Raytwo/ARCropolis",
+    "bgm_track_extension": "https://github.com/Raytwo/ARCropolis",
+    "music_db_edit": "https://github.com/Raytwo/ARCropolis",
     "audio_strict_mode": "https://github.com/jugeeya/UltimateTrainingModpack",
     "safe_directory": "https://yuzu-mirror.github.io/help/feature/game-modding/",
     "ui_content": "https://yuzu-mirror.github.io/help/feature/game-modding/",
@@ -207,6 +231,63 @@ def _is_ui_param_file(rel_lower: str, ext: str) -> bool:
     return _is_in_ui_path(rel_lower)
 
 
+@lru_cache(maxsize=1)
+def _load_vanilla_bgm_stems() -> frozenset[str]:
+    try:
+        ref_path = Path(resource_path(VANILLA_BGM_REFERENCE_PATH))
+        with open(ref_path, "r", encoding="utf-8") as handle:
+            stems = {
+                Path(str(line).strip()).stem.lower()
+                for line in handle
+                if str(line).strip()
+            }
+        return frozenset(stems | set(EXTRA_SAFE_BGM_STEMS))
+    except OSError:
+        return EXTRA_SAFE_BGM_STEMS
+
+
+def _is_music_db_file(rel_lower: str, filename: str) -> bool:
+    return (
+        filename in MUSIC_DB_FILENAMES
+        and "ui/param/database/" in rel_lower
+    )
+
+
+def _classify_bgm_file(
+    rel_lower: str,
+    filename: str,
+    ext: str,
+    *,
+    strict_audio_sync: bool,
+) -> tuple[DesyncRiskLevel, str, str] | None:
+    if ext not in BGM_AUDIO_EXTENSIONS:
+        return None
+
+    path_probe = f"/{rel_lower.strip('/')}/"
+    if "/sound/bgm/" not in path_probe:
+        return None
+
+    stem = Path(filename).stem.lower()
+    if stem in _load_vanilla_bgm_stems():
+        if strict_audio_sync and ext in STRICT_AUDIO_EXTENSIONS:
+            return (
+                DesyncRiskLevel.CONDITIONALLY_SHARED,
+                "audio_strict_mode",
+                "Vanilla BGM replacement flagged under strict audio sync policy",
+            )
+        return (
+            DesyncRiskLevel.SAFE_CLIENT_ONLY,
+            "bgm_replacement",
+            "Replaces an existing vanilla BGM slot",
+        )
+
+    return (
+        DesyncRiskLevel.CONDITIONALLY_SHARED,
+        "bgm_track_extension",
+        "Adds a non-vanilla BGM track; matching setups required",
+    )
+
+
 def _is_stage_visual_file(rel_lower: str, filename: str) -> bool:
     if not rel_lower.startswith("stage/"):
         return False
@@ -236,6 +317,22 @@ def classify_mod_file(relative_path: str, strict_audio_sync: bool = False) -> tu
     if filename in SAFE_FILENAMES:
         return (DesyncRiskLevel.SAFE_CLIENT_ONLY, "safe_metadata", "Metadata file only")
 
+    if _is_music_db_file(rel_lower, filename):
+        return (
+            DesyncRiskLevel.CONDITIONALLY_SHARED,
+            "music_db_edit",
+            "Music database edit can add or reroute stage tracks; matching setups required",
+        )
+
+    bgm_rule = _classify_bgm_file(
+        rel_lower,
+        filename,
+        ext,
+        strict_audio_sync=strict_audio_sync,
+    )
+    if bgm_rule is not None:
+        return bgm_rule
+
     if _is_ui_param_file(rel_lower, ext):
         return (DesyncRiskLevel.SAFE_CLIENT_ONLY, "ui_param", "UI/CSS parameter file")
 
@@ -250,7 +347,7 @@ def classify_mod_file(relative_path: str, strict_audio_sync: bool = False) -> tu
         )
 
     if ext in SAFE_EXTENSIONS:
-        if strict_audio_sync and ext in {".nus3audio", ".nus3bank", ".wav", ".ogg", ".mp3", ".flac"}:
+        if strict_audio_sync and ext in STRICT_AUDIO_EXTENSIONS:
             return (
                 DesyncRiskLevel.CONDITIONALLY_SHARED,
                 "audio_strict_mode",
